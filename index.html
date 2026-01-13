@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Jarvis - Personal Assistant</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <nav class="navbar">
+      <div class="container navbar-inner">
+        <a class="logo" href="#">Jarvis<span class="dot">.</span></a>
+        <div class="nav-actions">
+          <ul class="nav-links">
+            <li><a href="#modules">Modules</a></li>
+            <li><a href="#workflow">Water reading</a></li>
+          </ul>
+          <a class="button primary small" href="#upload-title">Start now</a>
+        </div>
+      </div>
+    </nav>
+
+    <main class="page">
+      <section class="hero container">
+        <p class="eyebrow">Personal assistant</p>
+        <h1 class="hero-title">Home admin, <span>automated</span>.</h1>
+        <p class="hero-description">Jarvis handles the small chores that keep your home running. Start with water meter readings today and add more workflows over time.</p>
+        <div class="cta-group">
+          <a class="button primary" href="#upload-title">Start water reading</a>
+          <a class="button ghost" href="#modules">See modules</a>
+        </div>
+      </section>
+
+      <section class="section" id="modules">
+        <div class="container">
+          <div class="section-head">
+            <h2>Your assistant modules</h2>
+            <p class="muted">One workflow is live now, with more ready to join the lineup.</p>
+          </div>
+          <div class="module-grid">
+            <article class="module active">
+              <div class="module-tag">Active</div>
+              <h3>Water meter reading</h3>
+              <p>Upload the meter photo, confirm the reading, and draft the email in one pass.</p>
+            </article>
+            <article class="module upcoming">
+              <div class="module-tag">Coming soon</div>
+              <h3>Household reminders</h3>
+              <p>Trash days, maintenance checklists, and recurring admin nudges.</p>
+            </article>
+            <article class="module upcoming">
+              <div class="module-tag">Coming soon</div>
+              <h3>Bills and utilities</h3>
+              <p>Log readings, store PDFs, and keep an eye on monthly totals.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="workflow">
+        <div class="container">
+          <div class="section-head">
+            <h2>Water meter workflow</h2>
+            <p class="muted">Upload, confirm, and send the reading when you are ready.</p>
+          </div>
+          <div class="flow">
+            <section class="card" aria-labelledby="upload-title">
+              <div class="card-head">
+                <h3 id="upload-title">1. Upload the meter photo</h3>
+                <p class="muted">Jarvis can read the digits, but you can always correct them.</p>
+              </div>
+              <div class="upload-grid">
+                <label class="upload-box" for="photo-input">
+                  <input id="photo-input" type="file" accept="image/*">
+                  <div class="upload-copy">
+                    <span class="upload-title">Choose a photo</span>
+                    <span class="upload-subtitle">JPG or PNG, clear digits help the OCR.</span>
+                  </div>
+                </label>
+                <div class="preview" id="photo-preview">
+                  <p class="muted">No photo loaded yet.</p>
+                </div>
+              </div>
+              <div class="action-row">
+                <button class="primary" id="read-btn" type="button">Read meter</button>
+                <p class="status" id="ocr-status">Waiting for a photo.</p>
+              </div>
+            </section>
+
+            <section class="card" aria-labelledby="reading-title">
+              <div class="card-head">
+                <h3 id="reading-title">2. Review the reading</h3>
+                <p class="muted">Confirm the value before generating the email.</p>
+              </div>
+              <div class="field-row">
+                <label class="field">
+                  Reading
+                  <input id="reading-input" type="text" inputmode="numeric" placeholder="e.g. 2302">
+                </label>
+                <label class="field">
+                  Date
+                  <input id="date-input" type="date">
+                </label>
+              </div>
+            </section>
+
+            <section class="card" aria-labelledby="email-title">
+              <div class="card-head">
+                <h3 id="email-title">3. Review the email</h3>
+                <p class="muted">Edit any field before sending.</p>
+              </div>
+              <div class="field-row">
+                <label class="field">
+                  From
+                  <input id="from-input" type="email" value="andrea.panizza75@gmail.com" readonly>
+                </label>
+                <label class="field">
+                  To
+                  <input id="to-input" type="email" value="info@villoresialvaro.it">
+                </label>
+              </div>
+              <label class="field">
+                Subject
+                <input id="subject-input" type="text">
+              </label>
+              <label class="field">
+                Body
+                <textarea id="body-input" rows="10"></textarea>
+              </label>
+              <div class="action-row">
+                <button class="ghost" id="regen-btn" type="button">Regenerate draft</button>
+                <button class="primary" id="send-btn" type="button">Open Gmail draft</button>
+                <a class="link" id="mailto-link" href="#">Mailto fallback</a>
+              </div>
+              <p class="muted">Tip: open Gmail draft, review once more, then press send.</p>
+            </section>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
