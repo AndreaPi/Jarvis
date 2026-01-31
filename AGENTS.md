@@ -5,7 +5,9 @@
 - `styles.css`: Global styles and visual system.
 - `app.js`: Client-side logic (OCR flow, email draft generation).
 - `package.json`: Local dev scripts.
-- Assets are currently referenced directly from uploads; no dedicated assets folder yet.
+- `README.md`: Project overview and setup notes.
+- `assets/`: Static assets and example uploads.
+- `assets/meter_13012026.jpg`: Example upload asset.
 
 ## Build, Test, and Development Commands
 - `npm run serve`: Start a simple local web server on port 8000.

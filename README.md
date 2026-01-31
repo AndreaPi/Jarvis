@@ -23,6 +23,7 @@ Then open `http://localhost:8000`.
 - `styles.css`: Styling.
 - `app.js`: OCR + email draft logic.
 - `AGENTS.md`: Contributor guide.
+- `assets/`: Static assets and example uploads.
 
 ## Notes
 - OCR runs fully in the browser using Tesseract.js.
