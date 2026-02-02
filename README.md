@@ -28,3 +28,9 @@ Then open `http://localhost:8000`.
 ## Notes
 - OCR runs fully in the browser using Tesseract.js.
 - The Gmail flow opens a draft; you always review and send manually.
+
+## Asset Naming (Meter Images)
+- Use the EXIF `DateTimeOriginal` value as the source of truth for the acquisition date.
+- Rename files to `meter_mmddyyyy` (zero-padded) and keep the original extension.
+- If multiple images share the same date, keep one as-is and add suffixes to the rest (e.g., `_b`, `_c`).
+- If EXIF is missing, prefer a known date from the filename or capture notes and document it.
