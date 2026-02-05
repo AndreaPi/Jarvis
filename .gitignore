@@ -1,21 +1,7 @@
-# Node
-node_modules/
-
-# Logs
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Env files
-.env
-.env.local
-.env.*.local
-
-# Build output
-coverage/
-dist/
+*:Zone.Identifier
+assets/*.jpg
+assets/*.jpeg
+assets/*.png
+assets/*.JPG
+assets/*.JPEG
+assets/*.PNG

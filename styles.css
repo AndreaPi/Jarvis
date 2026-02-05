@@ -189,6 +189,10 @@ a:hover {
   animation-delay: 0.24s;
 }
 
+.qa-card {
+  border-style: dashed;
+}
+
 .card-head {
   display: grid;
   gap: 0.4rem;
@@ -198,6 +202,44 @@ a:hover {
 .muted {
   color: var(--muted);
   font-size: 0.95rem;
+}
+
+.test-results {
+  margin-top: 1rem;
+}
+
+.test-results table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.test-results th,
+.test-results td {
+  text-align: left;
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.test-results th {
+  color: var(--muted-strong);
+  font-weight: 600;
+}
+
+.test-results .pass {
+  color: #15803d;
+  font-weight: 600;
+}
+
+.test-results .fail {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.test-results .summary {
+  margin-top: 0.8rem;
+  font-weight: 600;
+  color: var(--muted-strong);
 }
 
 .module-grid {
