@@ -379,6 +379,27 @@ a:hover {
   resize: vertical;
 }
 
+.field-hints {
+  margin-top: 0.75rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.field-hint {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.field-hint.warning {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.field-hint.success {
+  color: #15803d;
+  font-weight: 600;
+}
+
 .action-row {
   display: flex;
   flex-wrap: wrap;

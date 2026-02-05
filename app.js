@@ -14,6 +14,8 @@ const mailtoLink = document.getElementById('mailto-link');
 const runTestBtn = document.getElementById('run-test-btn');
 const testStatus = document.getElementById('test-status');
 const testResults = document.getElementById('test-results');
+const lastReadingLabel = document.getElementById('last-reading');
+const readingWarning = document.getElementById('reading-warning');
 
 const DEFAULT_SUBJECT = 'Lettura acqua da F9C397';
 const CUSTOMER_DETAILS = {
@@ -22,6 +24,8 @@ const CUSTOMER_DETAILS = {
   city: 'Firenze FI',
   code: 'F9C397'
 };
+
+const METER_CODE = CUSTOMER_DETAILS.code;
 
 const OCR_CONFIG = {
   maxDimension: 1400,
@@ -46,6 +50,12 @@ let bodyTouched = false;
 let subjectTouched = false;
 let ocrWorker = null;
 let ocrLogger = null;
+let lastReadingValue = null;
+let lastReadingDate = null;
+let lastReadingLoaded = false;
+let dateTouched = false;
+let lastReadingError = false;
+let saveInFlight = false;
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
@@ -519,6 +529,55 @@ const formatItalianDate = (dateValue) => {
   return new Intl.DateTimeFormat('it-IT').format(localDate);
 };
 
+const formatIsoDate = (date) => {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0')
+  ].join('-');
+};
+
+const buildTodayIsoDate = () => {
+  const now = new Date();
+  return formatIsoDate(now);
+};
+
+const normalizeExifDate = (value) => {
+  if (!value) {
+    return null;
+  }
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return formatIsoDate(value);
+  }
+  if (typeof value === 'string') {
+    const match = value.trim().match(/^(\d{4})[:\-](\d{2})[:\-](\d{2})/);
+    if (match) {
+      return `${match[1]}-${match[2]}-${match[3]}`;
+    }
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return formatIsoDate(parsed);
+    }
+  }
+  return null;
+};
+
+const getExifCaptureDate = async (file) => {
+  if (!file || !window.exifr) {
+    return null;
+  }
+  try {
+    const exif = await window.exifr.parse(file, ['DateTimeOriginal', 'CreateDate', 'ModifyDate']);
+    if (!exif) {
+      return null;
+    }
+    return normalizeExifDate(exif.DateTimeOriginal || exif.CreateDate || exif.ModifyDate);
+  } catch (error) {
+    console.warn('EXIF parse failed', error);
+    return null;
+  }
+};
+
 const buildBodyTemplate = (dateDisplay, readingValue) => {
   const safeReading = readingValue || '____';
   return [
@@ -553,6 +612,165 @@ const setStatus = (message) => {
 const setTestStatus = (message) => {
   if (testStatus) {
     testStatus.textContent = message;
+  }
+};
+
+const formatDisplayDate = (value) => {
+  if (!value) {
+    return '--';
+  }
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat('it-IT').format(date);
+};
+
+const setLastReadingDisplay = () => {
+  if (!lastReadingLabel) {
+    return;
+  }
+  if (!lastReadingLoaded) {
+    lastReadingLabel.textContent = 'Last saved reading: loading...';
+    return;
+  }
+  if (lastReadingError) {
+    lastReadingLabel.textContent = 'Last saved reading: unavailable (backend not configured).';
+    return;
+  }
+  if (lastReadingValue === null || !lastReadingDate) {
+    lastReadingLabel.textContent = 'Last saved reading: not available yet.';
+    return;
+  }
+  lastReadingLabel.textContent = `Last saved reading: ${lastReadingValue} on ${formatDisplayDate(lastReadingDate)}.`;
+};
+
+const setReadingWarning = (message, type) => {
+  if (!readingWarning) {
+    return;
+  }
+  readingWarning.textContent = message;
+  readingWarning.classList.remove('warning', 'success');
+  if (type) {
+    readingWarning.classList.add(type);
+  }
+};
+
+const setSendEnabled = (enabled) => {
+  if (sendBtn) {
+    sendBtn.disabled = !enabled;
+  }
+};
+
+const validateReadingInput = () => {
+  const readingValue = readingInput.value.trim();
+  const readingNumber = readingValue ? Number.parseInt(readingValue, 10) : null;
+  const readingDate = dateInput.value;
+
+  if (!readingValue || !readingDate) {
+    setReadingWarning('', null);
+    setSendEnabled(false);
+    return false;
+  }
+
+  if (!lastReadingLoaded) {
+    setReadingWarning('Fetching last reading...', null);
+    setSendEnabled(true);
+    return true;
+  }
+
+  if (lastReadingValue === null || !lastReadingDate) {
+    setReadingWarning('', null);
+    setSendEnabled(true);
+    return true;
+  }
+
+  if (readingDate < lastReadingDate) {
+    setReadingWarning('Selected date is earlier than the last saved reading.', 'warning');
+    setSendEnabled(false);
+    return false;
+  }
+
+  if (readingDate >= lastReadingDate && readingNumber < lastReadingValue) {
+    setReadingWarning('Reading cannot decrease compared to the last saved value.', 'warning');
+    setSendEnabled(false);
+    return false;
+  }
+
+  setReadingWarning('Reading looks consistent with history.', 'success');
+  setSendEnabled(true);
+  return true;
+};
+
+const fetchLastReading = async () => {
+  setLastReadingDisplay();
+  try {
+    const response = await fetch(`/api/reading?meterCode=${encodeURIComponent(METER_CODE)}`, {
+      cache: 'no-store'
+    });
+    if (!response.ok) {
+      throw new Error('Unable to fetch last reading');
+    }
+    const payload = await response.json();
+    if (payload && payload.data) {
+      lastReadingValue = payload.data.reading;
+      lastReadingDate = payload.data.reading_date;
+    }
+    lastReadingError = false;
+  } catch (error) {
+    console.warn(error);
+    lastReadingValue = null;
+    lastReadingDate = null;
+    lastReadingError = true;
+  } finally {
+    lastReadingLoaded = true;
+    setLastReadingDisplay();
+    validateReadingInput();
+  }
+};
+
+const saveReading = async () => {
+  const readingValue = readingInput.value.trim();
+  const readingDate = dateInput.value;
+  const readingNumber = readingValue ? Number.parseInt(readingValue, 10) : null;
+
+  if (readingNumber === null || !readingDate) {
+    return false;
+  }
+
+  try {
+    const response = await fetch('/api/reading', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        meterCode: METER_CODE,
+        reading: readingNumber,
+        readingDate
+      })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = payload.message || 'Unable to save reading.';
+      setReadingWarning(message, 'warning');
+      setSendEnabled(false);
+      return false;
+    }
+    if (payload && payload.data) {
+      lastReadingValue = payload.data.reading;
+      lastReadingDate = payload.data.reading_date;
+      lastReadingLoaded = true;
+      lastReadingError = false;
+      setLastReadingDisplay();
+      setReadingWarning('Reading saved.', 'success');
+    }
+    return true;
+  } catch (error) {
+    console.warn(error);
+    setReadingWarning('Unable to reach the server to save this reading.', 'warning');
+    lastReadingError = true;
+    return false;
   }
 };
 
@@ -717,13 +935,18 @@ photoInput.addEventListener('click', () => {
   photoInput.value = '';
 });
 
-photoInput.addEventListener('change', () => {
+photoInput.addEventListener('change', async () => {
   const file = photoInput.files && photoInput.files[0];
   if (!file) {
     currentPhotoFile = null;
     photoPreview.innerHTML = '<p class="muted">No photo loaded yet.</p>';
     setStatus('Waiting for a photo.');
     return;
+  }
+
+  if (!dateTouched) {
+    const exifDate = await getExifCaptureDate(file);
+    dateInput.value = exifDate || buildTodayIsoDate();
   }
 
   currentPhotoFile = file;
@@ -740,6 +963,8 @@ photoInput.addEventListener('change', () => {
   };
   reader.readAsDataURL(file);
   setStatus('Photo ready. Click "Read meter".');
+  updateBody();
+  validateReadingInput();
 });
 
 readBtn.addEventListener('click', async () => {
@@ -762,12 +987,15 @@ readBtn.addEventListener('click', async () => {
       readingInput.value = result.value;
       setStatus(`Reading detected: ${result.value}. Review if needed.`);
       updateBody();
+      validateReadingInput();
     } else {
       setStatus('No clear reading detected. Enter it manually.');
+      validateReadingInput();
     }
   } catch (error) {
     console.error(error);
     setStatus('OCR failed. Enter the reading manually.');
+    validateReadingInput();
   } finally {
     readBtn.disabled = false;
   }
@@ -779,14 +1007,18 @@ readingInput.addEventListener('input', () => {
     readingInput.value = sanitized;
   }
   updateBody();
+  validateReadingInput();
 });
 
 readingInput.addEventListener('blur', () => {
   updateBody();
+  validateReadingInput();
 });
 
 dateInput.addEventListener('change', () => {
+  dateTouched = true;
   updateBody();
+  validateReadingInput();
 });
 
 toInput.addEventListener('input', () => {
@@ -817,26 +1049,39 @@ regenBtn.addEventListener('click', () => {
 });
 
 sendBtn.addEventListener('click', () => {
-  if (!sendBtn.dataset.gmailUrl) {
-    updateMailLinks();
+  if (sendBtn.disabled || saveInFlight) {
+    return;
   }
-  window.open(sendBtn.dataset.gmailUrl, '_blank', 'noopener');
+  if (!validateReadingInput()) {
+    return;
+  }
+  saveInFlight = true;
+  sendBtn.disabled = true;
+  saveReading()
+    .then((saved) => {
+      if (!saved) {
+        return;
+      }
+      if (!sendBtn.dataset.gmailUrl) {
+        updateMailLinks();
+      }
+      window.open(sendBtn.dataset.gmailUrl, '_blank', 'noopener');
+    })
+    .finally(() => {
+      saveInFlight = false;
+      validateReadingInput();
+    });
 });
 
 const init = () => {
-  const now = new Date();
-  const isoDate = [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, '0'),
-    String(now.getDate()).padStart(2, '0')
-  ].join('-');
-
-  dateInput.value = isoDate;
+  dateInput.value = buildTodayIsoDate();
   fromInput.value = fromInput.value || 'andrea.panizza75@gmail.com';
 
   updateSubject({ force: true });
   updateBody({ force: true });
   updateMailLinks();
+  setSendEnabled(false);
+  fetchLastReading();
 };
 
 init();

@@ -5,3 +5,4 @@ assets/*.png
 assets/*.JPG
 assets/*.JPEG
 assets/*.PNG
+node_modules/

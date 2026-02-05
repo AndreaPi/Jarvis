@@ -105,6 +105,10 @@
                   <input id="date-input" type="date">
                 </label>
               </div>
+              <div class="field-hints">
+                <p class="field-hint" id="last-reading">Last saved reading: --</p>
+                <p class="field-hint warning" id="reading-warning"></p>
+              </div>
             </section>
 
             <section class="card" aria-labelledby="email-title">
@@ -155,6 +159,7 @@
     </main>
 
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/exifr/dist/lite.umd.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

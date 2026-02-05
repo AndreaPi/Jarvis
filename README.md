@@ -28,6 +28,33 @@ Then open `http://localhost:8000`.
 ## Notes
 - OCR runs fully in the browser using Tesseract.js.
 - The Gmail flow opens a draft; you always review and send manually.
+- The upload date defaults to the photo EXIF capture date (DateTimeOriginal) when available; otherwise it uses today.
+
+## Backend (Monotonic Readings)
+To keep readings consistent across devices, Jarvis uses a small Supabase-backed API (`api/reading.js`) that stores the latest reading and enforces monotonic increases.
+
+### Supabase Setup
+1. Create a Supabase project (EU region recommended).
+2. Create the table below:
+
+```sql
+create table if not exists public.meter_readings (
+  meter_code text primary key,
+  reading integer not null,
+  reading_date date not null,
+  updated_at timestamptz not null default now()
+);
+```
+
+### Environment Variables (Vercel)
+Set these in your Vercel project:
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+
+The service role key is only used server-side in the API function. It should never be exposed to the browser.
+
+### Local Development
+`npm run serve` serves static files only; it does not run serverless functions. To test the API locally, use `vercel dev` or deploy to Vercel.
 
 ## Asset Naming (Meter Images)
 - Use the EXIF `DateTimeOriginal` value as the source of truth for the acquisition date.
