@@ -193,6 +193,71 @@ a:hover {
   border-style: dashed;
 }
 
+.debug-panel {
+  margin-top: 1.2rem;
+  border-top: 1px dashed var(--border);
+  padding-top: 1rem;
+}
+
+.debug-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--muted-strong);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.debug-results {
+  margin-top: 0.9rem;
+  display: grid;
+  gap: 0.9rem;
+}
+
+.debug-session {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-muted);
+  padding: 0.75rem;
+}
+
+.debug-session-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--muted-strong);
+  margin-bottom: 0.5rem;
+}
+
+.debug-stage-grid {
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.debug-stage {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 0.5rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.debug-stage img {
+  width: 100%;
+  height: auto;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: #fff;
+}
+
+.debug-stage-name {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted-strong);
+}
+
 .card-head {
   display: grid;
   gap: 0.4rem;
