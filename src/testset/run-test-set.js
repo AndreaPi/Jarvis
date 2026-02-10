@@ -8,6 +8,39 @@ const parseCsv = (text) => {
     .map(([filename, value]) => ({ filename, value }));
 };
 
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+const computeDebugScore = (expected, detected) => {
+  const expectedDigits = String(expected || '').replace(/\D/g, '');
+  const detectedDigits = String(detected || '').replace(/\D/g, '');
+  if (!expectedDigits) {
+    return null;
+  }
+  if (!detectedDigits) {
+    return 0;
+  }
+
+  const expectedNumber = Number.parseInt(expectedDigits, 10);
+  const detectedNumber = Number.parseInt(detectedDigits, 10);
+  if (Number.isFinite(expectedNumber) && Number.isFinite(detectedNumber)) {
+    const denominator = Math.max(Math.abs(expectedNumber), 1);
+    const mse = ((expectedNumber - detectedNumber) / denominator) ** 2;
+    return clamp(1 - mse, 0, 1);
+  }
+
+  const maxLength = Math.max(expectedDigits.length, detectedDigits.length);
+  if (!maxLength) {
+    return null;
+  }
+  let mismatches = 0;
+  for (let i = 0; i < maxLength; i += 1) {
+    if ((expectedDigits[i] || '') !== (detectedDigits[i] || '')) {
+      mismatches += 1;
+    }
+  }
+  return clamp(1 - mismatches / maxLength, 0, 1);
+};
+
 const renderTestResults = (resultsEl, results, correct, total) => {
   if (!resultsEl) {
     return;
@@ -17,7 +50,7 @@ const renderTestResults = (resultsEl, results, correct, total) => {
 
   const table = document.createElement('table');
   const header = document.createElement('tr');
-  ['File', 'Expected', 'Detected', 'Score', 'Result'].forEach((label) => {
+  ['File', 'Expected', 'Detected', 'Score', 'OCR', 'Result'].forEach((label) => {
     const th = document.createElement('th');
     th.textContent = label;
     header.appendChild(th);
@@ -28,7 +61,8 @@ const renderTestResults = (resultsEl, results, correct, total) => {
     const row = document.createElement('tr');
     const statusClass = result.match ? 'pass' : 'fail';
     const scoreDisplay = result.score !== null ? result.score.toFixed(2) : 'n/a';
-    [result.filename, result.expected, result.detected || '—', scoreDisplay].forEach((value) => {
+    const ocrDisplay = result.ocrScore !== null ? result.ocrScore.toFixed(2) : 'n/a';
+    [result.filename, result.expected, result.detected || '—', scoreDisplay, ocrDisplay].forEach((value) => {
       const cell = document.createElement('td');
       cell.textContent = value;
       row.appendChild(cell);
@@ -90,12 +124,14 @@ const createTestSetRunner = ({
         setStatus(`Reading ${i + 1}/${rows.length}: ${row.filename}`);
         const imageResponse = await fetch(`assets/${row.filename}`, { cache: 'no-store' });
         if (!imageResponse.ok) {
+          const debugScore = computeDebugScore(row.value, '');
           results.push({
             filename: row.filename,
             expected: row.value,
             detected: '',
             match: false,
-            score: null
+            score: debugScore,
+            ocrScore: null
           });
           continue;
         }
@@ -108,6 +144,7 @@ const createTestSetRunner = ({
 
         const detected = result && result.value ? result.value : '';
         const match = detected === row.value;
+        const debugScore = computeDebugScore(row.value, detected);
         if (match) {
           correct += 1;
         }
@@ -117,7 +154,8 @@ const createTestSetRunner = ({
           expected: row.value,
           detected,
           match,
-          score: result ? result.score : null
+          score: debugScore,
+          ocrScore: result ? result.score : null
         });
       }
 
