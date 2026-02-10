@@ -1,7 +1,12 @@
 *:Zone.Identifier
+node_modules/
+output/
 assets/*.jpg
 assets/*.jpeg
 assets/*.png
 assets/*.JPG
 assets/*.JPEG
 assets/*.PNG
+
+# Playwright CLI generated artifacts
+.playwright-cli/
