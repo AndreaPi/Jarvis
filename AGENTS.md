@@ -5,20 +5,23 @@
 - `styles.css`: Global styles and visual system.
 - `app.js`: Thin module entrypoint that imports `src/main.js`.
 - `src/main.js`: UI orchestration and event wiring.
-- `src/ocr/`: OCR pipeline and image processing modules.
+- `src/ocr/`: OCR pipeline, image processing modules, and optional neural ROI client.
 - `src/email/`: Email draft generation and link helpers.
 - `src/testset/`: Manual test-set runner logic.
 - `src/debug/`: Debug overlay rendering helpers.
+- `backend/`: Optional FastAPI service for neural ROI detection and YOLO fine-tuning scripts.
 - `package.json`: Local dev scripts.
 - `README.md`: Project overview and setup notes.
 - `assets/`: Static assets and example uploads.
-- `assets/meter_13012026.jpg`: Example upload asset.
 
 ## Build, Test, and Development Commands
 - `npm run serve`: Start a simple local web server on port 8000.
 - `npm run dev`: Alias of `npm run serve`.
+- `cd backend && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`: Backend setup.
+- `cd backend && source .venv/bin/activate && python train_roi.py --data data/roi_dataset.yaml --base-model yolov8n.pt`: Fine-tune pretrained ROI detector.
+- `cd backend && source .venv/bin/activate && uvicorn app:app --host 127.0.0.1 --port 8001 --reload`: Run neural ROI API.
 
-Open `http://localhost:8000` after running a serve command.
+Open `http://localhost:8000` after running a serve command. Neural ROI endpoint defaults to `http://127.0.0.1:8001/roi/detect`.
 
 ## Coding Style & Naming Conventions
 - Use 2-space indentation in HTML/CSS/JS.
@@ -28,7 +31,9 @@ Open `http://localhost:8000` after running a serve command.
 
 ## Testing Guidelines
 - No automated tests are configured.
-- Manual checks: upload image, run OCR, verify email draft fields, and confirm Gmail draft link.
+- Frontend manual checks: upload image, run OCR, verify email draft fields, and confirm Gmail draft link.
+- OCR test-set checks: run "Run test set" and inspect `Score` (scaled-MSE against expected), `OCR` confidence, and debug stages.
+- Backend sanity checks: `GET /health` and confirm `ready: true` after model weights are available.
 
 ## Commit & Pull Request Guidelines
 - No commit message convention is established in this repo.
@@ -38,61 +43,52 @@ Open `http://localhost:8000` after running a serve command.
 ## Security & Configuration Tips
 - The Gmail draft flow opens a client-side draft; no credentials are stored in code.
 - OCR runs in the browser; avoid adding API keys to the client without a secure proxy.
+- Backend is intended for local use; keep host/CORS scoped to localhost unless explicitly deploying.
 
-## OCR Handoff Notes (2026-02-09)
+## OCR Handoff Notes (2026-02-10)
 
 ### Current status
 - App runs on `http://127.0.0.1:8000` (`npm run serve`).
-- Test set currently ends at `0/8` accuracy.
-- Latest observed table:
-  - `meter_07012020.JPEG`: expected `1784`, detected `4000`, score `0.80`
-  - `meter_11112020.JPEG`: expected `1819`, detected `3084`, score `0.97`
-  - `meter_10092025.JPEG`: expected `2279`, detected `1040`, score `0.80`
-  - `meter_10092025_b.JPEG`: expected `2279`, detected `0071`, score `0.80`
-  - `meter_01122026.JPEG`: expected `2302`, detected `2000`, score `0.93`
-  - `meter_01132026.jpg`: expected `2302`, detected `5407`, score `0.98`
-  - `meter_01302026.JPEG`: expected `2307`, detected `0440`, score `0.81`
-  - `meter_02022026.JPEG`: expected `2308`, detected `0130`, score `0.80`
+- Frontend now supports optional neural ROI detection via backend API before heuristic ROI search.
+- Test-set `Score` now measures scaled-MSE divergence between `Expected` and `Detected`; OCR heuristic confidence is shown separately in `OCR`.
+- Backend environment and dependencies are installed locally (`backend/.venv`), but `/health` remains `ready: false` until `backend/models/roi.pt` exists.
 
 ### What worked
 - Added visual debug pipeline to UI test section:
-  - Stage 1: face detection overlay
-  - Stage 2: aligned frame + ROI boxes
-  - Stage 3: detected strip crop
-  - Stage 4: OCR input candidate
+  - Stage `0`: neural ROI overlay + ROI crop (when backend/model is available)
+  - Stage `1`: face detection overlay
+  - Stage `2`: aligned frame + ROI boxes
+  - Stage `3`: strip score top-k
+  - Stage `4`: strip binary/edge decision map
+  - Stage `5`: selected strip/fallback crop
+  - Stage `6`: OCR input candidate
 - Debug capture is available directly from "Run test set" output, so each image can be inspected.
-- Face/circle detection is often roughly centered on the meter body.
+- Frontend pipeline safely falls back to heuristic ROI if backend is unavailable or low-confidence.
 
 ### What did not work
-- Strip ROI detection is still wrong on most images.
-- Stage 2 boxes frequently lock onto lid/background/rim instead of the numeric window.
-- Stage 3 crops are often non-digit regions (lid edge, blank white region, red dials).
-- Rotation choice is coupled with noisy strip scoring, so bad orientation/ROI combinations are selected.
-- OCR confidence score is over-optimistic in some paths, masking ROI failures.
+- Neural ROI model is not trained yet in this workspace, so backend ROI cannot improve accuracy yet.
+- End-to-end OCR accuracy after neural integration has not been re-benchmarked on the full test set.
 
 ### Evidence artifacts
 - Debug screenshots exported to: `output/playwright/debug-roi/`
 - Final test snapshot with table + debug panels: `.playwright-cli/page-2026-02-09T22-52-09-298Z.yml`
+- Neural integration code paths: `src/ocr/neural-roi.js`, `src/ocr/pipeline.js`, `backend/app.py`, `backend/train_roi.py`
 
 ### Next plan (priority order)
-1. Remove score floor inflation in `readDigitsByCells` (`Math.max(score, 0.8/0.82)`), so bad ROI cannot look "good".
-2. Make alignment two-pass:
-   - Pass A: detect face + canonical rotation only.
-   - Pass B: search strip only inside a strict meter-window search band (relative to face center/radius).
-3. Add hard strip acceptance gates before OCR:
-   - low red ratio (to avoid dial clusters),
-   - expected aspect range,
-   - expected distance from face center,
-   - minimum digit-like vertical stroke periodicity.
-4. If strip confidence is low, skip strip ROI and use deterministic fallback ROI tied to canonical meter pose.
-5. Add two debug frames:
-   - strip score heatmap / top-k strip boxes with scores,
-   - binary/edge map used for strip decision.
-6. Re-run full test set and verify first target:
-   - detection exists for all 8 images,
-   - then optimize per-image score threshold (`>= 0.8`) with truthful scoring (no artificial floor).
+1. Label dataset for `digit_window` and populate `backend/data/roi_dataset.yaml` path.
+2. Fine-tune pretrained YOLO (`yolov8n.pt` or `yolov8s.pt`) and produce `backend/models/roi.pt` using:
+   `cd backend && source .venv/bin/activate && python train_roi.py --data data/roi_dataset.yaml --base-model yolov8n.pt`
+3. Start backend and confirm `GET /health` reports `ready: true` using:
+   `cd backend && source .venv/bin/activate && uvicorn app:app --host 127.0.0.1 --port 8001 --reload`
+4. Re-run full test set with backend enabled and compare:
+   - pass/fail accuracy,
+   - scaled-MSE `Score`,
+   - OCR confidence (`OCR`),
+   - debug overlays (neural ROI vs heuristic fallback).
+5. Tune `OCR_CONFIG.neuralRoi` thresholds (`minConfidence`, `expandX`, `expandY`, `includeFullFallbackCandidates`) based on failures.
 
 ### Practical notes for tomorrow
-- Prefer running the test set from UI with debug overlay enabled.
-- When using Playwright in this environment, global `playwright-cli` may be more reliable than the wrapper if npm network is flaky.
-- Maintainability: if `src/ocr/canvas-utils.js` keeps growing, split it into focused modules (for example `image-ops.js` and `region-analysis.js`) before adding new OCR features.
+- Run frontend and backend in separate terminals (`8000` + `8001`) during OCR benchmarking.
+- Health check command once backend is running: `curl http://127.0.0.1:8001/health` (target: `"ready": true`).
+- Keep `includeFullFallbackCandidates: true` until neural ROI model quality is verified; disable only after stable ROI recall.
+- If `src/ocr/canvas-utils.js` keeps growing, split it into focused modules (for example `image-ops.js` and `region-analysis.js`) before adding new OCR features.
