@@ -34,6 +34,7 @@ Open `http://localhost:8000` after running a serve command. Neural ROI endpoint 
 - Frontend manual checks: upload image, run OCR, verify email draft fields, and confirm Gmail draft link.
 - OCR test-set checks: run "Run test set" and inspect `Score` (scaled-MSE against expected), `OCR` confidence, and debug stages.
 - Backend sanity checks: `GET /health` and confirm `ready: true` after model weights are available.
+- Prefer running the test set from UI with debug overlay enabled.
 
 ## Commit & Pull Request Guidelines
 - No commit message convention is established in this repo.
@@ -44,6 +45,9 @@ Open `http://localhost:8000` after running a serve command. Neural ROI endpoint 
 - The Gmail draft flow opens a client-side draft; no credentials are stored in code.
 - OCR runs in the browser; avoid adding API keys to the client without a secure proxy.
 - Backend is intended for local use; keep host/CORS scoped to localhost unless explicitly deploying.
+
+## IMPORTANT
+- When using Playwright in this environment, global `playwright-cli` may be more reliable than the wrapper if npm network is flaky.
 
 ## OCR Handoff Notes (2026-02-10)
 
@@ -92,3 +96,56 @@ Open `http://localhost:8000` after running a serve command. Neural ROI endpoint 
 - Health check command once backend is running: `curl http://127.0.0.1:8001/health` (target: `"ready": true`).
 - Keep `includeFullFallbackCandidates: true` until neural ROI model quality is verified; disable only after stable ROI recall.
 - If `src/ocr/canvas-utils.js` keeps growing, split it into focused modules (for example `image-ops.js` and `region-analysis.js`) before adding new OCR features.
+
+## OCR Benchmark Update (2026-02-13)
+
+### What was completed
+- Verified `backend/models/roi.pt` is present and backend health is `ready: true`.
+- Re-ran full UI test set with backend enabled and debug overlay enabled.
+- Tuned ROI thresholds:
+  - `backend/app.py`: `ROI_DEFAULT_CONFIDENCE` default from `0.25` to `0.05`.
+  - `src/ocr/config.js`: `neuralRoi.minConfidence` to `0.05`, `expandX` to `0.18`, `expandY` to `0.24`, kept `includeFullFallbackCandidates: true`.
+  - `src/ocr/config.js`: reduced `fallbackCandidates` from `10` to `6` to limit refinement cost.
+
+### Measured results
+- Baseline tuned-off snapshot comparison point:
+  - `.playwright-cli/page-2026-02-11T22-41-27-697Z.yml`
+  - Accuracy: `0/9`.
+  - ROI stage-0 coverage in debug sessions: `2/9` images.
+  - Mean `Score`: `0.536`.
+- After threshold tuning:
+  - `.playwright-cli/page-2026-02-13T07-56-25-235Z.yml`
+  - Accuracy: `0/9`.
+  - ROI stage-0 coverage in debug sessions: `7/9` images.
+  - Mean `Score`: `0.389`.
+
+### Key observations
+- ROI recall improved materially (2/9 to 7/9), but end-to-end OCR accuracy did not improve.
+- Some samples moved closer numerically (for example `meter_10092025_b.JPEG` detected `2200` vs expected `2279`, score `1.00` by scaled metric), but all rows still failed exact-match.
+- Runtime remained high for full-suite runs (~17-18 minutes), with repeated fallback refinement phases still dominant.
+
+### Suggested next tuning pass
+1. Keep current ROI recall settings (`ROI_DEFAULT_CONFIDENCE=0.05`, `minConfidence=0.05`) but tune strip/fallback selection quality rather than ROI recall.
+2. Investigate exact-match objective mismatch vs scaled score (some near-miss values score high but still fail pass/fail).
+3. Add per-image candidate logs (top-3 OCR values + scores before final pick) to identify why fallback selects wrong 4-digit sequence.
+
+### Follow-up implementation (2026-02-13, later)
+- Implemented strip/fallback selection pass in code:
+  - `src/ocr/recognition.js`: value-level ranking now aggregates repeated candidates per OCR pass (`hits`, `bestScore`, `averageScore`) instead of picking only the single max raw candidate.
+  - `src/ocr/pipeline.js`: fallback candidate ordering now uses source-aware priority (aligned/strip-first, fallback-deprioritized) before digit-cell refinement.
+- Implemented per-image top-candidate logging:
+  - `src/ocr/pipeline.js`: final OCR selection now pushes structured logs to `window.__jarvisOcrSelectionLogs` and emits `console.info('[OCR] selection', payload)`.
+  - Log payload includes `selected` plus top 3 candidates with score/hits/refined/source-count metadata.
+- Validation probe (single image via dynamic module import):
+  - `meter_07012020.JPEG` produced one selection log entry with populated `topCandidates` in `window.__jarvisOcrSelectionLogs`.
+- Full UI rerun after this pass:
+  - `.playwright-cli/page-2026-02-13T08-26-10-467Z.yml`
+  - Accuracy remained `0/9`; row outputs and mean `Score` (`0.389`) were unchanged versus `.playwright-cli/page-2026-02-13T07-56-25-235Z.yml`.
+
+### Restart clarification
+- Neural network usage is ROI detection only (backend `/roi/detect` + frontend `detectNeuralRoi`); digit OCR is still Tesseract-based.
+- To visually verify ROI on a fresh run:
+  1. Start frontend (`npm run serve`) and backend (`uvicorn ... --port 8001`).
+  2. In UI section "4. Debug the test set", keep "Enable overlay capture" checked.
+  3. Click "Run test set".
+  4. Inspect per-image stages `0. neural roi detection` and `0b. neural roi crop` in the debug panel.
