@@ -7,6 +7,18 @@ assets/*.png
 assets/*.JPG
 assets/*.JPEG
 assets/*.PNG
+.venv/
+backend/.venv/
+__pycache__/
+*.pyc
+backend/__pycache__/
+backend/runs/
+backend/models/*.pt
+backend/models/*.onnx
+backend/yolov8*.pt
+backend/data/roi_dataset/labels/*.cache
+backend/data/roi_dataset/previews/
+backend/data/roi_dataset/qa_previews/
 
 # Playwright CLI generated artifacts
 .playwright-cli/

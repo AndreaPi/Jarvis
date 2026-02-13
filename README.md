@@ -18,15 +18,43 @@ npm run serve
 
 Then open `http://localhost:8000`.
 
+### Optional Neural ROI Backend (recommended)
+You can run a Python backend that detects the meter digit window using a fine-tuned pretrained model.
+
+1. Open a second terminal and set up backend dependencies:
+
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+2. Train/fine-tune a model (copies best checkpoint to `backend/models/roi.pt`):
+
+```bash
+python train_roi.py --data data/roi_dataset.yaml --base-model yolov8n.pt
+```
+
+3. Start the API:
+
+```bash
+uvicorn app:app --host 127.0.0.1 --port 8001 --reload
+```
+
+By default, the frontend calls `http://127.0.0.1:8001/roi/detect` before heuristic ROI search.
+
 ## File Overview
 - `index.html`: UI layout.
 - `styles.css`: Styling.
 - `app.js`: OCR + email draft logic.
+- `backend/`: Optional FastAPI service for neural ROI detection + YOLO fine-tuning script.
 - `AGENTS.md`: Contributor guide.
 - `assets/`: Static assets and example uploads.
 
 ## Notes
 - OCR runs fully in the browser using Tesseract.js.
+- If the optional backend is running, neural ROI detection is used first, then JS OCR reads digits from the cropped region.
 - The Gmail flow opens a draft; you always review and send manually.
 
 ## Asset Naming (Meter Images)
