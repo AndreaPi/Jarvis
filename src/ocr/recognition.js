@@ -166,18 +166,80 @@ const scoreCandidate = (candidate) => {
   return confidenceScore * 0.6 + lengthScore * 0.3 + areaScore * 0.1;
 };
 
-const selectBestReading = (data, canvas) => {
+const rankReadings = (data, canvas, limit = 3) => {
   const candidates = buildCandidateScores(data, canvas);
-  const preferred = candidates.filter((candidate) => candidate.value.length === OCR_CONFIG.preferredDigits);
-  const shortlist = preferred.length ? preferred : candidates;
-  let best = null;
-  shortlist.forEach((candidate) => {
+  if (!candidates.length) {
+    return [];
+  }
+
+  const valueBuckets = new Map();
+  candidates.forEach((candidate) => {
     const score = scoreCandidate(candidate);
-    if (!best || score > best.score) {
-      best = { ...candidate, score };
+    const value = candidate.value;
+    if (!valueBuckets.has(value)) {
+      valueBuckets.set(value, {
+        value,
+        confidence: candidate.confidence,
+        areaRatio: candidate.areaRatio,
+        bestScore: score,
+        totalScore: score,
+        hits: 1
+      });
+      return;
+    }
+
+    const existing = valueBuckets.get(value);
+    existing.hits += 1;
+    existing.totalScore += score;
+    if (score > existing.bestScore) {
+      existing.bestScore = score;
+      existing.confidence = candidate.confidence;
+      existing.areaRatio = candidate.areaRatio;
     }
   });
-  return best;
+
+  const ranked = [...valueBuckets.values()]
+    .map((entry) => {
+      const averageScore = entry.totalScore / entry.hits;
+      const consensusBoost = clamp((entry.hits - 1) * 0.08, 0, 0.24);
+      const preferredLengthBoost = entry.value.length === OCR_CONFIG.preferredDigits ? 0.05 : -0.05;
+      const leadingZeroPenalty = (
+        entry.value.length === OCR_CONFIG.preferredDigits
+        && entry.value.startsWith('0')
+      ) ? 0.06 : 0;
+      const score = clamp(
+        entry.bestScore * 0.7 + averageScore * 0.25 + consensusBoost + preferredLengthBoost - leadingZeroPenalty,
+        0,
+        0.99
+      );
+
+      return {
+        value: entry.value,
+        confidence: entry.confidence,
+        areaRatio: entry.areaRatio,
+        score,
+        bestScore: entry.bestScore,
+        averageScore,
+        hits: entry.hits
+      };
+    })
+    .sort((a, b) => b.score - a.score || b.hits - a.hits || b.bestScore - a.bestScore);
+
+  if (!Number.isFinite(limit) || limit <= 0) {
+    return ranked;
+  }
+  return ranked.slice(0, limit);
+};
+
+const selectBestReading = (data, canvas) => {
+  const ranked = rankReadings(data, canvas, 3);
+  if (!ranked.length) {
+    return null;
+  }
+  return {
+    ...ranked[0],
+    topCandidates: ranked
+  };
 };
 
 const readDigitsByCells = async (worker, source, setProgress) => {

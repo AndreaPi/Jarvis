@@ -14,8 +14,17 @@ const OCR_CONFIG = {
   minDigits: 3,
   earlyStopScore: 0.84,
   fallbackScoreThreshold: 0.72,
-  fallbackCandidates: 10,
-  minScaleWidth: 480
+  fallbackCandidates: 6,
+  minScaleWidth: 480,
+  neuralRoi: {
+    enabled: true,
+    endpoint: 'http://127.0.0.1:8001/roi/detect',
+    timeoutMs: 3500,
+    minConfidence: 0.05,
+    expandX: 0.18,
+    expandY: 0.24,
+    includeFullFallbackCandidates: true
+  }
 };
 
 const ALIGNMENT_CONFIG = {
