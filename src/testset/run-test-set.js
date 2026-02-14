@@ -50,7 +50,7 @@ const renderTestResults = (resultsEl, results, correct, total) => {
 
   const table = document.createElement('table');
   const header = document.createElement('tr');
-  ['File', 'Expected', 'Detected', 'Score', 'OCR', 'Result'].forEach((label) => {
+  ['File', 'Expected', 'Detected', 'Value Match', 'OCR Confidence', 'Result'].forEach((label) => {
     const th = document.createElement('th');
     th.textContent = label;
     header.appendChild(th);
@@ -88,6 +88,19 @@ const createTestSetRunner = ({
   resultsEl,
   runMeterOcr
 }) => {
+  const formatError = (error) => {
+    if (!error) {
+      return 'unknown error';
+    }
+    if (typeof error === 'string') {
+      return error;
+    }
+    if (error instanceof Error) {
+      return error.message || error.name || 'error';
+    }
+    return String(error);
+  };
+
   const setStatus = (message) => {
     if (statusEl) {
       statusEl.textContent = message;
@@ -118,12 +131,50 @@ const createTestSetRunner = ({
 
       const results = [];
       let correct = 0;
+      let rowErrors = 0;
 
       for (let i = 0; i < rows.length; i += 1) {
         const row = rows[i];
-        setStatus(`Reading ${i + 1}/${rows.length}: ${row.filename}`);
-        const imageResponse = await fetch(`assets/${row.filename}`, { cache: 'no-store' });
-        if (!imageResponse.ok) {
+        try {
+          setStatus(`Reading ${i + 1}/${rows.length}: ${row.filename}`);
+          const imageResponse = await fetch(`assets/${row.filename}`, { cache: 'no-store' });
+          if (!imageResponse.ok) {
+            const debugScore = computeDebugScore(row.value, '');
+            results.push({
+              filename: row.filename,
+              expected: row.value,
+              detected: '',
+              match: false,
+              score: debugScore,
+              ocrScore: null
+            });
+            continue;
+          }
+
+          const blob = await imageResponse.blob();
+          const file = new File([blob], row.filename, { type: blob.type || 'image/jpeg' });
+          const result = await runMeterOcr(file, (message) => {
+            setStatus(`Test ${i + 1}/${rows.length}: ${message}`);
+          });
+
+          const detected = result && result.value ? result.value : '';
+          const match = detected === row.value;
+          const debugScore = computeDebugScore(row.value, detected);
+          if (match) {
+            correct += 1;
+          }
+
+          results.push({
+            filename: row.filename,
+            expected: row.value,
+            detected,
+            match,
+            score: debugScore,
+            ocrScore: result ? result.score : null
+          });
+        } catch (rowError) {
+          rowErrors += 1;
+          console.error(`Test row failed for ${row.filename}`, rowError);
           const debugScore = computeDebugScore(row.value, '');
           results.push({
             filename: row.filename,
@@ -133,37 +184,18 @@ const createTestSetRunner = ({
             score: debugScore,
             ocrScore: null
           });
-          continue;
         }
-
-        const blob = await imageResponse.blob();
-        const file = new File([blob], row.filename, { type: blob.type || 'image/jpeg' });
-        const result = await runMeterOcr(file, (message) => {
-          setStatus(`Test ${i + 1}/${rows.length}: ${message}`);
-        });
-
-        const detected = result && result.value ? result.value : '';
-        const match = detected === row.value;
-        const debugScore = computeDebugScore(row.value, detected);
-        if (match) {
-          correct += 1;
-        }
-
-        results.push({
-          filename: row.filename,
-          expected: row.value,
-          detected,
-          match,
-          score: debugScore,
-          ocrScore: result ? result.score : null
-        });
       }
 
-      setStatus(`Done. ${correct}/${rows.length} correct.`);
+      setStatus(
+        rowErrors
+          ? `Done. ${correct}/${rows.length} correct. ${rowErrors} row error(s); see console.`
+          : `Done. ${correct}/${rows.length} correct.`
+      );
       renderTestResults(resultsEl, results, correct, rows.length);
     } catch (error) {
       console.error(error);
-      setStatus('Test run failed. Check the console for details.');
+      setStatus(`Test run failed: ${formatError(error)}.`);
     } finally {
       runButton.disabled = false;
     }
