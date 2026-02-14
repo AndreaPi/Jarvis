@@ -46,6 +46,39 @@ const addNeuralRoiDebugStages = (debugSession, baseCanvas, roiRect, roiDetection
   addDebugStage(debugSession, '0. neural roi detection', overlay);
 };
 
+const addNeuralRoiMissStage = (debugSession, baseCanvas, probe) => {
+  if (!debugSession) {
+    return;
+  }
+  const reason = probe && probe.reason ? probe.reason : 'unknown';
+  const geometry = probe && probe.geometry ? probe.geometry : null;
+  const geometrySuffix = geometry && geometry.metric
+    ? ` (${geometry.metric}=${Number.isFinite(geometry.value) ? geometry.value.toFixed(3) : 'n/a'})`
+    : '';
+  const confidence = Number.isFinite(probe && probe.confidence) ? ` ${(probe.confidence * 100).toFixed(1)}%` : '';
+  const overlay = drawOverlayCanvas(baseCanvas, [
+    {
+      x: Math.round(baseCanvas.width * 0.02),
+      y: Math.round(baseCanvas.height * 0.02),
+      width: Math.round(baseCanvas.width * 0.96),
+      height: Math.round(baseCanvas.height * 0.96),
+      label: `neural roi miss: ${reason}${geometrySuffix}${confidence}`,
+      color: '#ef4444'
+    }
+  ]);
+  addDebugStage(debugSession, '0. neural roi detection', overlay);
+};
+
+const formatNeuralRoiMissReason = (probe) => {
+  const reason = probe && probe.reason ? probe.reason : 'unknown';
+  const geometry = probe && probe.geometry ? probe.geometry : null;
+  if (geometry && geometry.metric) {
+    const value = Number.isFinite(geometry.value) ? geometry.value.toFixed(3) : 'n/a';
+    return `${reason}:${geometry.metric}=${value}`;
+  }
+  return reason;
+};
+
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
 const recordSelectionEvidence = (
@@ -232,23 +265,29 @@ const runMeterOcr = async (file, setProgress) => {
     const neuralRoiConfig = OCR_CONFIG.neuralRoi || {};
     let roiCrop = null;
     let roiUsed = false;
+    let roiProbe = { ok: false, reason: 'disabled' };
     if (neuralRoiConfig.enabled) {
       if (setProgress) {
         setProgress('Requesting neural ROI...');
       }
-      const roiDetection = await detectNeuralRoi(file, neuralRoiConfig);
-      if (roiDetection) {
-        const roiRect = resolveNeuralRoiRect(baseCanvas, roiDetection, neuralRoiConfig);
-        addNeuralRoiDebugStages(debugSession, baseCanvas, roiRect, roiDetection);
+      roiProbe = await detectNeuralRoi(file, neuralRoiConfig);
+      if (roiProbe.ok) {
+        const roiRect = resolveNeuralRoiRect(baseCanvas, roiProbe, neuralRoiConfig);
+        addNeuralRoiDebugStages(debugSession, baseCanvas, roiRect, roiProbe);
         roiCrop = cropCanvas(baseCanvas, roiRect);
         addDebugStage(debugSession, '0b. neural roi crop', roiCrop);
         roiUsed = true;
+      } else {
+        addNeuralRoiMissStage(debugSession, baseCanvas, roiProbe);
+        if (setProgress) {
+          setProgress(`Neural ROI miss (${formatNeuralRoiMissReason(roiProbe)}), using fallback.`);
+        }
       }
     }
 
     const candidateBuckets = [];
     if (roiCrop) {
-      const roiCandidates = buildDigitCandidates(roiCrop, debugSession, addDebugStage);
+      const roiCandidates = buildDigitCandidates(roiCrop, debugSession, addDebugStage, { roiMode: true });
       candidateBuckets.push(...roiCandidates.map((candidate) => ({
         ...candidate,
         label: `${candidate.label}-roi`
@@ -434,11 +473,15 @@ const runMeterOcr = async (file, setProgress) => {
       });
     }
 
-    if (setProgress && roiUsed) {
-      if (bestResult && bestResult.value) {
-        setProgress(`Neural ROI + OCR complete (${bestResult.value}).`);
-      } else {
-        setProgress('Neural ROI found, OCR uncertain.');
+    if (setProgress) {
+      if (roiUsed) {
+        if (bestResult && bestResult.value) {
+          setProgress(`Neural ROI + OCR complete (${bestResult.value}).`);
+        } else {
+          setProgress('Neural ROI found, OCR uncertain.');
+        }
+      } else if (neuralRoiConfig.enabled) {
+        setProgress(`Fallback OCR complete (neural miss: ${formatNeuralRoiMissReason(roiProbe)}).`);
       }
     }
 

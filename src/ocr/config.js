@@ -20,10 +20,20 @@ const OCR_CONFIG = {
     enabled: true,
     endpoint: 'http://127.0.0.1:8001/roi/detect',
     timeoutMs: 3500,
-    minConfidence: 0.05,
+    minConfidence: 0.01,
     expandX: 0.18,
     expandY: 0.24,
-    includeFullFallbackCandidates: true
+    sanity: {
+      minCenterX: 0.28,
+      maxCenterX: 0.62,
+      minCenterY: 0.28,
+      maxCenterY: 0.68,
+      minArea: 0.003,
+      maxArea: 0.03,
+      minAspect: 0.35,
+      maxAspect: 2.8
+    },
+    includeFullFallbackCandidates: false
   }
 };
 

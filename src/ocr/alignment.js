@@ -147,7 +147,48 @@ const buildAlignedDigitCandidates = (source, debugSession, addDebugStageFn = () 
   return candidates;
 };
 
-const buildDigitCandidates = (source, debugSession = null, addDebugStageFn = () => {}) => {
+const buildNeuralRoiCandidates = (source, debugSession, addDebugStageFn = () => {}) => {
+  const uniqueAngles = [0, 180, 90, 270];
+  const candidates = [];
+
+  uniqueAngles.forEach((angle) => {
+    const rotated = angle === 0 ? source : rotateCanvas(source, angle);
+
+    let primaryCanvas = tightenCropByInk(rotated, 0.12);
+    primaryCanvas = scaleCanvas(primaryCanvas, OCR_CONFIG.minScaleWidth);
+    if (hasInk(primaryCanvas)) {
+      candidates.push({ canvas: primaryCanvas, label: `roi-${angle}-primary` });
+    }
+
+    const edgeRect = findDigitWindowByEdges(rotated);
+    if (edgeRect) {
+      let edgeCanvas = cropCanvas(rotated, edgeRect);
+      edgeCanvas = tightenCropByInk(edgeCanvas, 0.16);
+      edgeCanvas = scaleCanvas(edgeCanvas, OCR_CONFIG.minScaleWidth);
+      if (hasInk(edgeCanvas)) {
+        candidates.push({ canvas: edgeCanvas, label: `roi-${angle}-edge` });
+      }
+    }
+  });
+
+  if (!candidates.length) {
+    let fallback = scaleCanvas(source, OCR_CONFIG.minScaleWidth);
+    candidates.push({ canvas: fallback, label: 'roi-raw-fallback' });
+  }
+
+  if (debugSession) {
+    addDebugStageFn(debugSession, '5. detected strip crop', source);
+    addDebugStageFn(debugSession, '6. OCR input candidate', candidates[0].canvas);
+  }
+
+  return candidates;
+};
+
+const buildDigitCandidates = (source, debugSession = null, addDebugStageFn = () => {}, options = {}) => {
+  if (options && options.roiMode) {
+    return buildNeuralRoiCandidates(source, debugSession, addDebugStageFn);
+  }
+
   const alignedCandidates = buildAlignedDigitCandidates(source, debugSession, addDebugStageFn);
   const meterCrop = cropCenterSquare(source, OCR_CONFIG.meterCropScale);
   const rotations = [0, 90, 180, 270];

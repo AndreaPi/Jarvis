@@ -33,12 +33,66 @@ const normalizeRect = (rect) => {
   };
 };
 
+const createProbeMiss = (reason, extra = {}) => ({
+  ok: false,
+  reason,
+  ...extra
+});
+
+const evaluateRectSanity = (rect, sanityConfig) => {
+  if (!sanityConfig || sanityConfig.enabled === false) {
+    return { ok: true };
+  }
+
+  const centerX = rect.x + rect.width * 0.5;
+  const centerY = rect.y + rect.height * 0.5;
+  const area = rect.width * rect.height;
+  const aspect = rect.width / Math.max(rect.height, 1e-6);
+
+  const minCenterX = Number.isFinite(sanityConfig.minCenterX) ? sanityConfig.minCenterX : 0;
+  const maxCenterX = Number.isFinite(sanityConfig.maxCenterX) ? sanityConfig.maxCenterX : 1;
+  if (centerX < minCenterX || centerX > maxCenterX) {
+    return createProbeMiss('invalid-geometry', {
+      geometry: { metric: 'centerX', value: centerX, min: minCenterX, max: maxCenterX }
+    });
+  }
+
+  const minCenterY = Number.isFinite(sanityConfig.minCenterY) ? sanityConfig.minCenterY : 0;
+  const maxCenterY = Number.isFinite(sanityConfig.maxCenterY) ? sanityConfig.maxCenterY : 1;
+  if (centerY < minCenterY || centerY > maxCenterY) {
+    return createProbeMiss('invalid-geometry', {
+      geometry: { metric: 'centerY', value: centerY, min: minCenterY, max: maxCenterY }
+    });
+  }
+
+  const minArea = Number.isFinite(sanityConfig.minArea) ? sanityConfig.minArea : 0;
+  const maxArea = Number.isFinite(sanityConfig.maxArea) ? sanityConfig.maxArea : 1;
+  if (area < minArea || area > maxArea) {
+    return createProbeMiss('invalid-geometry', {
+      geometry: { metric: 'area', value: area, min: minArea, max: maxArea }
+    });
+  }
+
+  const minAspect = Number.isFinite(sanityConfig.minAspect) ? sanityConfig.minAspect : 0;
+  const maxAspect = Number.isFinite(sanityConfig.maxAspect) ? sanityConfig.maxAspect : Number.POSITIVE_INFINITY;
+  if (aspect < minAspect || aspect > maxAspect) {
+    return createProbeMiss('invalid-geometry', {
+      geometry: { metric: 'aspect', value: aspect, min: minAspect, max: maxAspect }
+    });
+  }
+
+  return {
+    ok: true,
+    geometry: { centerX, centerY, area, aspect }
+  };
+};
+
 const detectNeuralRoi = async (file, neuralRoiConfig) => {
   if (!neuralRoiConfig || !neuralRoiConfig.enabled || !neuralRoiConfig.endpoint) {
-    return null;
+    return createProbeMiss('disabled');
   }
   if (!file || typeof fetch !== 'function' || typeof FormData === 'undefined') {
-    return null;
+    return createProbeMiss('unsupported-environment');
   }
 
   const formData = new FormData();
@@ -54,35 +108,59 @@ const detectNeuralRoi = async (file, neuralRoiConfig) => {
       signal: abortController ? abortController.signal : undefined
     });
     if (!response.ok) {
-      return null;
+      return createProbeMiss('http-error', { status: response.status });
     }
 
-    const payload = await response.json();
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch (error) {
+      return createProbeMiss('invalid-json');
+    }
     if (!payload || !payload.ok || !payload.bbox_norm) {
-      return null;
+      return createProbeMiss('no-detection', {
+        confidence: toFiniteNumber(payload && payload.confidence),
+        model: payload && payload.model ? payload.model : null
+      });
     }
 
     const rect = normalizeRect(payload.bbox_norm);
     if (!rect) {
-      return null;
+      return createProbeMiss('invalid-bbox');
     }
 
     const confidence = toFiniteNumber(payload.confidence);
     if (confidence === null) {
-      return null;
+      return createProbeMiss('invalid-confidence');
     }
     const minConfidence = Number.isFinite(neuralRoiConfig.minConfidence) ? neuralRoiConfig.minConfidence : 0;
     if (confidence < minConfidence) {
-      return null;
+      return createProbeMiss('low-confidence', {
+        confidence,
+        minConfidence
+      });
+    }
+
+    const sanity = evaluateRectSanity(rect, neuralRoiConfig.sanity);
+    if (!sanity.ok) {
+      return createProbeMiss(sanity.reason, {
+        confidence,
+        geometry: sanity.geometry
+      });
     }
 
     return {
+      ok: true,
       rect,
       confidence,
-      model: payload.model || 'unknown'
+      model: payload.model || 'unknown',
+      geometry: sanity.geometry || null
     };
   } catch (error) {
-    return null;
+    if (error && error.name === 'AbortError') {
+      return createProbeMiss('timeout');
+    }
+    return createProbeMiss('network-error');
   } finally {
     if (timeoutId) {
       clearTimeout(timeoutId);
