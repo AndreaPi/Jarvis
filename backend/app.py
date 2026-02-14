@@ -42,7 +42,10 @@ DEFAULT_CONFIDENCE = _env_float("ROI_DEFAULT_CONFIDENCE", 0.05)
 DEFAULT_IOU = _env_float("ROI_DEFAULT_IOU", 0.5)
 DEFAULT_IMGSZ = _env_int("ROI_DEFAULT_IMGSZ", 960)
 CLASS_INDEX = os.getenv("ROI_CLASS_INDEX")
-DEVICE = os.getenv("ROI_DEVICE")
+DEVICE_RAW = os.getenv("ROI_DEVICE", "cpu").strip()
+if not DEVICE_RAW:
+  DEVICE_RAW = "cpu"
+DEVICE = None if DEVICE_RAW.lower() == "auto" else DEVICE_RAW
 
 if CLASS_INDEX is None:
   CLASS_INDEX_VALUE = None
@@ -111,6 +114,10 @@ def health() -> dict:
     "ready": ready,
     "model_path": str(MODEL_PATH),
     "model_exists": model_exists,
+    "device": DEVICE_RAW if ready else (DEVICE or "auto"),
+    "default_confidence": DEFAULT_CONFIDENCE,
+    "default_iou": DEFAULT_IOU,
+    "default_imgsz": DEFAULT_IMGSZ,
     "error": error
   }
 
@@ -139,6 +146,7 @@ async def detect_roi(image: UploadFile = File(...)) -> dict:
     return {
       "ok": False,
       "model": detector.model_name,
+      "device": detector.device_name,
       "bbox_norm": None,
       "confidence": 0.0,
       "class_id": None,
@@ -149,6 +157,7 @@ async def detect_roi(image: UploadFile = File(...)) -> dict:
   return {
     "ok": True,
     "model": detector.model_name,
+    "device": detector.device_name,
     "bbox_norm": detection.to_normalized_bbox(width=width, height=height),
     "confidence": detection.confidence,
     "class_id": detection.class_id,

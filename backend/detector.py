@@ -39,7 +39,7 @@ class RoiDetector:
   def __init__(self, weights_path: Path, class_index: int | None = None, device: str | None = None) -> None:
     self.weights_path = Path(weights_path)
     self.class_index = class_index
-    self.device = device or None
+    self.device = self._normalize_device(device)
     if not self.weights_path.exists():
       raise DetectorUnavailableError(
         f"Model weights not found at {self.weights_path}. Train first or set ROI_MODEL_PATH."
@@ -55,9 +55,24 @@ class RoiDetector:
     self._model = YOLO(str(self.weights_path))
     self._names = self._model.names or {}
 
+  @staticmethod
+  def _normalize_device(device: str | None) -> str | None:
+    if device is None:
+      return None
+    normalized = str(device).strip()
+    if not normalized:
+      return None
+    if normalized.lower() == "auto":
+      return None
+    return normalized
+
   @property
   def model_name(self) -> str:
     return self.weights_path.name
+
+  @property
+  def device_name(self) -> str:
+    return self.device or "auto"
 
   def _resolve_name(self, class_id: int) -> str:
     if isinstance(self._names, dict):

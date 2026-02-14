@@ -27,7 +27,11 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--batch", type=int, default=8)
   parser.add_argument("--patience", type=int, default=30)
   parser.add_argument("--workers", type=int, default=4)
-  parser.add_argument("--device", default="", help="CUDA device id or leave empty for auto.")
+  parser.add_argument(
+    "--device",
+    default="auto",
+    help="Training device: cpu, auto, 0, or cuda:0 (default: auto)."
+  )
   parser.add_argument("--project", default="runs")
   parser.add_argument("--name", default="roi-finetune")
   parser.add_argument("--copy-to", default="models/roi.pt", help="Where to copy best.pt after training.")
@@ -60,6 +64,15 @@ def resolve_dataset_yaml(data_path: Path) -> Path:
     return Path(handle.name)
 
 
+def resolve_device(device: str) -> str | None:
+  normalized = device.strip()
+  if not normalized:
+    return None
+  if normalized.lower() == "auto":
+    return None
+  return normalized
+
+
 def main() -> None:
   args = parse_args()
   base_dir = Path(__file__).resolve().parent
@@ -67,6 +80,7 @@ def main() -> None:
   resolved_data_path = resolve_dataset_yaml(data_path)
   project_path = resolve_path(base_dir, args.project)
   copy_to_path = resolve_path(base_dir, args.copy_to)
+  device = resolve_device(args.device)
 
   if not data_path.exists():
     raise FileNotFoundError(f"Dataset yaml not found: {data_path}")
@@ -87,7 +101,7 @@ def main() -> None:
       workers=args.workers,
       project=str(project_path),
       name=args.name,
-      device=args.device or None
+      device=device
     )
   finally:
     if resolved_data_path != data_path and resolved_data_path.exists():
