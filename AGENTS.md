@@ -38,10 +38,12 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
 - Prefer clear, small functions in `src/` modules and avoid deep nesting.
 
 ## Testing Guidelines
-- No automated tests are configured.
+- Automated browser tests are configured with Playwright.
+- `npm run test:e2e`: Runs `tests/e2e/neural-roi.spec.js` (neural ROI failure handling + success-path coverage).
+- CI: `.github/workflows/e2e.yml` runs on each pull request and on pushes to `master`.
 - Frontend manual checks: upload image, run OCR, verify email draft fields, and confirm Gmail draft link.
-- OCR test-set checks: run "Run test set" and inspect `Value Match` (scaled-MSE style similarity vs expected), `OCR Confidence`, and debug stages.
-- Backend sanity checks: `GET /health` and confirm `ready: true` after model weights are available.
+- OCR test-set checks: run "Run test set" and inspect `Value Match`, `Failure Reason`, and debug stages.
+- Backend sanity checks: `GET /health` and confirm `ready: true`, `roi_ready: true`, and expected `model_path`.
 - Prefer running the test set from UI with debug overlay enabled.
 
 ## Commit & Pull Request Guidelines
@@ -61,19 +63,20 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
 
 ### Current validated state
 - App + backend run locally on `127.0.0.1:8000` and `127.0.0.1:8001`.
-- Neural ROI detection is integrated and stable.
-- Digit-classifier inference is integrated behind `OCR_CONFIG.digitClassifier.enabled` (default `false`), with automatic fallback to Tesseract.
+- Neural ROI is mandatory in the frontend OCR flow (heuristic fallback path removed).
+- On neural ROI failure, the UI shows an explicit error reason and asks for manual measurement input.
+- Backend default ROI model is pinned to `backend/models/roi-rotaug-e30-640.pt` (override with `ROI_MODEL_PATH`).
+- Digit-classifier inference remains optional behind `OCR_CONFIG.digitClassifier.enabled` (default `false`).
 - Backend serves both ROI and digit endpoints and reports readiness in `GET /health`.
+- Test-set table now reports `Failure Reason` (replacing `OCR Confidence`).
 
-### Latest benchmark snapshot (same 11 images)
-- Summary artifact: `/tmp/jarvis_testset_summary.json`
-- Run mode for this snapshot: classifier path enabled for evaluation.
+### Latest observed test-set behavior (same 11 images, 2026-02-16 evening)
 - Most recent run:
   - Accuracy: `0/11`
-  - Mean `Value Match`: `0.000`
-  - Mean `OCR Confidence`: `0.940`
-- Pattern:
-  - Near-constant wrong outputs (`8888`, `8777`, `8898`), indicating class collapse from severe data scarcity/imbalance.
+  - `Detected` populated: `0/11` (all rows show `—`)
+  - `Failure Reason` is populated (commonly `missing-cell-digit` and `candidate-bad-aspect`)
+- Interpretation:
+  - Neural ROI is being used, OCR branch runs, but ROI-derived decoding currently rejects all candidates.
 
 ### Dataset coverage snapshot
 - Source: `backend/data/digit_dataset/manifests/cells.csv`
@@ -86,15 +89,16 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
   - `6`: deficit `12`
   - `9`: deficit `9`
 
-### Active workstream (Option 2)
+### Active workstream
 1. Expand dataset with targeted captures for `4/5/6/9`.
 2. Keep QA previews mandatory when adding labels.
 3. Run `validate_digit_dataset.py` after each dataset update.
 4. Refresh `capture_plan.json`/`capture_plan.md` with `plan_digit_expansion.py`.
 5. Retrain only after improved class coverage.
 
-### Tomorrow fallback option (Option 1, if needed)
-- If data collection is blocked, tune classifier training recipe before new captures:
-  - loss/sampling strategy improvements for imbalance,
-  - stronger augmentation and regularization sweep,
-  - per-class calibration/error analysis with the same 11-image benchmark.
+### Tomorrow priorities (2026-02-17)
+1. Build a reject-reason histogram from test-set runs (`window.__jarvisOcrSelectionLogs` + UI `Failure Reason`) to quantify dominant failure modes.
+2. Tune ROI crop geometry (`expandX`, `expandY`) and ROI strip normalization gates to reduce `candidate-bad-aspect`.
+3. Review ROI cell-decoding strictness (`requireAllCells` and split assumptions) while preserving neural-ROI-only policy.
+4. Re-run `Run test set` after each tuning change; first milestone is non-zero `Detected` count.
+5. After detections recover, continue targeted dataset expansion and classifier retraining loop for `4/5/6/9`.
