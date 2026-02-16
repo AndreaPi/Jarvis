@@ -76,7 +76,7 @@ Run Playwright checks for neural-ROI failure handling:
 npm run test:e2e
 ```
 
-CI runs these tests on every pull request and on pushes to `main`.
+CI runs these tests on every pull request and on pushes to `master`.
 
 ## File Overview
 - `index.html`: UI layout.
