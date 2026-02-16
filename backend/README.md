@@ -40,6 +40,7 @@ python train_roi.py \
 ```
 
 After training, best weights are copied to `backend/models/roi.pt`.
+The API default is pinned to `backend/models/roi-rotaug-e30-640.pt`; use `ROI_MODEL_PATH` to explicitly test/use `roi.pt` or another checkpoint.
 
 ## Build a digit OCR dataset from ROI labels
 
@@ -95,7 +96,7 @@ uvicorn app:app --host 127.0.0.1 --port 8001 --reload
 
 ## Environment Variables
 
-- `ROI_MODEL_PATH`: path to `.pt` weights (default: `backend/models/roi.pt`)
+- `ROI_MODEL_PATH`: path to `.pt` weights (default: `backend/models/roi-rotaug-e30-640.pt`)
 - `ROI_DEFAULT_CONFIDENCE`: detection confidence threshold (default: `0.05`)
 - `ROI_DEFAULT_IOU`: NMS IoU threshold (default: `0.5`)
 - `ROI_DEFAULT_IMGSZ`: inference size (default: `960`)

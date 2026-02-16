@@ -41,8 +41,10 @@ def _env_int(name: str, default: int) -> int:
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_MODEL_PATH = BASE_DIR / "models" / "roi.pt"
-MODEL_PATH = Path(os.getenv("ROI_MODEL_PATH", str(DEFAULT_MODEL_PATH))).expanduser().resolve()
+DEFAULT_MODEL_PATH = BASE_DIR / "models" / "roi-rotaug-e30-640.pt"
+MODEL_PATH_ENV = os.getenv("ROI_MODEL_PATH")
+MODEL_PATH = Path(MODEL_PATH_ENV or str(DEFAULT_MODEL_PATH)).expanduser().resolve()
+MODEL_SOURCE = "env" if MODEL_PATH_ENV else "default"
 DEFAULT_CONFIDENCE = _env_float("ROI_DEFAULT_CONFIDENCE", 0.05)
 DEFAULT_IOU = _env_float("ROI_DEFAULT_IOU", 0.5)
 DEFAULT_IMGSZ = _env_int("ROI_DEFAULT_IMGSZ", 960)
@@ -152,6 +154,8 @@ def health() -> dict:
     "roi_ready": roi_ready,
     "digit_ready": digit_ready,
     "model_path": str(MODEL_PATH),
+    "model_source": MODEL_SOURCE,
+    "default_model_path": str(DEFAULT_MODEL_PATH),
     "model_exists": roi_model_exists,
     "digit_model_path": str(DIGIT_MODEL_PATH),
     "digit_model_exists": digit_model_exists,
