@@ -30,6 +30,13 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+For CPU-only environments (for example Vercel), install:
+
+```bash
+pip install -r requirements-cpu.txt
+```
+
+
 2. Train/fine-tune a model (copies best checkpoint to `backend/models/roi.pt`):
 
 ```bash
