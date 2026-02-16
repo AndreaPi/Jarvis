@@ -16,6 +16,7 @@ backend/runs/
 backend/models/*.pt
 backend/models/*.onnx
 backend/yolov8*.pt
+/yolov8*.pt
 backend/data/roi_dataset/labels/*.cache
 backend/data/roi_dataset/previews/
 backend/data/roi_dataset/qa_previews/
