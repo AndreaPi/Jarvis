@@ -43,6 +43,12 @@ pip install -r requirements-cpu.txt
 python train_roi.py --data data/roi_dataset.yaml --base-model yolov8n.pt
 ```
 
+Optional: train the per-cell digit classifier checkpoint:
+
+```bash
+python train_digit_classifier.py --device cpu
+```
+
 3. Start the API:
 
 ```bash
@@ -50,6 +56,7 @@ uvicorn app:app --host 127.0.0.1 --port 8001 --reload
 ```
 
 By default, the frontend calls `http://127.0.0.1:8001/roi/detect` before heuristic ROI search.
+The frontend can also call `http://127.0.0.1:8001/digit/predict-cells` when `OCR_CONFIG.digitClassifier.enabled` is set to `true`.
 
 ## File Overview
 - `index.html`: UI layout.
@@ -61,7 +68,8 @@ By default, the frontend calls `http://127.0.0.1:8001/roi/detect` before heurist
 
 ## Notes
 - OCR runs fully in the browser using Tesseract.js.
-- If the optional backend is running, neural ROI detection is used first, then JS OCR reads digits from the cropped region.
+- If the optional backend is running, neural ROI detection is used first.
+- Digit decoding can optionally use a backend classifier (`src/ocr/config.js` -> `digitClassifier.enabled`) with automatic fallback to Tesseract.
 - The Gmail flow opens a draft; you always review and send manually.
 
 ## Asset Naming (Meter Images)

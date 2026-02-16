@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import io
 import os
 from pathlib import Path
-import io
 
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -13,6 +13,11 @@ try:
   from .detector import DetectorUnavailableError, RoiDetector
 except ImportError:
   from detector import DetectorUnavailableError, RoiDetector
+
+try:
+  from .digit_classifier import DigitClassifier, DigitClassifierUnavailableError
+except ImportError:
+  from digit_classifier import DigitClassifier, DigitClassifierUnavailableError
 
 
 def _env_float(name: str, default: float) -> float:
@@ -41,11 +46,19 @@ MODEL_PATH = Path(os.getenv("ROI_MODEL_PATH", str(DEFAULT_MODEL_PATH))).expandus
 DEFAULT_CONFIDENCE = _env_float("ROI_DEFAULT_CONFIDENCE", 0.05)
 DEFAULT_IOU = _env_float("ROI_DEFAULT_IOU", 0.5)
 DEFAULT_IMGSZ = _env_int("ROI_DEFAULT_IMGSZ", 960)
+DEFAULT_DIGIT_MODEL_PATH = BASE_DIR / "models" / "digit_classifier.pt"
+DIGIT_MODEL_PATH = Path(os.getenv("DIGIT_MODEL_PATH", str(DEFAULT_DIGIT_MODEL_PATH))).expanduser().resolve()
+DIGIT_MIN_CONFIDENCE = _env_float("DIGIT_MIN_CONFIDENCE", 0.0)
+DIGIT_TOP_K = _env_int("DIGIT_TOP_K", 3)
 CLASS_INDEX = os.getenv("ROI_CLASS_INDEX")
 DEVICE_RAW = os.getenv("ROI_DEVICE", "cpu").strip()
 if not DEVICE_RAW:
   DEVICE_RAW = "cpu"
 DEVICE = None if DEVICE_RAW.lower() == "auto" else DEVICE_RAW
+DIGIT_DEVICE_RAW = os.getenv("DIGIT_DEVICE", DEVICE_RAW).strip()
+if not DIGIT_DEVICE_RAW:
+  DIGIT_DEVICE_RAW = DEVICE_RAW
+DIGIT_DEVICE = None if DIGIT_DEVICE_RAW.lower() == "auto" else DIGIT_DEVICE_RAW
 
 if CLASS_INDEX is None:
   CLASS_INDEX_VALUE = None
@@ -74,6 +87,8 @@ app.add_middleware(
 
 _detector: RoiDetector | None = None
 _detector_error: str | None = None
+_digit_classifier: DigitClassifier | None = None
+_digit_classifier_error: str | None = None
 
 
 def get_detector() -> RoiDetector:
@@ -89,6 +104,19 @@ def get_detector() -> RoiDetector:
     raise
 
 
+def get_digit_classifier() -> DigitClassifier:
+  global _digit_classifier, _digit_classifier_error
+  if _digit_classifier:
+    return _digit_classifier
+  try:
+    _digit_classifier = DigitClassifier(DIGIT_MODEL_PATH, device=DIGIT_DEVICE)
+    _digit_classifier_error = None
+    return _digit_classifier
+  except DigitClassifierUnavailableError as error:
+    _digit_classifier_error = str(error)
+    raise
+
+
 def _load_rgb_image(file_bytes: bytes) -> np.ndarray:
   try:
     with Image.open(io.BytesIO(file_bytes)) as image:
@@ -99,26 +127,43 @@ def _load_rgb_image(file_bytes: bytes) -> np.ndarray:
 
 @app.get("/health")
 def health() -> dict:
-  model_exists = MODEL_PATH.exists()
-  ready = False
-  error = _detector_error
+  roi_model_exists = MODEL_PATH.exists()
+  digit_model_exists = DIGIT_MODEL_PATH.exists()
+  roi_ready = False
+  digit_ready = False
+  roi_error = _detector_error
+  digit_error = _digit_classifier_error
   try:
     get_detector()
-    ready = True
-    error = None
+    roi_ready = True
+    roi_error = None
   except DetectorUnavailableError as detector_error:
-    error = str(detector_error)
+    roi_error = str(detector_error)
+  try:
+    get_digit_classifier()
+    digit_ready = True
+    digit_error = None
+  except DigitClassifierUnavailableError as classifier_error:
+    digit_error = str(classifier_error)
 
   return {
     "ok": True,
-    "ready": ready,
+    "ready": roi_ready,
+    "roi_ready": roi_ready,
+    "digit_ready": digit_ready,
     "model_path": str(MODEL_PATH),
-    "model_exists": model_exists,
-    "device": DEVICE_RAW if ready else (DEVICE or "auto"),
+    "model_exists": roi_model_exists,
+    "digit_model_path": str(DIGIT_MODEL_PATH),
+    "digit_model_exists": digit_model_exists,
+    "device": DEVICE_RAW if roi_ready else (DEVICE or "auto"),
+    "digit_device": DIGIT_DEVICE_RAW if digit_ready else (DIGIT_DEVICE or "auto"),
     "default_confidence": DEFAULT_CONFIDENCE,
     "default_iou": DEFAULT_IOU,
     "default_imgsz": DEFAULT_IMGSZ,
-    "error": error
+    "digit_min_confidence": DIGIT_MIN_CONFIDENCE,
+    "digit_top_k": DIGIT_TOP_K,
+    "error": roi_error,
+    "digit_error": digit_error
   }
 
 
@@ -163,4 +208,84 @@ async def detect_roi(image: UploadFile = File(...)) -> dict:
     "class_id": detection.class_id,
     "class_name": detection.class_name,
     "image_size": {"width": width, "height": height}
+  }
+
+
+@app.post("/digit/predict")
+async def predict_digit(image: UploadFile = File(...)) -> dict:
+  try:
+    classifier = get_digit_classifier()
+  except DigitClassifierUnavailableError as error:
+    raise HTTPException(status_code=503, detail=str(error)) from error
+
+  file_bytes = await image.read()
+  if not file_bytes:
+    raise HTTPException(status_code=400, detail="Empty upload.")
+
+  image_rgb = _load_rgb_image(file_bytes)
+  prediction = classifier.predict(image_rgb=image_rgb, top_k=DIGIT_TOP_K)
+  accepted = prediction.confidence >= DIGIT_MIN_CONFIDENCE
+
+  return {
+    "ok": accepted,
+    "accepted": accepted,
+    "model": classifier.model_name,
+    "device": classifier.device_name,
+    "digit": prediction.digit if accepted else None,
+    "predicted_digit": prediction.digit,
+    "confidence": prediction.confidence,
+    "min_confidence": DIGIT_MIN_CONFIDENCE,
+    "top_k": prediction.top_k
+  }
+
+
+@app.post("/digit/predict-cells")
+async def predict_digit_cells(images: list[UploadFile] = File(...)) -> dict:
+  try:
+    classifier = get_digit_classifier()
+  except DigitClassifierUnavailableError as error:
+    raise HTTPException(status_code=503, detail=str(error)) from error
+
+  if not images:
+    raise HTTPException(status_code=400, detail="At least one image is required.")
+  if len(images) > 16:
+    raise HTTPException(status_code=400, detail="Too many images; limit is 16.")
+
+  predictions = []
+  accepted_count = 0
+  for upload in images:
+    file_bytes = await upload.read()
+    if not file_bytes:
+      predictions.append({
+        "ok": False,
+        "accepted": False,
+        "digit": None,
+        "predicted_digit": None,
+        "confidence": 0.0,
+        "error": "empty-upload"
+      })
+      continue
+
+    image_rgb = _load_rgb_image(file_bytes)
+    prediction = classifier.predict(image_rgb=image_rgb, top_k=DIGIT_TOP_K)
+    accepted = prediction.confidence >= DIGIT_MIN_CONFIDENCE
+    if accepted:
+      accepted_count += 1
+    predictions.append({
+      "ok": accepted,
+      "accepted": accepted,
+      "digit": prediction.digit if accepted else None,
+      "predicted_digit": prediction.digit,
+      "confidence": prediction.confidence,
+      "top_k": prediction.top_k
+    })
+
+  return {
+    "ok": True,
+    "model": classifier.model_name,
+    "device": classifier.device_name,
+    "min_confidence": DIGIT_MIN_CONFIDENCE,
+    "accepted_count": accepted_count,
+    "total": len(images),
+    "predictions": predictions
   }

@@ -34,6 +34,14 @@ const OCR_CONFIG = {
     maxStripAspect: 6.5,
     normalizeWidth: 480
   },
+  digitClassifier: {
+    enabled: false,
+    endpoint: 'http://127.0.0.1:8001/digit/predict-cells',
+    timeoutMs: 1800,
+    minCellConfidence: 0.28,
+    disableAfterFailures: 2,
+    cooldownMs: 8000
+  },
   neuralRoi: {
     enabled: true,
     endpoint: 'http://127.0.0.1:8001/roi/detect',

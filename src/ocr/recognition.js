@@ -7,6 +7,7 @@ import {
   cropCanvas,
   tightenCropByInk
 } from './canvas-utils.js';
+import { predictDigitCells } from './digit-classifier.js';
 
 let ocrWorker = null;
 
@@ -431,10 +432,84 @@ const readDigitsByCells = async (worker, source, setProgress, options = {}) => {
   };
 
   const decodeCells = async (cellCanvases, metadata = {}, decodeOptions = {}) => {
+    const requireAllCells = !!decodeOptions.requireAllCells;
+    const minFound = requireAllCells ? cellCanvases.length : OCR_CONFIG.minDigits;
+
+    const buildReading = (digits, cellConfidences, decoder, extra = {}) => {
+      let confidenceTotal = 0;
+      let found = 0;
+      for (let i = 0; i < digits.length; i += 1) {
+        if (!digits[i]) {
+          continue;
+        }
+        found += 1;
+        confidenceTotal += Number.isFinite(cellConfidences[i]) ? cellConfidences[i] : 0;
+      }
+      const value = digits.join('');
+      if (found < minFound || !value) {
+        return {
+          ok: false,
+          found,
+          value
+        };
+      }
+      return {
+        ok: true,
+        reading: {
+          value,
+          foundRatio: found / cellCanvases.length,
+          averageConfidence: confidenceTotal / Math.max(found, 1),
+          cellDigits: digits,
+          cellConfidences,
+          variantIndex: metadata.variantIndex,
+          overlap: metadata.overlap,
+          decoder,
+          ...extra
+        }
+      };
+    };
+
+    const digitClassifierConfig = OCR_CONFIG.digitClassifier || {};
+    if (digitClassifierConfig.enabled) {
+      if (setProgress) {
+        setProgress('Refining digits (classifier)...');
+      }
+      const classifierProbe = await predictDigitCells(cellCanvases, digitClassifierConfig);
+      if (classifierProbe.ok) {
+        const digits = classifierProbe.predictions.map((item) => (item && item.accepted ? item.digit : ''));
+        const cellConfidences = classifierProbe.predictions.map((item) => {
+          if (!item || !item.accepted || !Number.isFinite(item.confidence)) {
+            return 0;
+          }
+          return clamp(item.confidence * 100, 0, 100);
+        });
+        const classifierReading = buildReading(
+          digits,
+          cellConfidences,
+          'digit-classifier',
+          { classifierModel: classifierProbe.model || null }
+        );
+        if (classifierReading.ok) {
+          return classifierReading.reading;
+        }
+        emitReject(
+          requireAllCells ? 'classifier-missing-cell-digit' : 'classifier-insufficient-cell-digits',
+          {
+            found: classifierReading.found,
+            required: minFound,
+            ...metadata
+          }
+        );
+      } else if (classifierProbe.reason !== 'disabled') {
+        emitReject('classifier-unavailable', {
+          reason: classifierProbe.reason,
+          ...metadata
+        });
+      }
+    }
+
     const digits = [];
     const cellConfidences = [];
-    let confidenceTotal = 0;
-    let found = 0;
 
     for (let i = 0; i < cellCanvases.length; i += 1) {
       if (setProgress) {
@@ -454,35 +529,22 @@ const readDigitsByCells = async (worker, source, setProgress, options = {}) => {
       if (best) {
         digits.push(best.digit);
         cellConfidences.push(best.confidence);
-        confidenceTotal += best.confidence;
-        found += 1;
       } else {
         digits.push('');
         cellConfidences.push(0);
       }
     }
 
-    const requireAllCells = !!decodeOptions.requireAllCells;
-    const minFound = requireAllCells ? cellCanvases.length : OCR_CONFIG.minDigits;
-    const value = digits.join('');
-    if (found < minFound || !value) {
+    const tesseractReading = buildReading(digits, cellConfidences, 'tesseract');
+    if (!tesseractReading.ok) {
       emitReject(requireAllCells ? 'missing-cell-digit' : 'insufficient-cell-digits', {
-        found,
+        found: tesseractReading.found,
         required: minFound,
         ...metadata
       });
       return null;
     }
-
-    return {
-      value,
-      foundRatio: found / cellCanvases.length,
-      averageConfidence: confidenceTotal / Math.max(found, 1),
-      cellDigits: digits,
-      cellConfidences,
-      variantIndex: metadata.variantIndex,
-      overlap: metadata.overlap
-    };
+    return tesseractReading.reading;
   };
 
   const finalizeReading = (reading) => {
@@ -505,6 +567,8 @@ const readDigitsByCells = async (worker, source, setProgress, options = {}) => {
       score: clamp(score, 0, 0.99),
       cellDigits: reading.cellDigits || [],
       cellConfidences: reading.cellConfidences || [],
+      decoder: reading.decoder || 'tesseract',
+      classifierModel: reading.classifierModel || null,
       variantIndex: Number.isFinite(reading.variantIndex) ? reading.variantIndex : null,
       overlap: Number.isFinite(reading.overlap) ? reading.overlap : null
     };

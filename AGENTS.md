@@ -98,3 +98,17 @@ Open `http://localhost:8000` after running a serve command. Neural ROI endpoint 
 3. Train a dedicated digit OCR model (start with per-cell digit classifier).
 4. Integrate model inference in `src/ocr/recognition.js` as a replacement for Tesseract cell decode (behind a flag first).
 5. Re-run the same 11-image UI benchmark and compare row-level diffs before further heuristic edits.
+
+### Session update (2026-02-16)
+- Added dedicated digit-classifier training + inference stack:
+  - `backend/train_digit_classifier.py`
+  - `backend/digit_model.py`
+  - `backend/digit_classifier.py`
+  - API endpoints: `POST /digit/predict`, `POST /digit/predict-cells`
+- Integrated classifier-first cell decoding in `src/ocr/recognition.js` with automatic fallback to Tesseract.
+- Added frontend feature flag in `src/ocr/config.js` (`digitClassifier.enabled`, default `false`).
+- New benchmark run with classifier enabled (`/tmp/jarvis_testset_summary.json`):
+  - Accuracy: `0/11`
+  - Mean `Value Match`: `0.000`
+  - Mean `OCR Confidence`: `0.940`
+  - Failure mode: near-constant predictions (`8888` / `8777` / `8898`), indicating class-collapse/overfit from low-data imbalance.

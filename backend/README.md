@@ -54,6 +54,18 @@ source .venv/bin/activate
 python build_digit_dataset.py --clean
 ```
 
+## Train a dedicated digit classifier
+
+This trains a small per-cell CNN on `data/digit_dataset/cells` and writes:
+- weights: `backend/models/digit_classifier.pt`
+- training summary: `backend/runs/digit-classifier/digit_classifier_summary.json`
+
+```bash
+cd backend
+source .venv/bin/activate
+python train_digit_classifier.py --device cpu
+```
+
 ## 3) Start the API
 
 ```bash
@@ -66,6 +78,8 @@ uvicorn app:app --host 127.0.0.1 --port 8001 --reload
 
 - `GET /health`: model readiness.
 - `POST /roi/detect`: multipart upload (`image`) and returns normalized bbox + confidence.
+- `POST /digit/predict`: multipart upload (`image`) and returns the predicted digit + confidence.
+- `POST /digit/predict-cells`: multipart upload (`images`, repeated field) for batch cell decoding.
 
 ## Environment Variables
 
@@ -78,6 +92,10 @@ uvicorn app:app --host 127.0.0.1 --port 8001 --reload
   - Use `cpu` for CPU-only deploys (recommended on Vercel).
   - Use `auto` to let Ultralytics choose.
   - Use `0` or `cuda:0` to force GPU.
+- `DIGIT_MODEL_PATH`: path to digit classifier checkpoint (default: `backend/models/digit_classifier.pt`)
+- `DIGIT_DEVICE`: inference device for digit classifier (default follows `ROI_DEVICE`)
+- `DIGIT_MIN_CONFIDENCE`: minimum accepted confidence for digit predictions (default: `0.0`)
+- `DIGIT_TOP_K`: number of top classes returned by digit endpoints (default: `3`)
 
 ## CPU-only vs GPU
 
