@@ -65,8 +65,18 @@ python validate_digit_dataset.py
 uvicorn app:app --host 127.0.0.1 --port 8001 --reload
 ```
 
-By default, the frontend calls `http://127.0.0.1:8001/roi/detect` before heuristic ROI search.
+By default, the frontend calls `http://127.0.0.1:8001/roi/detect` and requires neural ROI detection before OCR.
 The frontend can also call `http://127.0.0.1:8001/digit/predict-cells` when `OCR_CONFIG.digitClassifier.enabled` is set to `true`.
+
+### E2E Tests
+
+Run Playwright checks for neural-ROI failure handling:
+
+```bash
+npm run test:e2e
+```
+
+CI runs these tests on every pull request and on pushes to `main`.
 
 ## File Overview
 - `index.html`: UI layout.
@@ -78,7 +88,7 @@ The frontend can also call `http://127.0.0.1:8001/digit/predict-cells` when `OCR
 
 ## Notes
 - OCR runs fully in the browser using Tesseract.js.
-- If the optional backend is running, neural ROI detection is used first.
+- OCR now relies on neural ROI detection; if the backend is unavailable or ROI fails, the app asks for manual reading input.
 - Digit decoding can optionally use a backend classifier (`src/ocr/config.js` -> `digitClassifier.enabled`) with automatic fallback to Tesseract.
 - The Gmail flow opens a draft; you always review and send manually.
 

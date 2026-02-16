@@ -45,7 +45,7 @@ const OCR_CONFIG = {
   neuralRoi: {
     enabled: true,
     endpoint: 'http://127.0.0.1:8001/roi/detect',
-    timeoutMs: 3500,
+    timeoutMs: 8000,
     minConfidence: 0.01,
     expandX: 0.18,
     expandY: 0.24,
@@ -58,9 +58,7 @@ const OCR_CONFIG = {
       maxArea: 0.03,
       minAspect: 0.35,
       maxAspect: 3.2
-    },
-    includeFullFallbackCandidates: false,
-    skipFullFallbackWhenDetected: false
+    }
   }
 };
 

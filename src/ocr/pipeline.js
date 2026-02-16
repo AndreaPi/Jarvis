@@ -316,34 +316,6 @@ const summarizeRejectMap = (rejectMap) => {
     }));
 };
 
-const mergeRejectSummaries = (...summaries) => {
-  const merged = new Map();
-  summaries
-    .filter((list) => Array.isArray(list))
-    .forEach((list) => {
-      list.forEach((entry) => {
-        if (!entry || !entry.reason) {
-          return;
-        }
-        const existing = merged.get(entry.reason) || {
-          reason: entry.reason,
-          count: 0,
-          samples: []
-        };
-        existing.count += Number.isFinite(entry.count) ? entry.count : 1;
-        if (Array.isArray(entry.samples)) {
-          entry.samples.forEach((sample) => {
-            if (existing.samples.length < 3) {
-              existing.samples.push(sample);
-            }
-          });
-        }
-        merged.set(entry.reason, existing);
-      });
-    });
-  return [...merged.values()].sort((a, b) => b.count - a.count);
-};
-
 const evaluateCandidateBranch = async ({
   candidates,
   worker,
@@ -630,27 +602,32 @@ const runMeterOcr = async (file, setProgress) => {
 
   try {
     const neuralRoiConfig = OCR_CONFIG.neuralRoi || {};
-    let roiCrop = null;
-    let roiUsed = false;
-    let roiProbe = { ok: false, reason: 'disabled' };
-    if (neuralRoiConfig.enabled) {
+    if (!neuralRoiConfig.enabled || !neuralRoiConfig.endpoint) {
+      const message = 'Neural ROI is disabled or misconfigured. Enter the measurement manually.';
       if (setProgress) {
-        setProgress('Requesting neural ROI...');
+        setProgress(message);
       }
-      roiProbe = await detectNeuralRoi(file, neuralRoiConfig);
-      if (roiProbe.ok) {
-        const roiRect = resolveNeuralRoiRect(baseCanvas, roiProbe, neuralRoiConfig);
-        addNeuralRoiDebugStages(debugSession, baseCanvas, roiRect, roiProbe);
-        roiCrop = cropCanvas(baseCanvas, roiRect);
-        addDebugStage(debugSession, '0b. neural roi crop', roiCrop);
-        roiUsed = true;
-      } else {
-        addNeuralRoiMissStage(debugSession, baseCanvas, roiProbe);
-        if (setProgress) {
-          setProgress(`Neural ROI miss (${formatNeuralRoiMissReason(roiProbe)}), using fallback.`);
-        }
-      }
+      throw new Error(message);
     }
+
+    if (setProgress) {
+      setProgress('Requesting neural ROI...');
+    }
+    const roiProbe = await detectNeuralRoi(file, neuralRoiConfig);
+    if (!roiProbe.ok) {
+      addNeuralRoiMissStage(debugSession, baseCanvas, roiProbe);
+      const reason = formatNeuralRoiMissReason(roiProbe);
+      const message = `Neural ROI failed (${reason}). Enter the measurement manually.`;
+      if (setProgress) {
+        setProgress(message);
+      }
+      throw new Error(message);
+    }
+
+    const roiRect = resolveNeuralRoiRect(baseCanvas, roiProbe, neuralRoiConfig);
+    addNeuralRoiDebugStages(debugSession, baseCanvas, roiRect, roiProbe);
+    const roiCrop = cropCanvas(baseCanvas, roiRect);
+    addDebugStage(debugSession, '0b. neural roi crop', roiCrop);
 
     const roiCandidates = roiCrop
       ? buildDigitCandidates(roiCrop, debugSession, addDebugStage, { roiMode: true }).map((candidate) => ({
@@ -658,95 +635,41 @@ const runMeterOcr = async (file, setProgress) => {
         label: `${candidate.label}-roi`
       }))
       : [];
-    const fullCandidates = buildDigitCandidates(baseCanvas, roiCrop ? null : debugSession, addDebugStage).map((candidate) => ({
-      ...candidate,
-      label: `${candidate.label}-full`
-    }));
 
     const worker = await getWorker();
-    let roiBranch = null;
-    if (roiCandidates.length) {
-      roiBranch = await evaluateCandidateBranch({
-        candidates: roiCandidates,
-        worker,
-        setProgress,
-        roiMode: true,
-        useWordPass: false,
-        allowSparseScan: false,
-        scanCanvas: roiCrop
-      });
-      const roiAccepted = isPreferredLengthReading(roiBranch.bestResult);
-      if (roiAccepted) {
-        if (setProgress) {
-          setProgress(`Neural ROI + OCR complete (${roiBranch.bestResult.value}).`);
-        }
-        return finalizeSelection({
-          debugLabel,
-          roiUsed: true,
-          bestResult: roiBranch.bestResult,
-          evidenceMap: roiBranch.evidenceMap,
-          branchUsed: 'roi-accepted',
-          rejectSummary: roiBranch.rejectSummary || []
-        });
-      }
-      if (neuralRoiConfig.skipFullFallbackWhenDetected !== false) {
-        if (setProgress) {
-          if (roiBranch.bestResult && roiBranch.bestResult.value) {
-            setProgress(`Neural ROI branch complete (${roiBranch.bestResult.value}); full fallback skipped.`);
-          } else {
-            setProgress('Neural ROI branch complete; full fallback skipped.');
-          }
-        }
-        return finalizeSelection({
-          debugLabel,
-          roiUsed: true,
-          bestResult: roiBranch.bestResult,
-          evidenceMap: roiBranch.evidenceMap,
-          branchUsed: 'roi-skipped-fallback',
-          rejectSummary: roiBranch.rejectSummary || []
-        });
-      }
+    if (!roiCandidates.length) {
+      const message = 'Neural ROI crop did not produce OCR candidates. Enter the measurement manually.';
       if (setProgress) {
-        setProgress('Neural ROI uncertain, running full fallback...');
+        setProgress(message);
       }
+      throw new Error(message);
     }
 
-    const fullBranch = await evaluateCandidateBranch({
-      candidates: fullCandidates,
+    const roiBranch = await evaluateCandidateBranch({
+      candidates: roiCandidates,
       worker,
       setProgress,
-      roiMode: false,
-      useWordPass: true,
-      allowSparseScan: true,
-      scanCanvas: baseCanvas
+      roiMode: true,
+      useWordPass: false,
+      allowSparseScan: false,
+      scanCanvas: roiCrop
     });
-    const bestResult = fullBranch.bestResult || (roiBranch ? roiBranch.bestResult : null);
-    const evidenceMap = (
-      fullBranch.evidenceMap && fullBranch.evidenceMap.size
-        ? fullBranch.evidenceMap
-        : (roiBranch ? roiBranch.evidenceMap : new Map())
-    );
 
     if (setProgress) {
-      if (bestResult && bestResult.value) {
-        setProgress(`Fallback OCR complete (${bestResult.value}).`);
-      } else if (roiUsed) {
-        setProgress('Neural ROI found, OCR uncertain.');
-      } else if (neuralRoiConfig.enabled) {
-        setProgress(`Fallback OCR complete (neural miss: ${formatNeuralRoiMissReason(roiProbe)}).`);
+      if (roiBranch.bestResult && roiBranch.bestResult.value) {
+        setProgress(`Neural ROI + OCR complete (${roiBranch.bestResult.value}).`);
+      } else {
+        setProgress('Neural ROI found, OCR uncertain. Enter the measurement manually.');
       }
     }
 
     return finalizeSelection({
       debugLabel,
-      roiUsed,
-      bestResult,
-      evidenceMap,
-      branchUsed: roiUsed ? 'fallback-after-roi' : 'fallback-only',
-      rejectSummary: mergeRejectSummaries(
-        roiBranch ? roiBranch.rejectSummary : [],
-        fullBranch ? fullBranch.rejectSummary : []
-      )
+      roiUsed: true,
+      bestResult: roiBranch.bestResult,
+      evidenceMap: roiBranch.evidenceMap,
+      branchUsed: isPreferredLengthReading(roiBranch.bestResult) ? 'roi-accepted' : 'roi-uncertain',
+      rejectSummary: roiBranch.rejectSummary || []
     });
   } finally {
     commitDebugSession(debugSession);

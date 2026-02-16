@@ -120,7 +120,10 @@ readBtn.addEventListener('click', async () => {
     }
   } catch (error) {
     console.error(error);
-    setStatus('OCR failed. Enter the reading manually.');
+    const message = error instanceof Error && error.message
+      ? error.message
+      : 'Neural ROI failed. Enter the reading manually.';
+    setStatus(message);
   } finally {
     readBtn.disabled = false;
   }

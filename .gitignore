@@ -24,3 +24,5 @@ backend/data/roi_dataset/roi_boxes.json
 
 # Playwright CLI generated artifacts
 .playwright-cli/
+playwright-report/
+test-results/

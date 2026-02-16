@@ -98,7 +98,7 @@ const detectNeuralRoi = async (file, neuralRoiConfig) => {
   const formData = new FormData();
   formData.append('image', file, file.name || 'meter.jpg');
 
-  const timeoutMs = Number.isFinite(neuralRoiConfig.timeoutMs) ? neuralRoiConfig.timeoutMs : 3500;
+  const timeoutMs = Number.isFinite(neuralRoiConfig.timeoutMs) ? neuralRoiConfig.timeoutMs : 8000;
   const abortController = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timeoutId = abortController ? setTimeout(() => abortController.abort(), timeoutMs) : null;
   try {
