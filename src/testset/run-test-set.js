@@ -41,6 +41,24 @@ const computeDebugScore = (expected, detected) => {
   return clamp(1 - mismatches / maxLength, 0, 1);
 };
 
+const getSelectionLogs = () => {
+  if (typeof window === 'undefined' || !Array.isArray(window.__jarvisOcrSelectionLogs)) {
+    return [];
+  }
+  return window.__jarvisOcrSelectionLogs;
+};
+
+const topRejectReason = (selectionLog) => {
+  if (!selectionLog || !Array.isArray(selectionLog.rejectSummary) || !selectionLog.rejectSummary.length) {
+    return null;
+  }
+  const top = selectionLog.rejectSummary[0];
+  if (!top || !top.reason) {
+    return null;
+  }
+  return String(top.reason);
+};
+
 const renderTestResults = (resultsEl, results, correct, total) => {
   if (!resultsEl) {
     return;
@@ -50,7 +68,7 @@ const renderTestResults = (resultsEl, results, correct, total) => {
 
   const table = document.createElement('table');
   const header = document.createElement('tr');
-  ['File', 'Expected', 'Detected', 'Value Match', 'OCR Confidence', 'Result'].forEach((label) => {
+  ['File', 'Expected', 'Detected', 'Value Match', 'Failure Reason', 'Result'].forEach((label) => {
     const th = document.createElement('th');
     th.textContent = label;
     header.appendChild(th);
@@ -61,8 +79,8 @@ const renderTestResults = (resultsEl, results, correct, total) => {
     const row = document.createElement('tr');
     const statusClass = result.match ? 'pass' : 'fail';
     const scoreDisplay = result.score !== null ? result.score.toFixed(2) : 'n/a';
-    const ocrDisplay = result.ocrScore !== null ? result.ocrScore.toFixed(2) : 'n/a';
-    [result.filename, result.expected, result.detected || '—', scoreDisplay, ocrDisplay].forEach((value) => {
+    const failureDisplay = result.match ? '—' : (result.failureReason || 'unknown');
+    [result.filename, result.expected, result.detected || '—', scoreDisplay, failureDisplay].forEach((value) => {
       const cell = document.createElement('td');
       cell.textContent = value;
       row.appendChild(cell);
@@ -146,20 +164,33 @@ const createTestSetRunner = ({
               detected: '',
               match: false,
               score: debugScore,
-              ocrScore: null
+              failureReason: 'missing-image'
             });
             continue;
           }
 
           const blob = await imageResponse.blob();
           const file = new File([blob], row.filename, { type: blob.type || 'image/jpeg' });
+          const selectionLogCountBefore = getSelectionLogs().length;
           const result = await runMeterOcr(file, (message) => {
             setStatus(`Test ${i + 1}/${rows.length}: ${message}`);
           });
+          const selectionLogs = getSelectionLogs();
+          const selectionLog = selectionLogs.length > selectionLogCountBefore
+            ? selectionLogs[selectionLogs.length - 1]
+            : null;
 
           const detected = result && result.value ? result.value : '';
           const match = detected === row.value;
           const debugScore = computeDebugScore(row.value, detected);
+          const rejectReason = topRejectReason(selectionLog);
+          const failureReason = match
+            ? '—'
+            : (
+              rejectReason
+              || (selectionLog && selectionLog.branchUsed ? `branch:${selectionLog.branchUsed}` : null)
+              || (detected ? 'mismatch' : 'no-reading')
+            );
           if (match) {
             correct += 1;
           }
@@ -170,7 +201,7 @@ const createTestSetRunner = ({
             detected,
             match,
             score: debugScore,
-            ocrScore: result ? result.score : null
+            failureReason
           });
         } catch (rowError) {
           rowErrors += 1;
@@ -182,7 +213,7 @@ const createTestSetRunner = ({
             detected: '',
             match: false,
             score: debugScore,
-            ocrScore: null
+            failureReason: `error:${formatError(rowError)}`
           });
         }
       }
