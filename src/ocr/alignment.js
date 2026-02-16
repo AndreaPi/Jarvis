@@ -51,6 +51,24 @@ const buildAlignedDigitCandidates = (source, debugSession, addDebugStageFn = () 
     }));
 
   const candidates = [];
+  const geometry = OCR_CONFIG.geometry || {};
+  const minCandidateWidth = Number.isFinite(geometry.minCandidateWidth) ? geometry.minCandidateWidth : 120;
+  const minCandidateHeight = Number.isFinite(geometry.minCandidateHeight) ? geometry.minCandidateHeight : 28;
+  const minStripAspect = Number.isFinite(geometry.minStripAspect) ? geometry.minStripAspect : 1.15;
+  const maxStripAspect = Number.isFinite(geometry.maxStripAspect) ? geometry.maxStripAspect : 12;
+  const isStripLike = (canvas) => {
+    if (!canvas) {
+      return false;
+    }
+    const width = canvas.width;
+    const height = canvas.height;
+    if (width < minCandidateWidth || height < minCandidateHeight) {
+      return false;
+    }
+    const aspect = width / Math.max(1, height);
+    return aspect >= minStripAspect && aspect <= maxStripAspect;
+  };
+
   windows.forEach((window) => {
     const baseCrop = cropCanvas(best.canvas, window.rect);
     const variantAngles = stripOrientation === 'vertical' ? [90, 270] : [0];
@@ -60,6 +78,9 @@ const buildAlignedDigitCandidates = (source, debugSession, addDebugStageFn = () 
       digitCanvas = tightenCropByInk(digitCanvas, 0.08);
       digitCanvas = scaleCanvas(digitCanvas, OCR_CONFIG.minScaleWidth);
       if (!hasInk(digitCanvas) && window.name !== 'strip-main' && window.name !== 'fallback-main') {
+        return;
+      }
+      if (!isStripLike(digitCanvas)) {
         return;
       }
       candidates.push({
@@ -148,26 +169,15 @@ const buildAlignedDigitCandidates = (source, debugSession, addDebugStageFn = () 
 };
 
 const buildNeuralRoiCandidates = (source, debugSession, addDebugStageFn = () => {}) => {
-  const uniqueAngles = [0, 180, 90, 270];
+  const uniqueAngles = [0, 90, 180, 270];
   const candidates = [];
+  const isUsable = (canvas) => canvas && canvas.width >= 24 && canvas.height >= 16;
 
   uniqueAngles.forEach((angle) => {
     const rotated = angle === 0 ? source : rotateCanvas(source, angle);
-
-    let primaryCanvas = tightenCropByInk(rotated, 0.12);
-    primaryCanvas = scaleCanvas(primaryCanvas, OCR_CONFIG.minScaleWidth);
-    if (hasInk(primaryCanvas)) {
-      candidates.push({ canvas: primaryCanvas, label: `roi-${angle}-primary` });
-    }
-
-    const edgeRect = findDigitWindowByEdges(rotated);
-    if (edgeRect) {
-      let edgeCanvas = cropCanvas(rotated, edgeRect);
-      edgeCanvas = tightenCropByInk(edgeCanvas, 0.16);
-      edgeCanvas = scaleCanvas(edgeCanvas, OCR_CONFIG.minScaleWidth);
-      if (hasInk(edgeCanvas)) {
-        candidates.push({ canvas: edgeCanvas, label: `roi-${angle}-edge` });
-      }
+    const rawCanvas = scaleCanvas(rotated, OCR_CONFIG.minScaleWidth);
+    if (isUsable(rawCanvas)) {
+      candidates.push({ canvas: rawCanvas, label: `roi-${angle}-raw` });
     }
   });
 
@@ -190,75 +200,59 @@ const buildDigitCandidates = (source, debugSession = null, addDebugStageFn = () 
   }
 
   const alignedCandidates = buildAlignedDigitCandidates(source, debugSession, addDebugStageFn);
+  if (alignedCandidates.length) {
+    return alignedCandidates;
+  }
+
+  // Last-resort compact fallback: only one strip-like window per rotation.
   const meterCrop = cropCenterSquare(source, OCR_CONFIG.meterCropScale);
   const rotations = [0, 90, 180, 270];
-  const candidates = [...alignedCandidates];
-  const gridCrops = [
-    { name: 'grid-a', x: 0.0, y: 0.12, width: 0.6, height: 0.26 },
-    { name: 'grid-b', x: 0.02, y: 0.2, width: 0.6, height: 0.26 },
-    { name: 'grid-c', x: 0.05, y: 0.28, width: 0.6, height: 0.26 },
-    { name: 'grid-d', x: 0.0, y: 0.18, width: 0.55, height: 0.3 },
-    { name: 'grid-e', x: 0.06, y: 0.16, width: 0.64, height: 0.28 },
-    { name: 'grid-f', x: 0.1, y: 0.14, width: 0.7, height: 0.24 }
-  ];
+  const fallbackCandidates = [];
+  const fallbackRectNorm = ALIGNMENT_CONFIG.fallbackWindows[0] || { x: 0.08, y: 0.14, width: 0.48, height: 0.24 };
+  const geometry = OCR_CONFIG.geometry || {};
+  const minCandidateWidth = Number.isFinite(geometry.minCandidateWidth) ? geometry.minCandidateWidth : 120;
+  const minCandidateHeight = Number.isFinite(geometry.minCandidateHeight) ? geometry.minCandidateHeight : 28;
+  const minStripAspect = Number.isFinite(geometry.minStripAspect) ? geometry.minStripAspect : 1.15;
+  const maxStripAspect = Number.isFinite(geometry.maxStripAspect) ? geometry.maxStripAspect : 12;
+  const isStripLike = (canvas) => {
+    if (!canvas) {
+      return false;
+    }
+    const width = canvas.width;
+    const height = canvas.height;
+    if (width < minCandidateWidth || height < minCandidateHeight) {
+      return false;
+    }
+    const aspect = width / Math.max(1, height);
+    return aspect >= minStripAspect && aspect <= maxStripAspect;
+  };
 
   rotations.forEach((angle) => {
     const rotated = rotateCanvas(meterCrop, angle);
-    const beforeCount = candidates.length;
-
-    const edgeRect = findDigitWindowByEdges(rotated);
-    if (edgeRect) {
-      let edgeCanvas = cropCanvas(rotated, edgeRect);
-      edgeCanvas = tightenCropByInk(edgeCanvas, 0.25);
-      edgeCanvas = scaleCanvas(edgeCanvas, OCR_CONFIG.minScaleWidth);
-      if (hasInk(edgeCanvas)) {
-        candidates.push({ canvas: edgeCanvas, label: `${angle}-edge` });
-      }
-    }
-
-    gridCrops.forEach((crop) => {
-      const rect = {
-        x: rotated.width * crop.x,
-        y: rotated.height * crop.y,
-        width: rotated.width * crop.width,
-        height: rotated.height * crop.height
-      };
-      let gridCanvas = cropCanvas(rotated, rect);
-      gridCanvas = scaleCanvas(gridCanvas, OCR_CONFIG.minScaleWidth);
-      if (hasInk(gridCanvas)) {
-        candidates.push({ canvas: gridCanvas, label: `${angle}-${crop.name}` });
-      }
-    });
-
-    OCR_CONFIG.digitCrops.forEach((crop) => {
-      const rect = {
-        x: rotated.width * crop.x,
-        y: rotated.height * crop.y,
-        width: rotated.width * crop.width,
-        height: rotated.height * crop.height
-      };
-      let digitCanvas = cropCanvas(rotated, rect);
-      digitCanvas = tightenCropByInk(digitCanvas, 0.2);
-      digitCanvas = scaleCanvas(digitCanvas, OCR_CONFIG.minScaleWidth);
-      if (hasInk(digitCanvas)) {
-        candidates.push({ canvas: digitCanvas, label: `${angle}-${crop.name}` });
-      }
-    });
-
-    if (candidates.length === beforeCount) {
-      const fallbackRect = {
-        x: rotated.width * 0.02,
-        y: rotated.height * 0.18,
-        width: rotated.width * 0.7,
-        height: rotated.height * 0.32
-      };
-      let fallbackCanvas = cropCanvas(rotated, fallbackRect);
-      fallbackCanvas = scaleCanvas(fallbackCanvas, OCR_CONFIG.minScaleWidth);
-      candidates.push({ canvas: fallbackCanvas, label: `${angle}-fallback` });
+    const fallbackRect = getRectFromNormalized(rotated, fallbackRectNorm);
+    let fallbackCanvas = cropCanvas(rotated, fallbackRect);
+    fallbackCanvas = tightenCropByInk(fallbackCanvas, 0.12);
+    fallbackCanvas = scaleCanvas(fallbackCanvas, OCR_CONFIG.minScaleWidth);
+    if (hasInk(fallbackCanvas) && isStripLike(fallbackCanvas)) {
+      fallbackCandidates.push({ canvas: fallbackCanvas, label: `${angle}-fallback-compact` });
     }
   });
 
-  return candidates;
+  if (fallbackCandidates.length) {
+    return fallbackCandidates;
+  }
+
+  const edgeRect = findDigitWindowByEdges(meterCrop);
+  if (edgeRect) {
+    let edgeCanvas = cropCanvas(meterCrop, edgeRect);
+    edgeCanvas = tightenCropByInk(edgeCanvas, 0.2);
+    edgeCanvas = scaleCanvas(edgeCanvas, OCR_CONFIG.minScaleWidth);
+    if (hasInk(edgeCanvas) && isStripLike(edgeCanvas)) {
+      return [{ canvas: edgeCanvas, label: 'fallback-edge-compact' }];
+    }
+  }
+
+  return [];
 };
 
 export { buildDigitCandidates };

@@ -16,6 +16,24 @@ const OCR_CONFIG = {
   fallbackScoreThreshold: 0.72,
   fallbackCandidates: 6,
   minScaleWidth: 480,
+  geometry: {
+    minCandidateWidth: 120,
+    minCandidateHeight: 28,
+    minCandidateAspect: 0.12,
+    maxCandidateAspect: 18,
+    minStripAspect: 1.15,
+    maxStripAspect: 12,
+    minCellWidth: 20,
+    minCellHeight: 24
+  },
+  roiDeterministic: {
+    tightenInk: 0.08,
+    cellOverlap: 0.03,
+    requireAllCells: true,
+    minStripAspect: 1.8,
+    maxStripAspect: 6.5,
+    normalizeWidth: 480
+  },
   neuralRoi: {
     enabled: true,
     endpoint: 'http://127.0.0.1:8001/roi/detect',
@@ -31,9 +49,10 @@ const OCR_CONFIG = {
       minArea: 0.003,
       maxArea: 0.03,
       minAspect: 0.35,
-      maxAspect: 2.8
+      maxAspect: 3.2
     },
-    includeFullFallbackCandidates: false
+    includeFullFallbackCandidates: false,
+    skipFullFallbackWhenDetected: false
   }
 };
 
@@ -64,13 +83,11 @@ const ALIGNMENT_CONFIG = {
   stripDebugTopK: 6,
   stripWindows: [
     { name: 'strip-main', scaleX: 1.0, scaleY: 1.0, shiftX: 0, shiftY: 0 },
-    { name: 'strip-tight', scaleX: 0.86, scaleY: 0.84, shiftX: 0.02, shiftY: 0.02 },
-    { name: 'strip-wide', scaleX: 1.16, scaleY: 1.14, shiftX: -0.02, shiftY: -0.02 }
+    { name: 'strip-tight', scaleX: 0.86, scaleY: 0.84, shiftX: 0.02, shiftY: 0.02 }
   ],
   fallbackWindows: [
     { name: 'fallback-main', x: 0.08, y: 0.14, width: 0.48, height: 0.24 },
-    { name: 'fallback-tight', x: 0.1, y: 0.17, width: 0.44, height: 0.2 },
-    { name: 'fallback-wide', x: 0.06, y: 0.12, width: 0.52, height: 0.28 }
+    { name: 'fallback-tight', x: 0.1, y: 0.17, width: 0.44, height: 0.2 }
   ]
 };
 
