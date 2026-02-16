@@ -1,0 +1,167 @@
+{
+  "generated_at": "2026-02-16T18:08:06.417068+00:00",
+  "inputs": {
+    "cells_manifest": "/home/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset/manifests/cells.csv",
+    "readings_csv": "/home/andrea/GitHubRepositories/Jarvis/assets/meter_readings.csv",
+    "target_train_per_digit": 12,
+    "priority_digits": [
+      "4",
+      "5",
+      "6",
+      "9"
+    ],
+    "seed_label": "2311"
+  },
+  "digits": [
+    {
+      "digit": "0",
+      "train": 3,
+      "val": 1,
+      "test": 1,
+      "total": 5,
+      "train_deficit": 9
+    },
+    {
+      "digit": "1",
+      "train": 3,
+      "val": 4,
+      "test": 1,
+      "total": 8,
+      "train_deficit": 9
+    },
+    {
+      "digit": "2",
+      "train": 9,
+      "val": 3,
+      "test": 1,
+      "total": 13,
+      "train_deficit": 3
+    },
+    {
+      "digit": "3",
+      "train": 3,
+      "val": 3,
+      "test": 1,
+      "total": 7,
+      "train_deficit": 9
+    },
+    {
+      "digit": "4",
+      "train": 1,
+      "val": 0,
+      "test": 0,
+      "total": 1,
+      "train_deficit": 11
+    },
+    {
+      "digit": "5",
+      "train": 0,
+      "val": 0,
+      "test": 0,
+      "total": 0,
+      "train_deficit": 12
+    },
+    {
+      "digit": "6",
+      "train": 0,
+      "val": 0,
+      "test": 0,
+      "total": 0,
+      "train_deficit": 12
+    },
+    {
+      "digit": "7",
+      "train": 4,
+      "val": 0,
+      "test": 0,
+      "total": 4,
+      "train_deficit": 8
+    },
+    {
+      "digit": "8",
+      "train": 2,
+      "val": 1,
+      "test": 0,
+      "total": 3,
+      "train_deficit": 10
+    },
+    {
+      "digit": "9",
+      "train": 3,
+      "val": 0,
+      "test": 0,
+      "total": 3,
+      "train_deficit": 9
+    }
+  ],
+  "priority_actions": [
+    {
+      "priority_rank": 1,
+      "digit": "4",
+      "current_train": 1,
+      "target_train": 12,
+      "train_deficit": 11,
+      "suggested_labels": [
+        "4311",
+        "2411",
+        "2341",
+        "2314",
+        "4411",
+        "4341",
+        "4314",
+        "2441"
+      ]
+    },
+    {
+      "priority_rank": 2,
+      "digit": "5",
+      "current_train": 0,
+      "target_train": 12,
+      "train_deficit": 12,
+      "suggested_labels": [
+        "5311",
+        "2511",
+        "2351",
+        "2315",
+        "5511",
+        "5351",
+        "5315",
+        "2551"
+      ]
+    },
+    {
+      "priority_rank": 3,
+      "digit": "6",
+      "current_train": 0,
+      "target_train": 12,
+      "train_deficit": 12,
+      "suggested_labels": [
+        "6311",
+        "2611",
+        "2361",
+        "2316",
+        "6611",
+        "6361",
+        "6316",
+        "2661"
+      ]
+    },
+    {
+      "priority_rank": 4,
+      "digit": "9",
+      "current_train": 3,
+      "target_train": 12,
+      "train_deficit": 9,
+      "suggested_labels": [
+        "9311",
+        "2911",
+        "2391",
+        "2319",
+        "9911",
+        "9391",
+        "9319",
+        "2991"
+      ]
+    }
+  ]
+}

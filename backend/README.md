@@ -54,6 +54,18 @@ source .venv/bin/activate
 python build_digit_dataset.py --clean
 ```
 
+Validate manifest/file consistency and QA preview coverage:
+
+```bash
+python validate_digit_dataset.py
+```
+
+Generate a prioritized capture checklist for underrepresented digits:
+
+```bash
+python plan_digit_expansion.py --target-train-per-digit 12 --priority-digits 4,5,6,9
+```
+
 ## Train a dedicated digit classifier
 
 This trains a small per-cell CNN on `data/digit_dataset/cells` and writes:

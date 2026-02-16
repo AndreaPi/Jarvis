@@ -49,6 +49,13 @@ Optional: train the per-cell digit classifier checkpoint:
 python train_digit_classifier.py --device cpu
 ```
 
+For dataset expansion/QA before retraining:
+
+```bash
+python plan_digit_expansion.py --target-train-per-digit 12 --priority-digits 4,5,6,9
+python validate_digit_dataset.py
+```
+
 3. Start the API:
 
 ```bash
