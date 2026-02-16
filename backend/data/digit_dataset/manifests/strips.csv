@@ -1,0 +1,12 @@
+split,filename,strip_path,label_path,label,roi_x,roi_y,roi_w,roi_h
+train,meter_01122026.JPEG,strips/train/meter_01122026.png,strip_labels/train/meter_01122026.txt,2302,639,978,94,268
+train,meter_01132026.jpg,strips/train/meter_01132026.png,strip_labels/train/meter_01132026.txt,2302,1585,1255,526,194
+train,meter_01302026.JPEG,strips/train/meter_01302026.png,strip_labels/train/meter_01302026.txt,2307,602,874,107,297
+train,meter_07012020.JPEG,strips/train/meter_07012020.png,strip_labels/train/meter_07012020.txt,1784,676,796,221,75
+train,meter_10092025.JPEG,strips/train/meter_10092025.png,strip_labels/train/meter_10092025.txt,2279,629,887,115,282
+train,meter_10092025_b.JPEG,strips/train/meter_10092025_b.png,strip_labels/train/meter_10092025_b.txt,2279,626,799,110,295
+train,meter_11112020.JPEG,strips/train/meter_11112020.png,strip_labels/train/meter_11112020.txt,1819,769,525,420,132
+val,meter_02022026.JPEG,strips/val/meter_02022026.png,strip_labels/val/meter_02022026.txt,2308,631,823,62,209
+val,meter_02132026.JPEG,strips/val/meter_02132026.png,strip_labels/val/meter_02132026.txt,2311,605,901,91,225
+val,meter_02142026.JPEG,strips/val/meter_02142026.png,strip_labels/val/meter_02142026.txt,2311,590,894,97,241
+test,meter_02102026.JPEG,strips/test/meter_02102026.png,strip_labels/test/meter_02102026.txt,2310,602,710,99,293

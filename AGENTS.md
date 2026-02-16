@@ -49,43 +49,52 @@ Open `http://localhost:8000` after running a serve command. Neural ROI endpoint 
 ## IMPORTANT
 - When using Playwright in this environment, global `playwright-cli` may be more reliable than the wrapper if npm network is flaky.
 
-## OCR Current Status (2026-02-14)
+## OCR Current Status (2026-02-15)
 
-### Latest validated state
-- App and backend run locally on `127.0.0.1:8000` and `127.0.0.1:8001`.
-- Neural ROI is detection-only; final digit OCR is still Tesseract-based.
-- Current `src/ocr/config.js` keeps `neuralRoi.includeFullFallbackCandidates: false`.
-- Test-set table labels are now `Value Match` and `OCR Confidence`.
+### Current validated state
+- App + backend run locally on `127.0.0.1:8000` and `127.0.0.1:8001`.
+- Neural ROI detection quality is much better than before (rot-aug model in use), but final OCR is still Tesseract-based.
+- Latest full UI test-set run remains `0/11` correct.
 
-### Dataset and model snapshot
-- ROI dataset split currently in repo:
-  - train: `7`
-  - val: `3`
-  - test: `1`
-- New val samples were committed in `a9e7048`:
-  - `backend/data/roi_dataset/images/val/meter_02132026.JPEG`
-  - `backend/data/roi_dataset/images/val/meter_02142026.JPEG`
-  - `backend/data/roi_dataset/labels/val/meter_02132026.txt`
-  - `backend/data/roi_dataset/labels/val/meter_02142026.txt`
-- Latest ROI retrain used CPU and produced `backend/models/roi.pt` from `backend/runs/roi-finetune4/weights/best.pt`.
+### Latest benchmark snapshot (same 11 images)
+- Summary artifact: `/tmp/jarvis_testset_summary.json`
+- Most recent run:
+  - Accuracy: `0/11`
+  - Mean `Value Match`: `0.025`
+  - Mean `OCR Confidence`: `0.700`
+- Pattern:
+  - Most rows return no final read.
+  - Occasional high-confidence wrong reads still occur (for example `4441` with confidence `100`).
 
-### 2026-02-14 benchmark findings
-- Backend ROI sanity:
-  - At `ROI_DEFAULT_CONFIDENCE=0.05`: `/roi/detect` returned `0/11` detections on `assets/`.
-  - At `ROI_DEFAULT_CONFIDENCE=0.001`: `/roi/detect` returned `11/11`, but with very low confidence (~`0.013` to `0.025`) and one out-of-bounds geometry case.
-- Full UI test set with low backend threshold (`0.001`) did not help:
-  - Accuracy `0/11`, mean `Value Match` `0.044`, mean `OCR Confidence` `0.491`.
-  - Reference snapshot: `.playwright-cli/page-2026-02-14T10-53-40-002Z.yml`.
-- A/B check for review comment (`includeFullFallbackCandidates`):
-  - `false` vs `true` at backend default confidence `0.05`.
-  - Result was identical row-by-row:
-    - Accuracy `0/11`
-    - Mean `Value Match` `0.483`
-    - Mean `OCR Confidence` `0.775`
-  - Decision: keep `includeFullFallbackCandidates: false` for now; revisit after ROI quality improves.
+### What is stale / what to ignore
+- Do not spend more cycles on threshold-only or branch-order-only tuning as the primary strategy.
+- Do not treat confidence as a reliable correctness proxy in this dataset.
+- Do not assume ROI detection improvements will automatically improve final OCR.
 
-### Current priorities
-1. Expand ROI dataset further (main blocker).
-2. Retrain ROI model on CPU after dataset growth.
-3. Re-check offline ROI quality first (`/health`, `/roi/detect` confidence + geometry), then rerun UI test set.
-4. Tune OCR selection/fallback behavior only after ROI reliability improves.
+### Lessons learned (important)
+1. ROI detection and OCR decoding are separate bottlenecks.
+2. We have crossed the point of diminishing returns on heuristic tweaks in `src/ocr/*`.
+3. High-confidence wrong outputs indicate model mismatch, not just ranking mistakes.
+4. The current bottleneck is decoding quality, not candidate routing.
+5. Data quality/coverage is now the limiting factor for progress.
+
+### New dataset tooling added (today)
+- Added `backend/build_digit_dataset.py`.
+- Purpose:
+  - export ROI strip crops with 4-digit labels,
+  - export per-cell crops grouped by digit class,
+  - generate manifests and QA previews.
+- Output root: `backend/data/digit_dataset/`
+- Quick run:
+  - `cd backend && source .venv/bin/activate && python build_digit_dataset.py --clean`
+- Current export stats:
+  - rows: `11` (train `7`, val `3`, test `1`)
+  - cell crops: train `28`, val `12`, test `4`
+  - strong class imbalance exists (`5` and `6` have zero samples).
+
+### Next steps (next session)
+1. Expand dataset with targeted captures for missing/rare digits (`4/5/6/9` priority).
+2. Keep QA previews in the loop when adding labels to avoid bad supervision.
+3. Train a dedicated digit OCR model (start with per-cell digit classifier).
+4. Integrate model inference in `src/ocr/recognition.js` as a replacement for Tesseract cell decode (behind a flag first).
+5. Re-run the same 11-image UI benchmark and compare row-level diffs before further heuristic edits.

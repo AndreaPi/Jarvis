@@ -29,7 +29,30 @@ source .venv/bin/activate
 python train_roi.py --data data/roi_dataset.yaml --base-model yolov8n.pt
 ```
 
+For an orientation-robust experiment with strong augmentation (including explicit 90/180/270/360 train rotations):
+
+```bash
+python train_roi.py \
+  --data data/roi_dataset.yaml \
+  --base-model yolov8n.pt \
+  --rotation-angles 90,180,270,360 \
+  --heavy-augment
+```
+
 After training, best weights are copied to `backend/models/roi.pt`.
+
+## Build a digit OCR dataset from ROI labels
+
+This creates:
+- strip crops + sequence labels (`data/digit_dataset/strips`, `data/digit_dataset/strip_labels`)
+- per-cell crops grouped by digit class (`data/digit_dataset/cells`)
+- manifests and QA previews (`data/digit_dataset/manifests`, `data/digit_dataset/qa_previews`)
+
+```bash
+cd backend
+source .venv/bin/activate
+python build_digit_dataset.py --clean
+```
 
 ## 3) Start the API
 
