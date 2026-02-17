@@ -48,6 +48,26 @@ const getSelectionLogs = () => {
   return window.__jarvisOcrSelectionLogs;
 };
 
+const incrementHistogram = (histogram, key, amount = 1) => {
+  if (!(histogram instanceof Map)) {
+    return;
+  }
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return;
+  }
+  const normalized = key ? String(key) : 'unknown';
+  histogram.set(normalized, (histogram.get(normalized) || 0) + amount);
+};
+
+const histogramRows = (histogram) => {
+  if (!(histogram instanceof Map) || !histogram.size) {
+    return [];
+  }
+  return [...histogram.entries()]
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
+};
+
 const topRejectReason = (selectionLog) => {
   if (!selectionLog || !Array.isArray(selectionLog.rejectSummary) || !selectionLog.rejectSummary.length) {
     return null;
@@ -59,7 +79,39 @@ const topRejectReason = (selectionLog) => {
   return String(top.reason);
 };
 
-const renderTestResults = (resultsEl, results, correct, total) => {
+const renderHistogram = (title, rows, total) => {
+  const section = document.createElement('section');
+  section.className = 'histogram';
+
+  const heading = document.createElement('h4');
+  heading.textContent = `${title} (${total})`;
+  section.appendChild(heading);
+
+  const table = document.createElement('table');
+  const header = document.createElement('tr');
+  ['Reason', 'Count', 'Share'].forEach((label) => {
+    const th = document.createElement('th');
+    th.textContent = label;
+    header.appendChild(th);
+  });
+  table.appendChild(header);
+
+  rows.forEach((entry) => {
+    const row = document.createElement('tr');
+    const share = total ? `${((entry.count / total) * 100).toFixed(1)}%` : '0.0%';
+    [entry.reason, String(entry.count), share].forEach((value) => {
+      const cell = document.createElement('td');
+      cell.textContent = value;
+      row.appendChild(cell);
+    });
+    table.appendChild(row);
+  });
+
+  section.appendChild(table);
+  return section;
+};
+
+const renderTestResults = (resultsEl, results, correct, total, histograms = {}) => {
   if (!resultsEl) {
     return;
   }
@@ -98,6 +150,18 @@ const renderTestResults = (resultsEl, results, correct, total) => {
   summary.className = 'summary';
   summary.textContent = `Accuracy: ${correct}/${total} (${Math.round((correct / total) * 100)}%)`;
   resultsEl.appendChild(summary);
+
+  const failureRows = Array.isArray(histograms.failureReasons) ? histograms.failureReasons : [];
+  const rejectRows = Array.isArray(histograms.rejectReasons) ? histograms.rejectReasons : [];
+  const failureTotal = Number.isFinite(histograms.failureTotal) ? histograms.failureTotal : 0;
+  const rejectTotal = Number.isFinite(histograms.rejectTotal) ? histograms.rejectTotal : 0;
+
+  if (failureRows.length) {
+    resultsEl.appendChild(renderHistogram('Failure reason histogram', failureRows, failureTotal));
+  }
+  if (rejectRows.length) {
+    resultsEl.appendChild(renderHistogram('OCR reject histogram', rejectRows, rejectTotal));
+  }
 };
 
 const createTestSetRunner = ({
@@ -150,6 +214,8 @@ const createTestSetRunner = ({
       const results = [];
       let correct = 0;
       let rowErrors = 0;
+      const failureReasonHistogram = new Map();
+      const rejectReasonHistogram = new Map();
 
       for (let i = 0; i < rows.length; i += 1) {
         const row = rows[i];
@@ -166,6 +232,7 @@ const createTestSetRunner = ({
               score: debugScore,
               failureReason: 'missing-image'
             });
+            incrementHistogram(failureReasonHistogram, 'missing-image');
             continue;
           }
 
@@ -187,12 +254,22 @@ const createTestSetRunner = ({
           const failureReason = match
             ? '—'
             : (
-              rejectReason
+              (detected ? 'mismatch' : null)
+              || rejectReason
               || (selectionLog && selectionLog.branchUsed ? `branch:${selectionLog.branchUsed}` : null)
-              || (detected ? 'mismatch' : 'no-reading')
+              || 'no-reading'
             );
           if (match) {
             correct += 1;
+          } else {
+            incrementHistogram(failureReasonHistogram, failureReason);
+          }
+          if (selectionLog && Array.isArray(selectionLog.rejectSummary)) {
+            selectionLog.rejectSummary.forEach((entry) => {
+              const reason = entry && entry.reason ? String(entry.reason) : 'unknown';
+              const count = Number.isFinite(entry && entry.count) ? entry.count : 1;
+              incrementHistogram(rejectReasonHistogram, reason, count);
+            });
           }
 
           results.push({
@@ -215,7 +292,26 @@ const createTestSetRunner = ({
             score: debugScore,
             failureReason: `error:${formatError(rowError)}`
           });
+          incrementHistogram(failureReasonHistogram, `error:${formatError(rowError)}`);
         }
+      }
+
+      const failureReasons = histogramRows(failureReasonHistogram);
+      const rejectReasons = histogramRows(rejectReasonHistogram);
+      const failureTotal = failureReasons.reduce((sum, entry) => sum + entry.count, 0);
+      const rejectTotal = rejectReasons.reduce((sum, entry) => sum + entry.count, 0);
+      const runHistogram = {
+        generatedAt: new Date().toISOString(),
+        totalRows: rows.length,
+        correct,
+        failed: rows.length - correct,
+        failureReasons,
+        failureTotal,
+        rejectReasons,
+        rejectTotal
+      };
+      if (typeof window !== 'undefined') {
+        window.__jarvisLastTestSetHistogram = runHistogram;
       }
 
       setStatus(
@@ -223,7 +319,7 @@ const createTestSetRunner = ({
           ? `Done. ${correct}/${rows.length} correct. ${rowErrors} row error(s); see console.`
           : `Done. ${correct}/${rows.length} correct.`
       );
-      renderTestResults(resultsEl, results, correct, rows.length);
+      renderTestResults(resultsEl, results, correct, rows.length, runHistogram);
     } catch (error) {
       console.error(error);
       setStatus(`Test run failed: ${formatError(error)}.`);

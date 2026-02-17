@@ -307,6 +307,34 @@ a:hover {
   color: var(--muted-strong);
 }
 
+.test-results .histogram {
+  margin-top: 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-muted);
+  overflow: hidden;
+}
+
+.test-results .histogram h4 {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--muted-strong);
+  padding: 0.65rem 0.75rem 0.45rem;
+}
+
+.test-results .histogram table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.84rem;
+}
+
+.test-results .histogram th,
+.test-results .histogram td {
+  padding: 0.35rem 0.75rem;
+  border-bottom: none;
+  border-top: 1px solid var(--border);
+}
+
 .module-grid {
   display: grid;
   gap: 1rem;
