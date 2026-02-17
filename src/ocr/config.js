@@ -35,7 +35,7 @@ const OCR_CONFIG = {
     normalizeWidth: 480
   },
   digitClassifier: {
-    enabled: false,
+    enabled: true,
     endpoint: 'http://127.0.0.1:8001/digit/predict-cells',
     timeoutMs: 1800,
     minCellConfidence: 0.28,
