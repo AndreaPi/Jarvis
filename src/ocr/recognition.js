@@ -288,11 +288,30 @@ const readDigitsByCells = async (worker, source, setProgress, options = {}) => {
     const width = canvas.width;
     const height = canvas.height;
     const aspect = width / Math.max(1, height);
+    const mode = context && typeof context.mode === 'string' ? context.mode : '';
+    const isRoiMode = mode.startsWith('roi-');
     if (width < minCandidateWidth || height < minCandidateHeight) {
       emitReject('candidate-too-small', { width, height, ...context });
       return false;
     }
     if (aspect < minCandidateAspect || aspect > maxCandidateAspect) {
+      if (isRoiMode) {
+        const relaxedMinAspect = minCandidateAspect * 0.8;
+        const relaxedMaxAspect = maxCandidateAspect * 1.12;
+        if (aspect >= relaxedMinAspect && aspect <= relaxedMaxAspect) {
+          emitReject('candidate-bad-aspect-soft', {
+            width,
+            height,
+            aspect: Number(aspect.toFixed(3)),
+            minCandidateAspect,
+            maxCandidateAspect,
+            relaxedMinAspect: Number(relaxedMinAspect.toFixed(3)),
+            relaxedMaxAspect: Number(relaxedMaxAspect.toFixed(3)),
+            ...context
+          });
+          return true;
+        }
+      }
       emitReject('candidate-bad-aspect', { width, height, aspect: Number(aspect.toFixed(3)), ...context });
       return false;
     }
@@ -418,14 +437,22 @@ const readDigitsByCells = async (worker, source, setProgress, options = {}) => {
 
     aspect = normalized.width / Math.max(1, normalized.height);
     if (aspect < minStripAspect || aspect > maxStripAspect) {
-      emitReject('roi-strip-aspect-out-of-range', {
+      const hardMinStripAspect = minStripAspect * 0.96;
+      const hardMaxStripAspect = maxStripAspect * 1.06;
+      const detail = {
         width: normalized.width,
         height: normalized.height,
         aspect: Number(aspect.toFixed(3)),
         minStripAspect,
-        maxStripAspect
-      });
-      return null;
+        maxStripAspect,
+        hardMinStripAspect: Number(hardMinStripAspect.toFixed(3)),
+        hardMaxStripAspect: Number(hardMaxStripAspect.toFixed(3))
+      };
+      if (aspect < hardMinStripAspect || aspect > hardMaxStripAspect) {
+        emitReject('roi-strip-aspect-out-of-range', detail);
+        return null;
+      }
+      emitReject('roi-strip-aspect-soft', detail);
     }
 
     return normalized;
