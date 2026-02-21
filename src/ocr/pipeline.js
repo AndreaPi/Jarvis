@@ -480,6 +480,7 @@ const evaluateCandidateBranch = async ({
           }
         }
         const confirmationHits = bestResult ? (topPickHits.get(bestResult.value) || 0) : 0;
+        // Skip early-stop in ROI mode: candidates are few, always evaluate all for best score.
         if (
           !roiMode
           &&
