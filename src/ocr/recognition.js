@@ -408,6 +408,7 @@ const readDigitsByCells = async (worker, source, setProgress, options = {}) => {
     }
     const aspect = tightened.width / Math.max(1, tightened.height);
     const areaRatio = (tightened.width * tightened.height) / Math.max(1, rotated.width * rotated.height);
+    // Prefer wider strips; penalize rotations that shrink ink area below 14% of the bounding box.
     const score = aspect - Math.max(0, 0.14 - areaRatio) * 3.5;
     return {
       canvas: tightened,
@@ -588,7 +589,6 @@ const readDigitsByCells = async (worker, source, setProgress, options = {}) => {
           cellConfidences,
           variantIndex: metadata.variantIndex,
           overlap: metadata.overlap,
-          offsetPx: metadata.offsetPx,
           orientation: Number.isFinite(metadata.orientation) ? metadata.orientation : null,
           deskewAngle: Number.isFinite(metadata.deskewAngle) ? metadata.deskewAngle : null,
           decoder,
@@ -700,7 +700,6 @@ const readDigitsByCells = async (worker, source, setProgress, options = {}) => {
       classifierModel: reading.classifierModel || null,
       variantIndex: Number.isFinite(reading.variantIndex) ? reading.variantIndex : null,
       overlap: Number.isFinite(reading.overlap) ? reading.overlap : null,
-      offsetPx: Number.isFinite(reading.offsetPx) ? reading.offsetPx : null,
       orientation: Number.isFinite(reading.orientation) ? reading.orientation : null,
       deskewAngle: Number.isFinite(reading.deskewAngle) ? reading.deskewAngle : null
     };
