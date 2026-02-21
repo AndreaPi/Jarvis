@@ -5,7 +5,9 @@ import {
   scaleCanvas,
   splitIntoCells,
   cropCanvas,
-  tightenCropByInk
+  tightenCropByInk,
+  rotateCanvas,
+  normalizeAngle
 } from './canvas-utils.js';
 import { predictDigitCells } from './digit-classifier.js';
 
@@ -351,6 +353,96 @@ const readDigitsByCells = async (worker, source, setProgress, options = {}) => {
     return resized;
   };
 
+  const rotateCanvasExpanded = (canvas, angle) => {
+    const normalized = normalizeAngle(angle);
+    if (!Number.isFinite(normalized) || normalized === 0) {
+      return canvas;
+    }
+    if (normalized % 90 === 0) {
+      return rotateCanvas(canvas, normalized);
+    }
+    const radians = (normalized * Math.PI) / 180;
+    const cos = Math.cos(radians);
+    const sin = Math.sin(radians);
+    const width = Math.max(
+      1,
+      Math.round(Math.abs(canvas.width * cos) + Math.abs(canvas.height * sin))
+    );
+    const height = Math.max(
+      1,
+      Math.round(Math.abs(canvas.width * sin) + Math.abs(canvas.height * cos))
+    );
+    const rotated = document.createElement('canvas');
+    rotated.width = width;
+    rotated.height = height;
+    const ctx = rotated.getContext('2d');
+    ctx.translate(width * 0.5, height * 0.5);
+    ctx.rotate(radians);
+    ctx.drawImage(canvas, -canvas.width * 0.5, -canvas.height * 0.5);
+    return rotated;
+  };
+
+  const buildDeskewAngles = () => {
+    const maxAngleRaw = Number.isFinite(roiDeterministic.deskewMaxAngle)
+      ? roiDeterministic.deskewMaxAngle
+      : 8;
+    const stepRaw = Number.isFinite(roiDeterministic.deskewStep)
+      ? roiDeterministic.deskewStep
+      : 2;
+    const maxAngle = Math.max(0, Math.min(20, Math.abs(maxAngleRaw)));
+    const step = Math.max(1, Math.min(10, Math.abs(stepRaw)));
+    const angles = [0];
+    for (let delta = step; delta <= maxAngle; delta += step) {
+      const rounded = Number(delta.toFixed(3));
+      angles.push(rounded);
+      angles.push(-rounded);
+    }
+    return angles;
+  };
+
+  const scoreDeskewCandidate = (sourceCanvas, tightenRatio, angle) => {
+    const rotated = angle === 0 ? sourceCanvas : rotateCanvasExpanded(sourceCanvas, angle);
+    const tightened = tightenCropByInk(rotated, tightenRatio);
+    if (!tightened) {
+      return null;
+    }
+    const aspect = tightened.width / Math.max(1, tightened.height);
+    const areaRatio = (tightened.width * tightened.height) / Math.max(1, rotated.width * rotated.height);
+    const score = aspect - Math.max(0, 0.14 - areaRatio) * 3.5;
+    return {
+      canvas: tightened,
+      angle,
+      score
+    };
+  };
+
+  const normalizeRoiOrientation = (sourceCanvas, tightenRatio) => {
+    const angles = buildDeskewAngles();
+    let best = scoreDeskewCandidate(sourceCanvas, tightenRatio, 0);
+    if (!best) {
+      return {
+        canvas: sourceCanvas,
+        deskewAngle: 0
+      };
+    }
+    angles.forEach((angle) => {
+      if (angle === 0) {
+        return;
+      }
+      const candidate = scoreDeskewCandidate(sourceCanvas, tightenRatio, angle);
+      if (!candidate) {
+        return;
+      }
+      if (candidate.score > best.score + 0.02) {
+        best = candidate;
+      }
+    });
+    return {
+      canvas: best.canvas,
+      deskewAngle: normalizeAngle(best.angle)
+    };
+  };
+
   const buildInkProjection = (canvas) => {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const { width, height } = canvas;
@@ -398,7 +490,8 @@ const readDigitsByCells = async (worker, source, setProgress, options = {}) => {
     const minStripAspect = Number.isFinite(roiDeterministic.minStripAspect) ? roiDeterministic.minStripAspect : 1.8;
     const maxStripAspect = Number.isFinite(roiDeterministic.maxStripAspect) ? roiDeterministic.maxStripAspect : 6.5;
     const normalizeWidth = Number.isFinite(roiDeterministic.normalizeWidth) ? roiDeterministic.normalizeWidth : OCR_CONFIG.minScaleWidth;
-    let normalized = tightenCropByInk(canvas, tightenRatio);
+    const orientationNormalized = normalizeRoiOrientation(canvas, tightenRatio);
+    let normalized = orientationNormalized.canvas;
     if (!hasValidCandidateGeometry(normalized, { mode: 'roi-initial' })) {
       return null;
     }
@@ -455,7 +548,12 @@ const readDigitsByCells = async (worker, source, setProgress, options = {}) => {
       emitReject('roi-strip-aspect-soft', detail);
     }
 
-    return normalized;
+    return {
+      canvas: normalized,
+      deskewAngle: Number.isFinite(orientationNormalized.deskewAngle)
+        ? orientationNormalized.deskewAngle
+        : 0
+    };
   };
 
   const decodeCells = async (cellCanvases, metadata = {}, decodeOptions = {}) => {
@@ -490,6 +588,9 @@ const readDigitsByCells = async (worker, source, setProgress, options = {}) => {
           cellConfidences,
           variantIndex: metadata.variantIndex,
           overlap: metadata.overlap,
+          offsetPx: metadata.offsetPx,
+          orientation: Number.isFinite(metadata.orientation) ? metadata.orientation : null,
+          deskewAngle: Number.isFinite(metadata.deskewAngle) ? metadata.deskewAngle : null,
           decoder,
           ...extra
         }
@@ -537,14 +638,15 @@ const readDigitsByCells = async (worker, source, setProgress, options = {}) => {
 
     const digits = [];
     const cellConfidences = [];
+    const cellDecodeModes = options.roiMode ? ['binary', 'soft'] : ['binary', 'soft', 'raw'];
 
     for (let i = 0; i < cellCanvases.length; i += 1) {
       if (setProgress) {
         setProgress(`Refining digits (${i + 1}/${cellCanvases.length})`);
       }
       let best = null;
-      for (const mode of ['binary', 'soft']) {
-        let cell = preprocessCanvas(cellCanvases[i], mode);
+      for (const mode of cellDecodeModes) {
+        let cell = mode === 'raw' ? cellCanvases[i] : preprocessCanvas(cellCanvases[i], mode);
         cell = scaleCanvas(cell, OCR_CONFIG.minDigitWidth);
         const { data } = await worker.recognize(cell);
         const picked = pickDigit(data);
@@ -597,27 +699,60 @@ const readDigitsByCells = async (worker, source, setProgress, options = {}) => {
       decoder: reading.decoder || 'tesseract',
       classifierModel: reading.classifierModel || null,
       variantIndex: Number.isFinite(reading.variantIndex) ? reading.variantIndex : null,
-      overlap: Number.isFinite(reading.overlap) ? reading.overlap : null
+      overlap: Number.isFinite(reading.overlap) ? reading.overlap : null,
+      offsetPx: Number.isFinite(reading.offsetPx) ? reading.offsetPx : null,
+      orientation: Number.isFinite(reading.orientation) ? reading.orientation : null,
+      deskewAngle: Number.isFinite(reading.deskewAngle) ? reading.deskewAngle : null
     };
   };
 
   if (options.roiMode) {
     const overlap = Number.isFinite(roiDeterministic.cellOverlap) ? roiDeterministic.cellOverlap : 0.03;
     const requireAllCells = roiDeterministic.requireAllCells !== false;
-    const roiCanvas = normalizeRoiStripCanvas(source);
-    if (!roiCanvas) {
+    const roiNormalized = normalizeRoiStripCanvas(source);
+    if (!roiNormalized || !roiNormalized.canvas) {
       return null;
     }
-    const cellCanvases = splitIntoCells(roiCanvas, OCR_CONFIG.digitCellCount, overlap);
-    if (!hasValidCellGeometry(cellCanvases, { mode: 'roi-deterministic', overlap })) {
-      return null;
+    const orientationVariants = [
+      { orientation: 0, canvas: roiNormalized.canvas },
+      { orientation: 180, canvas: rotateCanvas(roiNormalized.canvas, 180) }
+    ];
+    let best = null;
+
+    for (let i = 0; i < orientationVariants.length; i += 1) {
+      const variant = orientationVariants[i];
+      const cellCanvases = splitIntoCells(variant.canvas, OCR_CONFIG.digitCellCount, overlap);
+      if (!hasValidCellGeometry(cellCanvases, {
+        mode: 'roi-deterministic',
+        overlap,
+        orientation: variant.orientation
+      })) {
+        continue;
+      }
+      const reading = await decodeCells(
+        cellCanvases,
+        {
+          variantIndex: i,
+          overlap,
+          orientation: variant.orientation,
+          deskewAngle: roiNormalized.deskewAngle
+        },
+        { requireAllCells }
+      );
+      const finalized = finalizeReading(reading);
+      if (!finalized) {
+        continue;
+      }
+      if (
+        !best
+        || finalized.score > best.score
+        || (finalized.score === best.score && finalized.confidence > best.confidence)
+      ) {
+        best = finalized;
+      }
     }
-    const reading = await decodeCells(
-      cellCanvases,
-      { variantIndex: 0, overlap },
-      { requireAllCells }
-    );
-    return finalizeReading(reading);
+
+    return best;
   }
 
   const cropToFocus = (canvas, rect) => {

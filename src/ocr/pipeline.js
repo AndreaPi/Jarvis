@@ -6,7 +6,8 @@ import {
   preprocessCanvas,
   cropCanvas,
   normalizeRectToCanvas,
-  drawOverlayCanvas
+  drawOverlayCanvas,
+  normalizeAngle
 } from './canvas-utils.js';
 import { buildDigitCandidates } from './alignment.js';
 import { getWorker, selectBestReading, readDigitsByCells } from './recognition.js';
@@ -394,12 +395,17 @@ const evaluateCandidateBranch = async ({
     if (!reading) {
       return null;
     }
+    const candidateAngle = candidate && candidate.label ? extractCandidateAngle(candidate.label) : Number.NaN;
+    const orientationOffset = Number.isFinite(reading.orientation) ? normalizeAngle(reading.orientation) : 0;
+    const resolvedAngle = Number.isFinite(candidateAngle)
+      ? normalizeAngle(candidateAngle + orientationOffset)
+      : null;
     return {
       ...reading,
       branch: branchLabel,
       method,
       sourceLabel: candidate && candidate.label ? candidate.label : null,
-      angle: candidate && candidate.label ? extractCandidateAngle(candidate.label) : null
+      angle: Number.isFinite(resolvedAngle) ? resolvedAngle : null
     };
   };
 
@@ -475,6 +481,8 @@ const evaluateCandidateBranch = async ({
         }
         const confirmationHits = bestResult ? (topPickHits.get(bestResult.value) || 0) : 0;
         if (
+          !roiMode
+          &&
           bestResult
           && bestResult.score >= OCR_CONFIG.earlyStopScore
           && isPreferredLengthReading(bestResult)
@@ -650,8 +658,8 @@ const runMeterOcr = async (file, setProgress) => {
       worker,
       setProgress,
       roiMode: true,
-      useWordPass: false,
-      allowSparseScan: false,
+      useWordPass: true,
+      allowSparseScan: true,
       scanCanvas: roiCrop
     });
 

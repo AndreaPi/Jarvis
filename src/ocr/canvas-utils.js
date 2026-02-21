@@ -2,6 +2,14 @@ import { DEBUG_CONFIG } from './config.js';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
+const normalizeAngle = (angle) => {
+  const value = Number(angle);
+  if (!Number.isFinite(value)) {
+    return Number.NaN;
+  }
+  return ((value % 360) + 360) % 360;
+};
+
 const cloneCanvas = (source) => {
   const canvas = document.createElement('canvas');
   canvas.width = source.width;
@@ -156,12 +164,12 @@ const scaleCanvas = (source, targetWidth) => {
   return canvas;
 };
 
-const splitIntoCells = (source, count, overlapRatio) => {
+const splitIntoCells = (source, count, overlapRatio, offsetPx = 0) => {
   const cells = [];
   const cellWidth = source.width / count;
   const overlap = cellWidth * overlapRatio;
   for (let i = 0; i < count; i += 1) {
-    const x = cellWidth * i - overlap;
+    const x = cellWidth * i - overlap + offsetPx;
     const width = cellWidth + overlap * 2;
     cells.push(cropCanvas(source, { x, y: 0, width, height: source.height }));
   }
@@ -446,6 +454,7 @@ const adjustRectAroundCenter = (canvas, baseRect, settings) => {
 
 export {
   clamp,
+  normalizeAngle,
   cloneCanvas,
   getRectFromNormalized,
   drawOverlayCanvas,
