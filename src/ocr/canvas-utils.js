@@ -164,12 +164,12 @@ const scaleCanvas = (source, targetWidth) => {
   return canvas;
 };
 
-const splitIntoCells = (source, count, overlapRatio, offsetPx = 0) => {
+const splitIntoCells = (source, count, overlapRatio) => {
   const cells = [];
   const cellWidth = source.width / count;
   const overlap = cellWidth * overlapRatio;
   for (let i = 0; i < count; i += 1) {
-    const x = cellWidth * i - overlap + offsetPx;
+    const x = cellWidth * i - overlap;
     const width = cellWidth + overlap * 2;
     cells.push(cropCanvas(source, { x, y: 0, width, height: source.height }));
   }
