@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-02-16T18:08:06.417068+00:00",
+  "generated_at": "2026-02-19T21:59:50.628873+00:00",
   "inputs": {
     "cells_manifest": "/home/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset/manifests/cells.csv",
     "readings_csv": "/home/andrea/GitHubRepositories/Jarvis/assets/meter_readings.csv",
@@ -109,7 +109,9 @@
         "4411",
         "4341",
         "4314",
-        "2441"
+        "2441",
+        "2414",
+        "2344"
       ]
     },
     {
@@ -126,7 +128,9 @@
         "5511",
         "5351",
         "5315",
-        "2551"
+        "2551",
+        "2515",
+        "2355"
       ]
     },
     {
@@ -143,7 +147,9 @@
         "6611",
         "6361",
         "6316",
-        "2661"
+        "2661",
+        "2616",
+        "2366"
       ]
     },
     {
@@ -160,7 +166,9 @@
         "9911",
         "9391",
         "9319",
-        "2991"
+        "2991",
+        "2919",
+        "2399"
       ]
     }
   ]
