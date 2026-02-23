@@ -10,7 +10,7 @@ const OCR_CONFIG = {
   preferredDigits: 4,
   digitCellCount: 4,
   digitCellOverlap: 0.08,
-  minDigitWidth: 96,
+  minDigitWidth: 80,
   minDigits: 3,
   earlyStopScore: 0.84,
   fallbackScoreThreshold: 0.72,
@@ -28,14 +28,16 @@ const OCR_CONFIG = {
   },
   roiDeterministic: {
     tightenInk: 0.08,
-    cellOverlap: 0.03,
+    cellOverlap: 0.06,
     requireAllCells: true,
-    minStripAspect: 1.8,
-    maxStripAspect: 6.5,
-    normalizeWidth: 480
+    minStripAspect: 1.55,
+    maxStripAspect: 7.2,
+    normalizeWidth: 520,
+    deskewMaxAngle: 8,
+    deskewStep: 2
   },
   digitClassifier: {
-    enabled: true,
+    enabled: false,
     endpoint: 'http://127.0.0.1:8001/digit/predict-cells',
     timeoutMs: 1800,
     minCellConfidence: 0.28,
@@ -47,8 +49,8 @@ const OCR_CONFIG = {
     endpoint: 'http://127.0.0.1:8001/roi/detect',
     timeoutMs: 8000,
     minConfidence: 0.01,
-    expandX: 0.18,
-    expandY: 0.24,
+    expandX: 0.26,
+    expandY: 0.16,
     sanity: {
       minCenterX: 0.28,
       maxCenterX: 0.62,

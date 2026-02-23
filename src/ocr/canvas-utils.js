@@ -102,11 +102,13 @@ const drawImageToCanvas = (image, maxDimension) => {
 };
 
 const cropCanvas = (source, rect) => {
+  const safeX = clamp(rect.x, 0, source.width - 1);
+  const safeY = clamp(rect.y, 0, source.height - 1);
   const safeRect = {
-    x: clamp(rect.x, 0, source.width - 1),
-    y: clamp(rect.y, 0, source.height - 1),
-    width: clamp(rect.width, 1, source.width),
-    height: clamp(rect.height, 1, source.height)
+    x: safeX,
+    y: safeY,
+    width: clamp(rect.width, 1, source.width - safeX),
+    height: clamp(rect.height, 1, source.height - safeY)
   };
   const canvas = document.createElement('canvas');
   canvas.width = Math.round(safeRect.width);
