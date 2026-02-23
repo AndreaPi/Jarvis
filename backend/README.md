@@ -1,6 +1,6 @@
 # ROI Backend
 
-Python service for neural ROI detection (digit window) using a fine-tuned pretrained YOLO model.
+Python service for neural ROI detection (digit window) plus optional per-cell digit-classifier inference.
 
 ## 1) Install
 
@@ -87,12 +87,22 @@ source .venv/bin/activate
 uvicorn app:app --host 127.0.0.1 --port 8001 --reload
 ```
 
+Readiness check:
+
+```bash
+curl -s http://127.0.0.1:8001/health
+```
+
 ## 4) Endpoints
 
-- `GET /health`: model readiness.
+- `GET /health`: model readiness (`ready`, `roi_ready`, `digit_ready`) + effective model/device config.
 - `POST /roi/detect`: multipart upload (`image`) and returns normalized bbox + confidence.
 - `POST /digit/predict`: multipart upload (`image`) and returns the predicted digit + confidence.
 - `POST /digit/predict-cells`: multipart upload (`images`, repeated field) for batch cell decoding.
+
+Frontend integration defaults:
+- ROI detection path is `http://127.0.0.1:8001/roi/detect` and is required for OCR.
+- Digit classifier path is `http://127.0.0.1:8001/digit/predict-cells` and is only used when `OCR_CONFIG.digitClassifier.enabled=true`.
 
 ## Environment Variables
 

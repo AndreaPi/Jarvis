@@ -59,46 +59,31 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
 ## IMPORTANT
 - When using Playwright in this environment, global `playwright-cli` may be more reliable than the wrapper if npm network is flaky.
 
-## OCR Current Status (2026-02-16)
+## OCR Working State
 
-### Current validated state
 - App + backend run locally on `127.0.0.1:8000` and `127.0.0.1:8001`.
-- Neural ROI is mandatory in the frontend OCR flow (heuristic fallback path removed).
-- On neural ROI failure, the UI shows an explicit error reason and asks for manual measurement input.
+- Neural ROI is mandatory in the frontend OCR flow (heuristic ROI fallback removed).
+- On neural ROI failure, the UI shows an explicit reason and asks for manual measurement input.
 - Backend default ROI model is pinned to `backend/models/roi-rotaug-e30-640.pt` (override with `ROI_MODEL_PATH`).
-- Digit-classifier inference remains optional behind `OCR_CONFIG.digitClassifier.enabled` (default `false`).
-- Backend serves both ROI and digit endpoints and reports readiness in `GET /health`.
-- Test-set table now reports `Failure Reason` (replacing `OCR Confidence`).
+- Digit-classifier inference is optional behind `OCR_CONFIG.digitClassifier.enabled` (default `false`).
+- Backend serves ROI + digit endpoints and reports readiness via `GET /health`.
+- Test-set table includes `Detected`, `Value Match`, `Failure Reason`, and `Result`.
 
-### Latest observed test-set behavior (same 11 images, 2026-02-16 evening)
-- Most recent run:
-  - Accuracy: `0/11`
-  - `Detected` populated: `0/11` (all rows show `—`)
-  - `Failure Reason` is populated (commonly `missing-cell-digit` and `candidate-bad-aspect`)
-- Interpretation:
-  - Neural ROI is being used, OCR branch runs, but ROI-derived decoding currently rejects all candidates.
+## OCR Priorities
 
-### Dataset coverage snapshot
-- Source: `backend/data/digit_dataset/manifests/cells.csv`
-- Current cell counts:
-  - train `28`, val `12`, test `4`
-  - per digit: `0:5, 1:8, 2:13, 3:7, 4:1, 5:0, 6:0, 7:4, 8:3, 9:3`
-- Priority deficits with target train count `12` (from `plan_digit_expansion.py`):
-  - `4`: deficit `11`
-  - `5`: deficit `12`
-  - `6`: deficit `12`
-  - `9`: deficit `9`
+1. Keep neural-ROI-only policy while improving decoded value reliability.
+2. Tune ROI crop geometry (`expandX`, `expandY`) and strip normalization gates to reduce `candidate-bad-aspect`.
+3. Review ROI cell-decoding strictness (`requireAllCells` and split assumptions) to lower `missing-cell-digit`.
+4. Re-run UI `Run test set` after each tuning change and track both `Detected` coverage and mismatch rate.
+5. Use selection logs (`window.__jarvisOcrSelectionLogs`) and `Failure Reason` output to guide each iteration.
 
-### Active workstream
-1. Expand dataset with targeted captures for `4/5/6/9`.
-2. Keep QA previews mandatory when adding labels.
-3. Run `validate_digit_dataset.py` after each dataset update.
-4. Refresh `capture_plan.json`/`capture_plan.md` with `plan_digit_expansion.py`.
-5. Retrain only after improved class coverage.
+## Dataset Expansion Loop (`4/5/6/9`)
 
-### Tomorrow priorities (2026-02-17)
-1. Build a reject-reason histogram from test-set runs (`window.__jarvisOcrSelectionLogs` + UI `Failure Reason`) to quantify dominant failure modes.
-2. Tune ROI crop geometry (`expandX`, `expandY`) and ROI strip normalization gates to reduce `candidate-bad-aspect`.
-3. Review ROI cell-decoding strictness (`requireAllCells` and split assumptions) while preserving neural-ROI-only policy.
-4. Re-run `Run test set` after each tuning change; first milestone is non-zero `Detected` count.
-5. After detections recover, continue targeted dataset expansion and classifier retraining loop for `4/5/6/9`.
+1. Refresh capture planning:
+   - `cd backend && source .venv/bin/activate && python plan_digit_expansion.py --target-train-per-digit 12 --priority-digits 4,5,6,9`
+2. Add labeled captures with QA previews.
+3. Validate manifests after each dataset update:
+   - `cd backend && source .venv/bin/activate && python validate_digit_dataset.py`
+4. Retrain classifier only after class coverage improves:
+   - `cd backend && source .venv/bin/activate && python train_digit_classifier.py --device cpu`
+5. Re-enable classifier only as a gated fallback path, then re-run OCR test-set benchmarks.

@@ -4,12 +4,13 @@ Jarvis is a lightweight personal assistant web app. The first module helps you r
 
 ## Features
 - Upload a meter photo and preview it.
-- OCR the reading (manual override supported).
+- OCR the reading from a neural-ROI crop (manual override supported).
 - Auto-fill an email draft with the current date in Italian format.
 - Open a Gmail draft or use a mailto fallback.
+- Run a built-in OCR test set table with `Detected`, `Value Match`, and `Failure Reason` columns.
 
 ## Local Development
-1. Install dependencies (none required beyond Python).
+1. Ensure Python 3 and Node.js are installed.
 2. Run the dev server:
 
 ```bash
@@ -17,6 +18,12 @@ npm run serve
 ```
 
 Then open `http://localhost:8000`.
+
+If you also want to run Playwright checks, install JS dependencies once:
+
+```bash
+npm install
+```
 
 ### Optional Neural ROI Backend (recommended)
 You can run a Python backend that detects the meter digit window using a fine-tuned pretrained model.
@@ -67,6 +74,11 @@ uvicorn app:app --host 127.0.0.1 --port 8001 --reload
 
 By default, the frontend calls `http://127.0.0.1:8001/roi/detect` and requires neural ROI detection before OCR.
 The frontend can also call `http://127.0.0.1:8001/digit/predict-cells` when `OCR_CONFIG.digitClassifier.enabled` is set to `true`.
+Check backend readiness with:
+
+```bash
+curl -s http://127.0.0.1:8001/health
+```
 
 ### E2E Tests
 
@@ -81,15 +93,19 @@ CI runs these tests on every pull request and on pushes to `master`.
 ## File Overview
 - `index.html`: UI layout.
 - `styles.css`: Styling.
-- `app.js`: OCR + email draft logic.
-- `backend/`: Optional FastAPI service for neural ROI detection + YOLO fine-tuning script.
+- `app.js`: Thin entrypoint that imports `src/main.js`.
+- `src/main.js`: UI orchestration and event wiring.
+- `src/ocr/`: OCR pipeline and neural ROI integration.
+- `src/testset/`: Manual OCR test-set runner.
+- `backend/`: Optional FastAPI service for neural ROI and digit-classifier inference/training.
 - `AGENTS.md`: Contributor guide.
 - `assets/`: Static assets and example uploads.
 
 ## Notes
 - OCR runs fully in the browser using Tesseract.js.
 - OCR now relies on neural ROI detection; if the backend is unavailable or ROI fails, the app asks for manual reading input.
-- Digit decoding can optionally use a backend classifier (`src/ocr/config.js` -> `digitClassifier.enabled`) with automatic fallback to Tesseract.
+- Digit decoding can optionally use a backend classifier (`src/ocr/config.js` -> `digitClassifier.enabled`), which is `false` by default.
+- Use the UI `Run test set` action for quick OCR regressions before and after tuning.
 - The Gmail flow opens a draft; you always review and send manually.
 
 ## Asset Naming (Meter Images)
