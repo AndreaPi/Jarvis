@@ -638,7 +638,7 @@ const readDigitsByCells = async (worker, source, setProgress, options = {}) => {
 
     const digits = [];
     const cellConfidences = [];
-    const cellDecodeModes = options.roiMode ? ['binary', 'soft'] : ['binary', 'soft', 'raw'];
+    const cellDecodeModes = ['binary', 'soft', 'raw'];
 
     for (let i = 0; i < cellCanvases.length; i += 1) {
       if (setProgress) {

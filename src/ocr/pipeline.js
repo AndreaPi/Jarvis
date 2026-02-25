@@ -205,6 +205,13 @@ const serializeCellConfidences = (confidences) => {
 const finalizeSelection = ({ debugLabel, roiUsed, bestResult, evidenceMap, branchUsed, rejectSummary = [] }) => {
   const rankedEvidence = rankSelectionEvidence(evidenceMap);
   const evidenceBest = rankedEvidence[0] || null;
+  const roiDeterministic = OCR_CONFIG.roiDeterministic || {};
+  const minWordPassHits = Number.isFinite(roiDeterministic.minWordPassHits)
+    ? Math.max(1, Math.round(roiDeterministic.minWordPassHits))
+    : 2;
+  const minRefinedHits = Number.isFinite(roiDeterministic.minRefinedHits)
+    ? Math.max(1, Math.round(roiDeterministic.minRefinedHits))
+    : 2;
   let finalResult = bestResult;
 
   if (evidenceBest) {
@@ -236,6 +243,32 @@ const finalizeSelection = ({ debugLabel, roiUsed, bestResult, evidenceMap, branc
         cellDigits: carryMetadata && Array.isArray(carryMetadata.cellDigits) ? carryMetadata.cellDigits : null,
         cellConfidences: carryMetadata ? serializeCellConfidences(carryMetadata.cellConfidences) : null
       };
+    }
+  }
+
+  if (finalResult && finalResult.method === 'word-pass') {
+    const support = rankedEvidence.find((entry) => entry.value === finalResult.value) || null;
+    const confirmed = !!support && (
+      support.refinedHits >= 1
+      || support.hits >= minWordPassHits
+      || support.topHits >= minWordPassHits
+    );
+    if (!confirmed) {
+      finalResult = null;
+    }
+  }
+
+  if (finalResult) {
+    const support = rankedEvidence.find((entry) => entry.value === finalResult.value) || null;
+    if (support && support.refinedHits > 0) {
+      const confirmedRefined = (
+        support.refinedHits >= minRefinedHits
+        || support.topHits >= minWordPassHits
+        || support.hits >= (minWordPassHits + 1)
+      );
+      if (!confirmedRefined) {
+        finalResult = null;
+      }
     }
   }
 
@@ -322,7 +355,15 @@ const evaluateCandidateBranch = async ({
   let bestResult = null;
   const valueEvidence = new Map();
   const candidateScores = new Map();
-  const modes = ['binary', 'soft'];
+  const roiDeterministic = OCR_CONFIG.roiDeterministic || {};
+  const configuredModes = Array.isArray(roiDeterministic.wordPassModes)
+    ? roiDeterministic.wordPassModes
+    : [];
+  const modes = (configuredModes.length ? configuredModes : ['raw'])
+    .filter((mode) => mode === 'soft' || mode === 'binary' || mode === 'raw');
+  if (!modes.length) {
+    modes.push('raw');
+  }
   let pass = 0;
   const expectedPasses = Math.max(1, activeCandidates.length * modes.length);
   const branchLabel = 'roi';
@@ -443,7 +484,9 @@ const evaluateCandidateBranch = async ({
         if (setProgress) {
           setProgress(`Analyzing meter (${pass}/${expectedPasses})`);
         }
-        const processed = preprocessCanvas(candidate.canvas, mode);
+        const processed = mode === 'raw'
+          ? candidate.canvas
+          : preprocessCanvas(candidate.canvas, mode);
         const { data } = await worker.recognize(processed);
         let candidateBest = selectBestReading(data, processed);
         if (candidateBest && !isPreferredLengthReading(candidateBest)) {
@@ -490,30 +533,14 @@ const evaluateCandidateBranch = async ({
     }
   }
 
-  const angleScores = new Map();
-  candidateScores.forEach((entry) => {
-    if (entry.score < 0 || !Number.isFinite(entry.angle)) {
-      return;
-    }
-    const previous = angleScores.get(entry.angle) ?? -1;
-    angleScores.set(entry.angle, Math.max(previous, entry.score));
-  });
-  const rankedAngles = [...angleScores.entries()].sort((a, b) => b[1] - a[1]);
-  const bestAngleScore = rankedAngles.length ? rankedAngles[0][1] : null;
-  const hasAngleScores = rankedAngles.length > 0;
-  const allowedAngles = new Set(
-    rankedAngles
-      .filter(([, score]) => bestAngleScore === null || score >= bestAngleScore - 0.06)
-      .map(([angle]) => angle)
-  );
-
   const fallbackLimit = activeCandidates.length;
   const fallbackPool = [...candidateScores.values()]
-    .filter((entry) => !allowedAngles.size || allowedAngles.has(entry.angle))
-    .filter((entry) => !hasAngleScores || entry.score >= -0.5)
     .map((entry) => ({
       ...entry,
-      fallbackPriority: scoreFallbackPriority(entry)
+      fallbackPriority: scoreFallbackPriority({
+        ...entry,
+        score: entry.score >= 0 ? entry.score : 0.18
+      })
     }))
     .sort((a, b) => b.fallbackPriority - a.fallbackPriority)
     .slice(0, fallbackLimit);
@@ -530,9 +557,8 @@ const evaluateCandidateBranch = async ({
       if (setProgress) {
         setProgress('Refining ROI digits...');
       }
-      const processed = preprocessCanvas(candidate.canvas, 'binary');
       const refined = applyReadingMetadata(
-        await readDigitsByCells(worker, processed, setProgress, {
+        await readDigitsByCells(worker, candidate.canvas, setProgress, {
           roiMode: true,
           onReject: (detail) => recordReject(
             detail && detail.reason ? detail.reason : 'cell-read-reject',
@@ -630,15 +656,7 @@ const runMeterOcr = async (file, setProgress) => {
       scanCanvas: roiCrop
     });
 
-    if (setProgress) {
-      if (roiBranch.bestResult && roiBranch.bestResult.value) {
-        setProgress(`Neural ROI + OCR complete (${roiBranch.bestResult.value}).`);
-      } else {
-        setProgress('Neural ROI found, OCR uncertain. Enter the measurement manually.');
-      }
-    }
-
-    return finalizeSelection({
+    const finalSelection = finalizeSelection({
       debugLabel,
       roiUsed: true,
       bestResult: roiBranch.bestResult,
@@ -646,6 +664,16 @@ const runMeterOcr = async (file, setProgress) => {
       branchUsed: isPreferredLengthReading(roiBranch.bestResult) ? 'roi-accepted' : 'roi-uncertain',
       rejectSummary: roiBranch.rejectSummary || []
     });
+
+    if (setProgress) {
+      if (finalSelection && finalSelection.value) {
+        setProgress(`Neural ROI + OCR complete (${finalSelection.value}).`);
+      } else {
+        setProgress('Neural ROI found, OCR uncertain. Enter the measurement manually.');
+      }
+    }
+
+    return finalSelection;
   } finally {
     commitDebugSession(debugSession);
   }
