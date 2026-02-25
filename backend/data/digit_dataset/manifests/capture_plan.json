@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-02-19T21:59:50.628873+00:00",
+  "generated_at": "2026-02-25T11:42:28.318971+00:00",
   "inputs": {
     "cells_manifest": "/home/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset/manifests/cells.csv",
     "readings_csv": "/home/andrea/GitHubRepositories/Jarvis/assets/meter_readings.csv",
@@ -10,7 +10,7 @@
       "6",
       "9"
     ],
-    "seed_label": "2311"
+    "seed_label": "2314"
   },
   "digits": [
     {
@@ -102,16 +102,14 @@
       "target_train": 12,
       "train_deficit": 11,
       "suggested_labels": [
-        "4311",
-        "2411",
-        "2341",
-        "2314",
-        "4411",
-        "4341",
         "4314",
-        "2441",
         "2414",
-        "2344"
+        "2344",
+        "2314",
+        "4414",
+        "4344",
+        "2444",
+        "4444"
       ]
     },
     {
@@ -121,14 +119,14 @@
       "target_train": 12,
       "train_deficit": 12,
       "suggested_labels": [
-        "5311",
-        "2511",
-        "2351",
+        "5314",
+        "2514",
+        "2354",
         "2315",
-        "5511",
-        "5351",
+        "5514",
+        "5354",
         "5315",
-        "2551",
+        "2554",
         "2515",
         "2355"
       ]
@@ -140,14 +138,14 @@
       "target_train": 12,
       "train_deficit": 12,
       "suggested_labels": [
-        "6311",
-        "2611",
-        "2361",
+        "6314",
+        "2614",
+        "2364",
         "2316",
-        "6611",
-        "6361",
+        "6614",
+        "6364",
         "6316",
-        "2661",
+        "2664",
         "2616",
         "2366"
       ]
@@ -159,14 +157,14 @@
       "target_train": 12,
       "train_deficit": 9,
       "suggested_labels": [
-        "9311",
-        "2911",
-        "2391",
+        "9314",
+        "2914",
+        "2394",
         "2319",
-        "9911",
-        "9391",
+        "9914",
+        "9394",
         "9319",
-        "2991",
+        "2994",
         "2919",
         "2399"
       ]
