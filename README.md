@@ -4,7 +4,7 @@ Jarvis is a lightweight personal assistant web app. The first module helps you r
 
 ## Features
 - Upload a meter photo and preview it.
-- OCR the reading from a neural-ROI crop (manual override supported).
+- OCR from a neural-ROI crop with conservative acceptance (unsupported OCR guesses are rejected to manual input).
 - Auto-fill an email draft with the current date in Italian format.
 - Open a Gmail draft or use a mailto fallback.
 - Run a built-in OCR test set table with `Detected`, `Value Match`, and `Failure Reason` columns.
@@ -82,7 +82,7 @@ curl -s http://127.0.0.1:8001/health
 
 ### E2E Tests
 
-Run Playwright checks for neural-ROI failure handling:
+Run Playwright checks for neural-ROI failure handling and OCR selection guard regressions:
 
 ```bash
 npm run test:e2e
@@ -104,12 +104,14 @@ CI runs these tests on every pull request and on pushes to `master`.
 ## Notes
 - OCR runs fully in the browser using Tesseract.js.
 - OCR now relies on neural ROI detection; if the backend is unavailable or ROI fails, the app asks for manual reading input.
+- ROI word-pass defaults to raw strip input; stage `6. OCR input candidate` mirrors the configured OCR input mode.
 - Digit decoding can optionally use a backend classifier (`src/ocr/config.js` -> `digitClassifier.enabled`), which is `false` by default.
-- Use the UI `Run test set` action for quick OCR regressions before and after tuning.
+- The selection layer is fail-safe: unsupported single-hit values are dropped instead of auto-filled.
+- Use the UI `Run test set` action plus `npm run test:e2e` for OCR regressions before and after tuning.
 - The Gmail flow opens a draft; you always review and send manually.
 
 ## Asset Naming (Meter Images)
 - Use the EXIF `DateTimeOriginal` value as the source of truth for the acquisition date.
 - Rename files to `meter_mmddyyyy` (zero-padded) and keep the original extension.
-- If multiple images share the same date, keep one as-is and add suffixes to the rest (e.g., `_b`, `_c`).
+- If multiple images share the same date, keep one as-is and add numeric suffixes to the rest (e.g., `_1`, `_2`).
 - If EXIF is missing, prefer a known date from the filename or capture notes and document it.
