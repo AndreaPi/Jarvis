@@ -27,6 +27,20 @@ const successPayload = JSON.stringify({
   model: 'mock-roi'
 });
 
+const tallRoiPayload = JSON.stringify({
+  ok: true,
+  bbox_norm: {
+    x: 0.42,
+    y: 0.43,
+    width: 0.08,
+    height: 0.14
+  },
+  confidence: 0.9,
+  class_id: 0,
+  class_name: 'digit_window',
+  model: 'mock-roi'
+});
+
 const buildFailIfUsedTesseractStub = () => `
 (() => {
   window.__jarvisCreateWorkerCalls = 0;
@@ -44,6 +58,7 @@ const buildFailIfUsedTesseractStub = () => `
 const buildSuccessTesseractStub = (digits) => `
 (() => {
   const sequence = ${JSON.stringify(digits)};
+  const joined = sequence.join('');
   window.__jarvisCreateWorkerCalls = 0;
   window.__jarvisRecognizeCalls = 0;
   window.Tesseract = {
@@ -55,14 +70,58 @@ const buildSuccessTesseractStub = (digits) => `
         initialize: async () => {},
         setParameters: async () => {},
         recognize: async () => {
-          const call = window.__jarvisRecognizeCalls++;
-          const index = Math.floor(call / 2) % sequence.length;
-          const digit = sequence[index] || '0';
+          window.__jarvisRecognizeCalls += 1;
           return {
             data: {
-              text: digit,
+              text: joined || '0',
               confidence: 96,
-              symbols: [{ text: digit, confidence: 96 }]
+              symbols: sequence.map((digit) => ({ text: digit, confidence: 96 }))
+            }
+          };
+        }
+      };
+    }
+  };
+})();
+`;
+
+const buildSingleHitWordPassStub = (digits) => `
+(() => {
+  const sequence = ${JSON.stringify(digits)};
+  const joined = sequence.join('');
+  window.__jarvisCreateWorkerCalls = 0;
+  window.__jarvisRecognizeCalls = 0;
+  let currentPsm = 8;
+  let servedWordPass = false;
+  window.Tesseract = {
+    PSM: { SINGLE_WORD: 8, SPARSE_TEXT: 11, SINGLE_CHAR: 10 },
+    createWorker: async () => {
+      window.__jarvisCreateWorkerCalls += 1;
+      return {
+        loadLanguage: async () => {},
+        initialize: async () => {},
+        setParameters: async (params = {}) => {
+          if (Number.isFinite(params.tessedit_pageseg_mode)) {
+            currentPsm = params.tessedit_pageseg_mode;
+          }
+        },
+        recognize: async () => {
+          window.__jarvisRecognizeCalls += 1;
+          if (currentPsm === 8 && !servedWordPass) {
+            servedWordPass = true;
+            return {
+              data: {
+                text: joined || '0',
+                confidence: 97,
+                symbols: sequence.map((digit) => ({ text: digit, confidence: 97 }))
+              }
+            };
+          }
+          return {
+            data: {
+              text: '',
+              confidence: 0,
+              symbols: []
             }
           };
         }
@@ -88,6 +147,27 @@ const installTesseractStub = async (page, scriptBody) => {
 const openAppAndUploadImage = async (page) => {
   await page.goto('/');
   await page.setInputFiles('#photo-input', METER_IMAGE_PATH);
+};
+
+const waitForDebugStages = async (page, stageNames) => {
+  await page.waitForFunction((names) => {
+    const session = document.querySelector('.debug-session');
+    if (!session) {
+      return false;
+    }
+    const cards = [...session.querySelectorAll('.debug-stage')];
+    return names.every((name) => {
+      const card = cards.find((item) => {
+        const caption = item.querySelector('.debug-stage-name');
+        return (caption && caption.textContent && caption.textContent.trim()) === name;
+      });
+      if (!card) {
+        return false;
+      }
+      const image = card.querySelector('img');
+      return !!(image && image.naturalWidth > 0 && image.naturalHeight > 0);
+    });
+  }, stageNames);
 };
 
 const fulfillNoDetection = async (route) => {
@@ -168,4 +248,95 @@ test('completes with a detected reading when neural ROI succeeds', async ({ page
 
   const workerCalls = await page.evaluate(() => window.__jarvisCreateWorkerCalls);
   expect(workerCalls).toBeGreaterThan(0);
+});
+
+test('does not accept a single unsupported word-pass hit', async ({ page }) => {
+  await installTesseractStub(page, buildSingleHitWordPassStub(['8', '5', '8', '8']));
+  await page.route('**/roi/detect', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: {
+        'access-control-allow-origin': '*'
+      },
+      body: successPayload
+    });
+  });
+  await openAppAndUploadImage(page);
+
+  await page.getByRole('button', { name: 'Read meter' }).click();
+
+  await expect(page.locator('#ocr-status')).toContainText(
+    /Neural ROI found, OCR uncertain\. Enter the measurement manually\.|No clear reading detected\. Enter it manually\./
+  );
+  await expect(page.locator('#reading-input')).toHaveValue('');
+});
+
+test('keeps ROI debug crop geometry stable for narrow neural ROI boxes', async ({ page }) => {
+  await installTesseractStub(page, buildSuccessTesseractStub(['2', '3', '1', '2']));
+  await page.route('**/roi/detect', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: {
+        'access-control-allow-origin': '*'
+      },
+      body: tallRoiPayload
+    });
+  });
+  await openAppAndUploadImage(page);
+
+  await page.getByRole('button', { name: 'Read meter' }).click();
+
+  await expect(page.locator('#ocr-status')).toContainText(
+    /Reading detected|No clear reading detected|Enter it manually|Enter the measurement manually/,
+    { timeout: 20_000 }
+  );
+  await waitForDebugStages(page, ['0b. neural roi crop', '5. detected strip crop', '6. OCR input candidate']);
+
+  const dimensions = await page.evaluate(() => {
+    const session = document.querySelector('.debug-session');
+    if (!session) {
+      return null;
+    }
+    const cards = [...session.querySelectorAll('.debug-stage')];
+    const findStage = (name) => {
+      const card = cards.find((item) => {
+        const caption = item.querySelector('.debug-stage-name');
+        return (caption && caption.textContent && caption.textContent.trim()) === name;
+      });
+      if (!card) {
+        return null;
+      }
+      const image = card.querySelector('img');
+      if (!image) {
+        return null;
+      }
+      return {
+        width: image.naturalWidth,
+        height: image.naturalHeight
+      };
+    };
+    return {
+      roi: findStage('0b. neural roi crop'),
+      strip: findStage('5. detected strip crop'),
+      ocr: findStage('6. OCR input candidate')
+    };
+  });
+
+  expect(dimensions).not.toBeNull();
+  expect(dimensions.roi).not.toBeNull();
+  expect(dimensions.strip).not.toBeNull();
+  expect(dimensions.ocr).not.toBeNull();
+
+  const roiArea = dimensions.roi.width * dimensions.roi.height;
+  const stripArea = dimensions.strip.width * dimensions.strip.height;
+  const roiMaxDim = Math.max(dimensions.roi.width, dimensions.roi.height);
+  const stripMaxDim = Math.max(dimensions.strip.width, dimensions.strip.height);
+
+  expect(stripArea).toBeGreaterThanOrEqual(Math.floor(roiArea * 0.12));
+  expect(stripArea).toBeLessThanOrEqual(Math.ceil(roiArea * 0.95));
+  expect(stripMaxDim).toBeGreaterThanOrEqual(Math.floor(roiMaxDim * 0.55));
+  expect(Math.min(dimensions.strip.width, dimensions.strip.height)).toBeGreaterThanOrEqual(24);
+  expect(dimensions.ocr.width).toBeGreaterThanOrEqual(dimensions.strip.width);
 });
