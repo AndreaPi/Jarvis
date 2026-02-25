@@ -261,25 +261,16 @@ const finalizeSelection = ({ debugLabel, roiUsed, bestResult, evidenceMap, branc
   return finalResult;
 };
 
-const scoreFallbackPriority = (entry, roiUsed) => {
+const scoreFallbackPriority = (entry) => {
   const label = entry.label || '';
   let priority = entry.score;
-  if (label.includes('aligned-')) {
-    priority += 0.18;
-  }
-  if (label.includes('strip-main')) {
-    priority += 0.14;
-  }
-  if (label.includes('strip-tight')) {
-    priority += 0.08;
-  }
-  if (label.includes('-edge')) {
-    priority += 0.06;
+  if (label.includes('tight')) {
+    priority += 0.04;
   }
   if (label.includes('fallback')) {
     priority -= 0.08;
   }
-  if (roiUsed && label.endsWith('-roi')) {
+  if (label.endsWith('-roi')) {
     priority += 0.05;
   }
   return priority;
@@ -321,22 +312,20 @@ const evaluateCandidateBranch = async ({
   candidates,
   worker,
   setProgress,
-  roiMode = false,
   useWordPass = true,
   allowSparseScan = false,
   scanCanvas = null
 }) => {
   const activeCandidates = Array.isArray(candidates) && candidates.length
     ? candidates
-    : [{ canvas: scanCanvas, label: roiMode ? 'raw-fallback-roi' : 'raw-fallback-full' }];
+    : [{ canvas: scanCanvas, label: 'raw-fallback-roi' }];
   let bestResult = null;
   const valueEvidence = new Map();
-  const topPickHits = new Map();
   const candidateScores = new Map();
   const modes = ['binary', 'soft'];
   let pass = 0;
   const expectedPasses = Math.max(1, activeCandidates.length * modes.length);
-  const branchLabel = roiMode ? 'roi' : 'fallback';
+  const branchLabel = 'roi';
   const geometryConfig = OCR_CONFIG.geometry || {};
   const minCandidateWidth = Number.isFinite(geometryConfig.minCandidateWidth) ? geometryConfig.minCandidateWidth : 120;
   const minCandidateHeight = Number.isFinite(geometryConfig.minCandidateHeight) ? geometryConfig.minCandidateHeight : 28;
@@ -428,9 +417,6 @@ const evaluateCandidateBranch = async ({
         isRefined
       });
     }
-    if (reading.value) {
-      topPickHits.set(reading.value, (topPickHits.get(reading.value) || 0) + 1);
-    }
   };
 
   activeCandidates.forEach((candidate) => {
@@ -460,7 +446,7 @@ const evaluateCandidateBranch = async ({
         const processed = preprocessCanvas(candidate.canvas, mode);
         const { data } = await worker.recognize(processed);
         let candidateBest = selectBestReading(data, processed);
-        if (roiMode && candidateBest && !isPreferredLengthReading(candidateBest)) {
+        if (candidateBest && !isPreferredLengthReading(candidateBest)) {
           candidateBest = null;
         }
         candidateBest = applyReadingMetadata(candidateBest, candidate, 'word-pass');
@@ -479,22 +465,6 @@ const evaluateCandidateBranch = async ({
             });
           }
         }
-        const confirmationHits = bestResult ? (topPickHits.get(bestResult.value) || 0) : 0;
-        // Skip early-stop in ROI mode: candidates are few, always evaluate all for best score.
-        if (
-          !roiMode
-          &&
-          bestResult
-          && bestResult.score >= OCR_CONFIG.earlyStopScore
-          && isPreferredLengthReading(bestResult)
-          && confirmationHits >= 2
-        ) {
-          return {
-            bestResult,
-            evidenceMap: valueEvidence,
-            rejectSummary: summarizeRejectMap(rejectMap)
-          };
-        }
       }
     }
   }
@@ -510,13 +480,13 @@ const evaluateCandidateBranch = async ({
     const softened = preprocessCanvas(scanCanvas, 'soft');
     const { data } = await worker.recognize(softened);
     let fullCandidate = selectBestReading(data, softened);
-    if (roiMode && fullCandidate && !isPreferredLengthReading(fullCandidate)) {
+    if (fullCandidate && !isPreferredLengthReading(fullCandidate)) {
       fullCandidate = null;
     }
-    fullCandidate = applyReadingMetadata(fullCandidate, { label: roiMode ? 'scan-roi' : 'scan-full' }, 'sparse-scan');
+    fullCandidate = applyReadingMetadata(fullCandidate, { label: 'scan-roi' }, 'sparse-scan');
     if (fullCandidate) {
       bestResult = fullCandidate;
-      recordCandidateReadings(fullCandidate, roiMode ? 'scan-roi' : 'scan-full', false);
+      recordCandidateReadings(fullCandidate, 'scan-roi', false);
     }
   }
 
@@ -537,15 +507,13 @@ const evaluateCandidateBranch = async ({
       .map(([angle]) => angle)
   );
 
-  const fallbackLimit = roiMode
-    ? activeCandidates.length
-    : OCR_CONFIG.fallbackCandidates;
+  const fallbackLimit = activeCandidates.length;
   const fallbackPool = [...candidateScores.values()]
     .filter((entry) => !allowedAngles.size || allowedAngles.has(entry.angle))
     .filter((entry) => !hasAngleScores || entry.score >= -0.5)
     .map((entry) => ({
       ...entry,
-      fallbackPriority: scoreFallbackPriority(entry, roiMode)
+      fallbackPriority: scoreFallbackPriority(entry)
     }))
     .sort((a, b) => b.fallbackPriority - a.fallbackPriority)
     .slice(0, fallbackLimit);
@@ -560,12 +528,12 @@ const evaluateCandidateBranch = async ({
         continue;
       }
       if (setProgress) {
-        setProgress(roiMode ? 'Refining ROI digits...' : 'Refining digits...');
+        setProgress('Refining ROI digits...');
       }
       const processed = preprocessCanvas(candidate.canvas, 'binary');
       const refined = applyReadingMetadata(
         await readDigitsByCells(worker, processed, setProgress, {
-          roiMode,
+          roiMode: true,
           onReject: (detail) => recordReject(
             detail && detail.reason ? detail.reason : 'cell-read-reject',
             {
@@ -591,8 +559,7 @@ const evaluateCandidateBranch = async ({
     });
   } else {
     recordReject('no-fallback-candidates', {
-      stage: 'cell-refine',
-      roiMode
+      stage: 'cell-refine'
     });
   }
 
@@ -639,7 +606,7 @@ const runMeterOcr = async (file, setProgress) => {
     addDebugStage(debugSession, '0b. neural roi crop', roiCrop);
 
     const roiCandidates = roiCrop
-      ? buildDigitCandidates(roiCrop, debugSession, addDebugStage, { roiMode: true }).map((candidate) => ({
+      ? buildDigitCandidates(roiCrop, debugSession, addDebugStage).map((candidate) => ({
         ...candidate,
         label: `${candidate.label}-roi`
       }))
@@ -658,7 +625,6 @@ const runMeterOcr = async (file, setProgress) => {
       candidates: roiCandidates,
       worker,
       setProgress,
-      roiMode: true,
       useWordPass: true,
       allowSparseScan: true,
       scanCanvas: roiCrop
