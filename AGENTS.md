@@ -5,7 +5,7 @@
 - `styles.css`: Global styles and visual system.
 - `app.js`: Thin module entrypoint that imports `src/main.js`.
 - `src/main.js`: UI orchestration and event wiring.
-- `src/ocr/`: Neural-ROI-first OCR pipeline, strip/cell decoding, and selection safeguards.
+- `src/ocr/`: Neural-ROI-first OCR pipeline with strip-first decoding and selection safeguards.
 - `src/email/`: Email draft generation and link helpers.
 - `src/testset/`: Manual test-set runner logic.
 - `src/debug/`: Debug overlay rendering helpers.
@@ -39,7 +39,7 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
 
 ## Testing Guidelines
 - Automated browser tests are configured with Playwright.
-- `npm run test:e2e`: Runs `tests/e2e/neural-roi.spec.js` (neural ROI failure handling + ROI geometry + OCR-guard regressions).
+- `npm run test:e2e`: Runs `tests/e2e/neural-roi.spec.js` (neural ROI failure handling + ROI geometry + strip-only OCR behavior).
 - CI: `.github/workflows/e2e.yml` runs on each pull request and on pushes to `master`.
 - Frontend manual checks: upload image, run OCR, verify email draft fields, and confirm Gmail draft link.
 - OCR test-set checks: run "Run test set" and inspect `Value Match`, `Failure Reason`, and debug stages.
@@ -69,19 +69,20 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
 - Digit-classifier inference is optional behind `OCR_CONFIG.digitClassifier.enabled` (default `false`).
 - Backend serves ROI + digit endpoints and reports readiness via `GET /health`.
 - Test-set table includes `Detected`, `Value Match`, `Failure Reason`, and `Result`.
+- Frontend OCR branch evaluation is strip-only (word-pass + sparse scan); the 4-cell refine stage is removed from the active pipeline.
 - ROI word-pass defaults to raw candidate input (`roiDeterministic.wordPassModes: ['raw']`); debug stage `6. OCR input candidate` mirrors this mode.
-- Cell refinement now scans all ROI candidates (not only angle-shortlisted winners) and decodes cells with `binary`, `soft`, and `raw` per-cell probes.
-- Selection is conservative: unsupported single-hit outputs are rejected via `roiDeterministic.minWordPassHits` and `minRefinedHits` (both default `2`).
-- Latest local run on February 25, 2026: OCR test set remained `0/15`, with failures dominated by `missing-cell-digit` (precision guardrails are working; recall is now the blocker).
+- Single-hit strip reads are currently allowed via `roiDeterministic.minWordPassHits: 1`.
+- Latest local run on February 26, 2026: OCR test set remained `0/13`, but failure mix shifted to `mismatch` (6), `branch:roi-uncertain` (6), and neural ROI `no-detection` (1); `missing-cell-digit` is no longer the dominant blocker.
+- Key lesson: a clear-looking stage `6` preview does not guarantee final output because selection still aggregates evidence across multiple ROI candidates and modes.
 
 ## OCR Priorities
 
-1. Keep neural-ROI-only policy and conservative acceptance guardrails enabled while improving recall.
-2. Reduce `missing-cell-digit` by tuning strip normalization and split geometry (`tightenInk`, `cellOverlap`, `minStripAspect`, `maxStripAspect`, deskew settings).
-3. Investigate hard images (`meter_02202026.JPEG`, `meter_02192026.JPEG`, `meter_07012020.JPEG`) using stages `5`/`6` and selection logs.
-4. Promote refined outputs only when multi-candidate evidence is real; relax `minWordPassHits` / `minRefinedHits` only after measurable gains.
-5. Re-run UI `Run test set` after each OCR tweak and compare mismatch vs missing-cell-digit movement.
-6. Run `npm run test:e2e` before every commit; keep the single-hit word-pass regression test passing.
+1. Keep neural-ROI-only policy and strip-only OCR path while improving correctness.
+2. Reduce `mismatch` errors by tuning strip preprocessing and candidate ranking (especially hard confusion cases like `8/3/1/7`).
+3. Reduce `branch:roi-uncertain` by improving candidate generation/selection consistency across ROI rotations.
+4. Investigate hard images (`meter_02202026.JPEG`, `meter_02192026.JPEG`, `meter_07012020.JPEG`, `meter_02242026.JPEG`) using stages `5`/`6` and selection logs.
+5. Re-run UI `Run test set` after each OCR tweak and compare `mismatch` vs `branch:roi-uncertain` movement.
+6. Run `npm run test:e2e` before every commit; keep strip-only single-hit acceptance behavior covered.
 
 ## Dataset Expansion Loop (`4/5/6/9`)
 
