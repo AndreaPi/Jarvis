@@ -10,7 +10,7 @@ import {
   normalizeAngle
 } from './canvas-utils.js';
 import { buildDigitCandidates } from './alignment.js';
-import { getWorker, selectBestReading, readDigitsByCells } from './recognition.js';
+import { getWorker, selectBestReading } from './recognition.js';
 import { detectNeuralRoi } from './neural-roi.js';
 
 const resolveNeuralRoiRect = (canvas, roiDetection, roiConfig) => {
@@ -294,21 +294,6 @@ const finalizeSelection = ({ debugLabel, roiUsed, bestResult, evidenceMap, branc
   return finalResult;
 };
 
-const scoreFallbackPriority = (entry) => {
-  const label = entry.label || '';
-  let priority = entry.score;
-  if (label.includes('tight')) {
-    priority += 0.04;
-  }
-  if (label.includes('fallback')) {
-    priority -= 0.08;
-  }
-  if (label.endsWith('-roi')) {
-    priority += 0.05;
-  }
-  return priority;
-};
-
 const extractCandidateAngle = (label) => {
   if (!label || typeof label !== 'string') {
     return Number.NaN;
@@ -354,7 +339,6 @@ const evaluateCandidateBranch = async ({
     : [{ canvas: scanCanvas, label: 'raw-fallback-roi' }];
   let bestResult = null;
   const valueEvidence = new Map();
-  const candidateScores = new Map();
   const roiDeterministic = OCR_CONFIG.roiDeterministic || {};
   const configuredModes = Array.isArray(roiDeterministic.wordPassModes)
     ? roiDeterministic.wordPassModes
@@ -460,15 +444,6 @@ const evaluateCandidateBranch = async ({
     }
   };
 
-  activeCandidates.forEach((candidate) => {
-    candidateScores.set(candidate.label, {
-      score: -1,
-      canvas: candidate.canvas,
-      angle: extractCandidateAngle(candidate.label),
-      label: candidate.label
-    });
-  });
-
   if (useWordPass) {
     await worker.setParameters({
       tessedit_pageseg_mode: Tesseract.PSM.SINGLE_WORD,
@@ -498,15 +473,6 @@ const evaluateCandidateBranch = async ({
         }
         if (candidateBest) {
           recordCandidateReadings(candidateBest, candidate.label, false);
-          const existing = candidateScores.get(candidate.label);
-          if (!existing || candidateBest.score > existing.score) {
-            candidateScores.set(candidate.label, {
-              ...existing,
-              score: candidateBest.score,
-              canvas: candidate.canvas,
-              label: candidate.label
-            });
-          }
         }
       }
     }
@@ -531,62 +497,6 @@ const evaluateCandidateBranch = async ({
       bestResult = fullCandidate;
       recordCandidateReadings(fullCandidate, 'scan-roi', false);
     }
-  }
-
-  const fallbackLimit = activeCandidates.length;
-  const fallbackPool = [...candidateScores.values()]
-    .map((entry) => ({
-      ...entry,
-      fallbackPriority: scoreFallbackPriority({
-        ...entry,
-        score: entry.score >= 0 ? entry.score : 0.18
-      })
-    }))
-    .sort((a, b) => b.fallbackPriority - a.fallbackPriority)
-    .slice(0, fallbackLimit);
-
-  if (fallbackPool.length) {
-    await worker.setParameters({
-      tessedit_pageseg_mode: Tesseract.PSM.SINGLE_CHAR,
-      classify_bln_numeric_mode: 1
-    });
-    for (const candidate of fallbackPool) {
-      if (!hasValidCandidateGeometry(candidate, 'cell-refine')) {
-        continue;
-      }
-      if (setProgress) {
-        setProgress('Refining ROI digits...');
-      }
-      const refined = applyReadingMetadata(
-        await readDigitsByCells(worker, candidate.canvas, setProgress, {
-          roiMode: true,
-          onReject: (detail) => recordReject(
-            detail && detail.reason ? detail.reason : 'cell-read-reject',
-            {
-              stage: 'cell-refine',
-              sourceLabel: candidate.label,
-              ...(detail || {})
-            }
-          )
-        }),
-        candidate,
-        'cell-refine'
-      );
-      if (refined && (!bestResult || refined.score > bestResult.score)) {
-        bestResult = refined;
-      }
-      if (refined) {
-        recordCandidateReadings(refined, candidate.label, true);
-      }
-    }
-    await worker.setParameters({
-      tessedit_pageseg_mode: Tesseract.PSM.SPARSE_TEXT,
-      classify_bln_numeric_mode: 1
-    });
-  } else {
-    recordReject('no-fallback-candidates', {
-      stage: 'cell-refine'
-    });
   }
 
   return {

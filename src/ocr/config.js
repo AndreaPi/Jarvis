@@ -31,7 +31,7 @@ const OCR_CONFIG = {
     cellOverlap: 0.03,
     requireAllCells: true,
     wordPassModes: ['raw'],
-    minWordPassHits: 2,
+    minWordPassHits: 1,
     minRefinedHits: 2,
     minStripAspect: 1.45,
     maxStripAspect: 8.2,

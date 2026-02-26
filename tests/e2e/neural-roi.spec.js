@@ -250,7 +250,7 @@ test('completes with a detected reading when neural ROI succeeds', async ({ page
   expect(workerCalls).toBeGreaterThan(0);
 });
 
-test('does not accept a single unsupported word-pass hit', async ({ page }) => {
+test('accepts a single word-pass hit in strip-only mode', async ({ page }) => {
   await installTesseractStub(page, buildSingleHitWordPassStub(['8', '5', '8', '8']));
   await page.route('**/roi/detect', async (route) => {
     await route.fulfill({
@@ -266,10 +266,8 @@ test('does not accept a single unsupported word-pass hit', async ({ page }) => {
 
   await page.getByRole('button', { name: 'Read meter' }).click();
 
-  await expect(page.locator('#ocr-status')).toContainText(
-    /Neural ROI found, OCR uncertain\. Enter the measurement manually\.|No clear reading detected\. Enter it manually\./
-  );
-  await expect(page.locator('#reading-input')).toHaveValue('');
+  await expect(page.locator('#ocr-status')).toContainText('Reading detected: 8588. Review if needed.');
+  await expect(page.locator('#reading-input')).toHaveValue('8588');
 });
 
 test('keeps ROI debug crop geometry stable for narrow neural ROI boxes', async ({ page }) => {
