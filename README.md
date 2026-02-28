@@ -2,6 +2,13 @@
 
 Jarvis is a lightweight personal assistant web app. The first module helps you read a water meter photo, review the detected value, and draft an email in Gmail.
 
+## Documentation
+
+- Docs index: [`docs/README.md`](./docs/README.md)
+- OCR app logic flow: [`docs/app-logic.md`](./docs/app-logic.md)
+- Backend API guide: [`docs/backend-api.md`](./docs/backend-api.md)
+- OCR tuning playbook: [`docs/ocr-tuning-playbook.md`](./docs/ocr-tuning-playbook.md)
+
 ## Features
 - Upload a meter photo and preview it.
 - OCR from a neural-ROI crop with conservative acceptance (unsupported OCR guesses are rejected to manual input).
