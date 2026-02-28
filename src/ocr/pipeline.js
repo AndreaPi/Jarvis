@@ -463,8 +463,21 @@ const evaluateCandidateBranch = async ({
           ? candidate.canvas
           : preprocessCanvas(candidate.canvas, mode);
         const { data } = await worker.recognize(processed);
-        let candidateBest = selectBestReading(data, processed);
-        if (candidateBest && !isPreferredLengthReading(candidateBest)) {
+        const candidateRawBest = selectBestReading(data, processed);
+        let candidateBest = candidateRawBest;
+        if (!candidateRawBest) {
+          recordReject('ocr-no-digits', {
+            stage: 'word-pass',
+            sourceLabel: candidate.label,
+            mode
+          });
+        } else if (!isPreferredLengthReading(candidateRawBest)) {
+          recordReject('ocr-non4-reading', {
+            stage: 'word-pass',
+            sourceLabel: candidate.label,
+            mode,
+            value: candidateRawBest.value || null
+          });
           candidateBest = null;
         }
         candidateBest = applyReadingMetadata(candidateBest, candidate, 'word-pass');
@@ -488,8 +501,21 @@ const evaluateCandidateBranch = async ({
     });
     const softened = preprocessCanvas(scanCanvas, 'soft');
     const { data } = await worker.recognize(softened);
-    let fullCandidate = selectBestReading(data, softened);
-    if (fullCandidate && !isPreferredLengthReading(fullCandidate)) {
+    const sparseRawCandidate = selectBestReading(data, softened);
+    let fullCandidate = sparseRawCandidate;
+    if (!sparseRawCandidate) {
+      recordReject('ocr-no-digits', {
+        stage: 'sparse-scan',
+        sourceLabel: 'scan-roi',
+        mode: 'soft'
+      });
+    } else if (!isPreferredLengthReading(sparseRawCandidate)) {
+      recordReject('ocr-non4-reading', {
+        stage: 'sparse-scan',
+        sourceLabel: 'scan-roi',
+        mode: 'soft',
+        value: sparseRawCandidate.value || null
+      });
       fullCandidate = null;
     }
     fullCandidate = applyReadingMetadata(fullCandidate, { label: 'scan-roi' }, 'sparse-scan');

@@ -72,16 +72,16 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
 - Frontend OCR branch evaluation is strip-only (word-pass + sparse scan); the 4-cell refine stage is removed from the active pipeline.
 - ROI word-pass defaults to raw candidate input (`roiDeterministic.wordPassModes: ['raw']`); debug stage `6. OCR input candidate` mirrors this mode.
 - Single-hit strip reads are currently allowed via `roiDeterministic.minWordPassHits: 1`.
-- Latest local run on February 26, 2026: OCR test set remained `0/13`, but failure mix shifted to `mismatch` (6), `branch:roi-uncertain` (6), and neural ROI `no-detection` (1); `missing-cell-digit` is no longer the dominant blocker.
-- Key lesson: a clear-looking stage `6` preview does not guarantee final output because selection still aggregates evidence across multiple ROI candidates and modes.
+- Latest local run on February 27, 2026: OCR test set remained `0/13`; after adding reject instrumentation, failure mix is `mismatch` (6), `ocr-no-digits` (6), and neural ROI `no-detection` (1). Reject histogram totals: `ocr-no-digits` (94), `ocr-non4-reading` (2).
+- Key lesson: the prior `branch:roi-uncertain` bucket is predominantly an extraction issue (`ocr-no-digits`) rather than a late-stage selection tie; hard images frequently produce empty `topCandidates`.
 
 ## OCR Priorities
 
 1. Keep neural-ROI-only policy and strip-only OCR path while improving correctness.
 2. Reduce `mismatch` errors by tuning strip preprocessing and candidate ranking (especially hard confusion cases like `8/3/1/7`).
-3. Reduce `branch:roi-uncertain` by improving candidate generation/selection consistency across ROI rotations.
+3. Reduce `ocr-no-digits` (previously grouped under `branch:roi-uncertain`) by improving candidate generation/selection consistency across ROI rotations.
 4. Investigate hard images (`meter_02202026.JPEG`, `meter_02192026.JPEG`, `meter_07012020.JPEG`, `meter_02242026.JPEG`) using stages `5`/`6` and selection logs.
-5. Re-run UI `Run test set` after each OCR tweak and compare `mismatch` vs `branch:roi-uncertain` movement.
+5. Re-run UI `Run test set` after each OCR tweak and compare `mismatch` vs `ocr-no-digits` movement.
 6. Run `npm run test:e2e` before every commit; keep strip-only single-hit acceptance behavior covered.
 
 ## Dataset Expansion Loop (`4/5/6/9`)
