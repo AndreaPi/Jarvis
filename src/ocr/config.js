@@ -32,7 +32,6 @@ const OCR_CONFIG = {
     requireAllCells: true,
     wordPassModes: ['raw'],
     minWordPassHits: 1,
-    minRefinedHits: 2,
     minStripAspect: 1.45,
     maxStripAspect: 8.2,
     normalizeWidth: 520,

@@ -85,7 +85,7 @@ const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const recordSelectionEvidence = (
   evidenceMap,
   reading,
-  { sourceLabel = '', isTopPick = false, isRefined = false } = {}
+  { sourceLabel = '', isTopPick = false } = {}
 ) => {
   if (!reading || !reading.value) {
     return;
@@ -102,7 +102,6 @@ const recordSelectionEvidence = (
     value,
     hits: 0,
     topHits: 0,
-    refinedHits: 0,
     totalScore: 0,
     bestScore: -1,
     bestConfidence: 0,
@@ -113,9 +112,6 @@ const recordSelectionEvidence = (
   existing.totalScore += score;
   if (isTopPick) {
     existing.topHits += 1;
-  }
-  if (isRefined) {
-    existing.refinedHits += 1;
   }
   if (sourceLabel) {
     existing.sources.add(sourceLabel);
@@ -135,7 +131,6 @@ const rankSelectionEvidence = (evidenceMap) => {
     .map((entry) => {
       const averageScore = entry.hits ? entry.totalScore / entry.hits : 0;
       const consensusBoost = clamp((entry.topHits - 1) * 0.12 + (entry.hits - entry.topHits) * 0.04, 0, 0.3);
-      const refinedBoost = clamp(entry.refinedHits * 0.05, 0, 0.15);
       const sourceSpreadBoost = clamp((entry.sources.size - 1) * 0.02, 0, 0.08);
       const preferredLengthBoost = entry.value.length === OCR_CONFIG.preferredDigits ? 0.05 : -0.08;
       const leadingZeroPenalty = (
@@ -146,7 +141,6 @@ const rankSelectionEvidence = (evidenceMap) => {
         entry.bestScore * 0.58
           + averageScore * 0.27
           + consensusBoost
-          + refinedBoost
           + sourceSpreadBoost
           + preferredLengthBoost
           - leadingZeroPenalty,
@@ -172,7 +166,6 @@ const buildSelectionSummary = (rankedEvidence, limit = 3) => {
     averageScore: Number(entry.averageScore.toFixed(3)),
     hits: entry.hits,
     topHits: entry.topHits,
-    refinedHits: entry.refinedHits,
     sourceCount: entry.sourceCount
   }));
 };
@@ -209,9 +202,6 @@ const finalizeSelection = ({ debugLabel, roiUsed, bestResult, evidenceMap, branc
   const minWordPassHits = Number.isFinite(roiDeterministic.minWordPassHits)
     ? Math.max(1, Math.round(roiDeterministic.minWordPassHits))
     : 2;
-  const minRefinedHits = Number.isFinite(roiDeterministic.minRefinedHits)
-    ? Math.max(1, Math.round(roiDeterministic.minRefinedHits))
-    : 2;
   let finalResult = bestResult;
 
   if (evidenceBest) {
@@ -219,7 +209,6 @@ const finalizeSelection = ({ debugLabel, roiUsed, bestResult, evidenceMap, branc
       !finalResult
       || evidenceBest.score >= (finalResult.score ?? -1) - 0.03
       || evidenceBest.topHits >= 2
-      || evidenceBest.refinedHits >= 1
     );
 
     if (shouldPromoteEvidence) {
@@ -249,26 +238,11 @@ const finalizeSelection = ({ debugLabel, roiUsed, bestResult, evidenceMap, branc
   if (finalResult && finalResult.method === 'word-pass') {
     const support = rankedEvidence.find((entry) => entry.value === finalResult.value) || null;
     const confirmed = !!support && (
-      support.refinedHits >= 1
-      || support.hits >= minWordPassHits
+      support.hits >= minWordPassHits
       || support.topHits >= minWordPassHits
     );
     if (!confirmed) {
       finalResult = null;
-    }
-  }
-
-  if (finalResult) {
-    const support = rankedEvidence.find((entry) => entry.value === finalResult.value) || null;
-    if (support && support.refinedHits > 0) {
-      const confirmedRefined = (
-        support.refinedHits >= minRefinedHits
-        || support.topHits >= minWordPassHits
-        || support.hits >= (minWordPassHits + 1)
-      );
-      if (!confirmedRefined) {
-        finalResult = null;
-      }
     }
   }
 
@@ -423,7 +397,7 @@ const evaluateCandidateBranch = async ({
     };
   };
 
-  const recordCandidateReadings = (reading, sourceLabel, isRefined = false) => {
+  const recordCandidateReadings = (reading, sourceLabel) => {
     if (!reading) {
       return;
     }
@@ -431,15 +405,13 @@ const evaluateCandidateBranch = async ({
       reading.topCandidates.forEach((entry, index) => {
         recordSelectionEvidence(valueEvidence, entry, {
           sourceLabel,
-          isTopPick: index === 0,
-          isRefined
+          isTopPick: index === 0
         });
       });
     } else {
       recordSelectionEvidence(valueEvidence, reading, {
         sourceLabel,
-        isTopPick: true,
-        isRefined
+        isTopPick: true
       });
     }
   };
@@ -485,7 +457,7 @@ const evaluateCandidateBranch = async ({
           bestResult = candidateBest;
         }
         if (candidateBest) {
-          recordCandidateReadings(candidateBest, candidate.label, false);
+          recordCandidateReadings(candidateBest, candidate.label);
         }
       }
     }
@@ -521,7 +493,7 @@ const evaluateCandidateBranch = async ({
     fullCandidate = applyReadingMetadata(fullCandidate, { label: 'scan-roi' }, 'sparse-scan');
     if (fullCandidate) {
       bestResult = fullCandidate;
-      recordCandidateReadings(fullCandidate, 'scan-roi', false);
+      recordCandidateReadings(fullCandidate, 'scan-roi');
     }
   }
 
