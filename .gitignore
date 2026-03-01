@@ -27,3 +27,6 @@ backend/data/roi_dataset/roi_boxes.json
 .playwright-cli/
 playwright-report/
 test-results/
+
+# Local parking area for unrelated files
+AOB/
