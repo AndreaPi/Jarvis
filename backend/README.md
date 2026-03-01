@@ -26,17 +26,17 @@ Expected labels: one class (`digit_window`) with normalized YOLO boxes.
 ```bash
 cd backend
 source .venv/bin/activate
-python train_roi.py --data data/roi_dataset.yaml --base-model yolov8n.pt
-```
-
-For an orientation-robust experiment with strong augmentation (including explicit 90/180/270/360 train rotations):
-
-```bash
 python train_roi.py \
   --data data/roi_dataset.yaml \
   --base-model yolov8n.pt \
   --rotation-angles 90,180,270,360 \
   --heavy-augment
+```
+
+The training script enforces this augmentation policy by default (heavy online augmentation + 90/180/270/360 train rotations). You can bypass it only for explicit ablations with `--allow-no-augment-policy`.
+
+```bash
+python train_roi.py --data data/roi_dataset.yaml --base-model yolov8n.pt --allow-no-augment-policy --no-heavy-augment --rotation-angles 90,180
 ```
 
 After training, best weights are copied to `backend/models/roi.pt`.
@@ -131,5 +131,5 @@ Frontend integration defaults:
 Training can also be pinned with `--device`:
 
 ```bash
-python train_roi.py --data data/roi_dataset.yaml --base-model yolov8n.pt --device cpu
+python train_roi.py --data data/roi_dataset.yaml --base-model yolov8n.pt --device cpu --rotation-angles 90,180,270,360 --heavy-augment
 ```

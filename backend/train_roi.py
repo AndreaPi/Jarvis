@@ -8,6 +8,8 @@ from pathlib import Path
 import yaml
 
 SUPPORTED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+DEFAULT_ROTATION_ANGLES = "90,180,270,360"
+REQUIRED_ROTATION_ANGLES = {90, 180, 270, 360}
 HEAVY_AUGMENT_KWARGS = {
   "degrees": 180.0,
   "translate": 0.2,
@@ -47,16 +49,32 @@ def parse_args() -> argparse.Namespace:
   )
   parser.add_argument(
     "--rotation-angles",
-    default="",
+    default=DEFAULT_ROTATION_ANGLES,
     help=(
       "Comma-separated clockwise right-angle rotations to materialize in the train split "
-      "(allowed: 0,90,180,270,360). Example: 90,180,270,360"
+      "(allowed: 0,90,180,270,360). Default: 90,180,270,360"
     )
   )
   parser.add_argument(
     "--heavy-augment",
+    dest="heavy_augment",
     action="store_true",
+    default=True,
     help="Enable aggressive online augmentation (rotate/translate/scale/shear/flip/mosaic/mixup)."
+  )
+  parser.add_argument(
+    "--no-heavy-augment",
+    dest="heavy_augment",
+    action="store_false",
+    help="Disable heavy online augmentation (requires --allow-no-augment-policy)."
+  )
+  parser.add_argument(
+    "--allow-no-augment-policy",
+    action="store_true",
+    help=(
+      "Allow training without the enforced augmentation policy. "
+      "Use only for explicit ablations."
+    )
   )
   parser.add_argument("--project", default="runs")
   parser.add_argument("--name", default="roi-finetune")
@@ -244,6 +262,29 @@ def build_rotated_dataset(resolved_data_path: Path, rotations: list[tuple[int, i
     raise
 
 
+def validate_augmentation_policy(
+  heavy_augment: bool,
+  rotations: list[tuple[int, int]],
+  allow_no_augment_policy: bool
+) -> None:
+  configured_angles = {requested for requested, _ in rotations}
+  missing = sorted(REQUIRED_ROTATION_ANGLES - configured_angles)
+  policy_ok = heavy_augment and not missing
+  if policy_ok:
+    return
+  if allow_no_augment_policy:
+    print(
+      "WARNING: augmentation policy override enabled "
+      f"(heavy_augment={heavy_augment}, missing_rotations={missing})."
+    )
+    return
+  raise ValueError(
+    "ROI training requires heavy augmentation and rotation angles "
+    f"{sorted(REQUIRED_ROTATION_ANGLES)}. "
+    "Use --allow-no-augment-policy only for explicit ablation runs."
+  )
+
+
 def main() -> None:
   args = parse_args()
   base_dir = Path(__file__).resolve().parent
@@ -252,6 +293,7 @@ def main() -> None:
   copy_to_path = resolve_path(base_dir, args.copy_to)
   device = resolve_device(args.device)
   rotations = parse_rotation_angles(args.rotation_angles)
+  validate_augmentation_policy(args.heavy_augment, rotations, args.allow_no_augment_policy)
 
   if not data_path.exists():
     raise FileNotFoundError(f"Dataset yaml not found: {data_path}")

@@ -54,11 +54,16 @@ pip install -r requirements-cpu.txt
 2. Train/fine-tune a model (copies best checkpoint to `backend/models/roi.pt`):
 
 ```bash
-python train_roi.py --data data/roi_dataset.yaml --base-model yolov8n.pt
+python train_roi.py \
+  --data data/roi_dataset.yaml \
+  --base-model yolov8n.pt \
+  --rotation-angles 90,180,270,360 \
+  --heavy-augment
 ```
 
 The API default ROI checkpoint is pinned to `backend/models/roi-rotaug-e30-640.pt`.
 To run with a newly trained checkpoint, set `ROI_MODEL_PATH` explicitly before starting the backend.
+`train_roi.py` now enforces heavy augmentation + rotation expansion by default; weaker runs require explicit `--allow-no-augment-policy`.
 
 Optional: train the per-cell digit classifier checkpoint:
 
