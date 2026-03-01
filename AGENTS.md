@@ -22,7 +22,7 @@
 - `npm run serve`: Start a simple local web server on port 8000.
 - `npm run dev`: Alias of `npm run serve`.
 - `cd backend && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`: Backend setup.
-- `cd backend && source .venv/bin/activate && python train_roi.py --data data/roi_dataset.yaml --base-model yolov8n.pt`: Fine-tune pretrained ROI detector.
+- `cd backend && source .venv/bin/activate && python train_roi.py --data data/roi_dataset.yaml --base-model yolov8n.pt --rotation-angles 90,180,270,360 --heavy-augment`: Fine-tune pretrained ROI detector with enforced augmentation policy.
 - `cd backend && source .venv/bin/activate && python build_digit_dataset.py --clean`: Rebuild digit strip/cell exports and QA previews.
 - `cd backend && source .venv/bin/activate && python validate_digit_dataset.py`: Validate dataset/manifests before training.
 - `cd backend && source .venv/bin/activate && python plan_digit_expansion.py --target-train-per-digit 12 --priority-digits 4,5,6,9`: Refresh targeted capture checklist.
@@ -46,6 +46,7 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
 - Backend sanity checks: `GET /health` and confirm `ready: true`, `roi_ready: true`, and expected `model_path`.
 - Prefer running the test set from UI with debug overlay enabled.
 - Before committing OCR changes, run both `npm run test:e2e` and the UI "Run test set".
+- ROI training policy: always use heavy augmentation and rotation expansion (`90,180,270,360`). `train_roi.py` enforces this by default and only allows weaker runs with `--allow-no-augment-policy`.
 
 ## Commit & Pull Request Guidelines
 - No commit message convention is established in this repo.
@@ -66,23 +67,27 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
 - Neural ROI is mandatory in the frontend OCR flow (heuristic ROI fallback removed).
 - On neural ROI failure, the UI shows an explicit reason and asks for manual measurement input.
 - Backend default ROI model is pinned to `backend/models/roi-rotaug-e30-640.pt` (override with `ROI_MODEL_PATH`).
+- `train_roi.py` enforces augmentation policy by default: heavy online augmentation + rotation expansion `90,180,270,360`.
 - Digit-classifier inference is optional behind `OCR_CONFIG.digitClassifier.enabled` (default `false`).
 - Backend serves ROI + digit endpoints and reports readiness via `GET /health`.
 - Test-set table includes `Detected`, `Value Match`, `Failure Reason`, and `Result`.
 - Frontend OCR branch evaluation is strip-only (word-pass + sparse scan); the 4-cell refine stage is removed from the active pipeline.
 - ROI word-pass defaults to raw candidate input (`roiDeterministic.wordPassModes: ['raw']`); debug stage `6. OCR input candidate` mirrors this mode.
 - Single-hit strip reads are currently allowed via `roiDeterministic.minWordPassHits: 1`.
-- Latest local run on February 27, 2026: OCR test set remained `0/13`; after adding reject instrumentation, failure mix is `mismatch` (6), `ocr-no-digits` (6), and neural ROI `no-detection` (1). Reject histogram totals: `ocr-no-digits` (94), `ocr-non4-reading` (2).
-- Key lesson: the prior `branch:roi-uncertain` bucket is predominantly an extraction issue (`ocr-no-digits`) rather than a late-stage selection tie; hard images frequently produce empty `topCandidates`.
+- Current local benchmark set has `14` images.
+- Latest comparison (March 1, 2026):
+  - `roi-rotaug-e30-640.pt` (default pinned): `0/14` correct, failure mix `ocr-no-digits` (7), `mismatch` (6), `no-detection` (1).
+  - `roi.pt` (new retrained checkpoint): `0/14` correct, failure mix `ocr-no-digits` (10), `mismatch` (4), `no-detection` (0).
+- Key lesson: new ROI improved detection presence, but overall OCR remains blocked by extraction/selection (`ocr-no-digits` dominates).
 
-## OCR Priorities
+## Next TODOs
 
-1. Keep neural-ROI-only policy and strip-only OCR path while improving correctness.
-2. Reduce `mismatch` errors by tuning strip preprocessing and candidate ranking (especially hard confusion cases like `8/3/1/7`).
-3. Reduce `ocr-no-digits` (previously grouped under `branch:roi-uncertain`) by improving candidate generation/selection consistency across ROI rotations.
-4. Investigate hard images (`meter_02202026.JPEG`, `meter_02192026.JPEG`, `meter_07012020.JPEG`, `meter_02242026.JPEG`) using stages `5`/`6` and selection logs.
-5. Re-run UI `Run test set` after each OCR tweak and compare `mismatch` vs `ocr-no-digits` movement.
-6. Run `npm run test:e2e` before every commit; keep strip-only single-hit acceptance behavior covered.
+1. Keep `roi-rotaug-e30-640.pt` as default until a challenger beats it on end-to-end OCR metrics, not only detection presence.
+2. Build a per-image diff report between old and new ROI checkpoints (`Detected`, stage `5/6` snapshots, reject reason) to isolate why `ocr-no-digits` increased.
+3. Tune strip preprocessing and candidate ranking for the current hard failures (`meter_07012020.JPEG`, `meter_02192026.JPEG`, `meter_02202026.JPEG`, `meter_02242026.JPEG`).
+4. Add a gated fallback that uses the digit classifier only when OCR returns no digits, then benchmark with and without fallback.
+5. Define checkpoint promotion gates in docs: minimum no-detection rate, minimum `Value Match`, and no regression in `ocr-no-digits`.
+6. Keep running both `npm run test:e2e` and UI `Run test set` before commits; include histogram deltas in commit/PR notes.
 
 ## Dataset Expansion Loop (`4/5/6/9`)
 
