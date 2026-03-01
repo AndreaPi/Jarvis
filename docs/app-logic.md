@@ -22,7 +22,7 @@ flowchart TD
 
   L --> M{"Best 4-digit reading found?"}
   M -- "No" --> N["Sparse scan OCR on ROI crop<br/>(SPARSE_TEXT, soft)"]
-  M -- "Yes" --> O["finalizeSelection()<br/>support + guardrails"]
+  M -- "Yes" --> O["finalizeSelection()<br/>evidence ranking + word-pass support guardrail"]
   N --> O
 
   O --> P{"Final selection exists?"}
@@ -32,6 +32,8 @@ flowchart TD
   O --> S["Push selection log<br/>window.__jarvisOcrSelectionLogs"]
   S --> T["Run test set => failure/reject histograms"]
 ```
+
+![App Logic Flow Render](./app-logic-flow.png)
 
 ## Main Decision Gates
 
@@ -45,7 +47,8 @@ flowchart TD
 3. OCR acceptance gate
    - Word-pass result is preferred.
    - Sparse scan is attempted if no word-pass result is available.
-   - `finalizeSelection` applies support thresholds and guardrails before returning a value.
+   - `finalizeSelection` ranks evidence across OCR passes and applies the active word-pass support guardrail (`hits` / `topHits` vs `minWordPassHits`) before returning a value.
+   - There is no active refined-stage confirmation guardrail in the current strip-only pipeline.
 
 ## What Gets Logged
 
@@ -61,4 +64,3 @@ flowchart TD
 - Candidate generation: `src/ocr/alignment.js`
 - OCR ranking/reading extraction: `src/ocr/recognition.js`
 - Test-set analysis and histograms: `src/testset/run-test-set.js`
-

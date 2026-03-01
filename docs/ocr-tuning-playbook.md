@@ -2,9 +2,9 @@
 
 This playbook documents the practical loop used to improve OCR quality in Jarvis.
 
-Current baseline (February 27, 2026):
+Current baseline (March 1, 2026):
 
-- Test set: `0/13`
+- Test set: `0/14`
 - Dominant failures: `mismatch` and `ocr-no-digits`
 - ROI no-detection: rare (1 image)
 
@@ -102,6 +102,7 @@ Focus:
 
 - Balance strictness (avoid false positives) vs recall (avoid no-read).
 - Validate with histogram movement, not single-image anecdotes.
+- Active guardrail in current pipeline: word-pass support (`hits` / `topHits` vs `minWordPassHits`).
 
 ### 4) ROI Sanity Gates (usually not primary blocker)
 
