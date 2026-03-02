@@ -75,18 +75,23 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
 - ROI word-pass defaults to raw candidate input (`roiDeterministic.wordPassModes: ['raw']`); debug stage `6. OCR input candidate` mirrors this mode.
 - Single-hit strip reads are currently allowed via `roiDeterministic.minWordPassHits: 1`.
 - Current local benchmark set has `14` images.
-- Latest comparison (March 1, 2026):
+- Latest checkpoint comparison (March 2, 2026, fallback `OFF`):
   - `roi-rotaug-e30-640.pt` (default pinned): `0/14` correct, failure mix `ocr-no-digits` (7), `mismatch` (6), `no-detection` (1).
-  - `roi.pt` (new retrained checkpoint): `0/14` correct, failure mix `ocr-no-digits` (10), `mismatch` (4), `no-detection` (0).
-- Key lesson: new ROI improved detection presence, but overall OCR remains blocked by extraction/selection (`ocr-no-digits` dominates).
+  - `roi.pt` (challenger): `0/14` correct, failure mix `ocr-no-digits` (10), `mismatch` (4), `no-detection` (0).
+- Automated diff workflow is available via `npm run benchmark:roi-diff` (recent artifacts: `output/roi-checkpoint-diff/20260302-083324-fallback-off/roi-diff-report.md`, `output/roi-checkpoint-diff/20260302-083529-fallback-on/roi-diff-report.md`).
+- Gated digit-classifier fallback is implemented in pipeline but remains disabled by default (`digitClassifier.enabled: false`).
+- Fallback benchmark (March 2, 2026):
+  - Fallback `OFF` (`output/roi-checkpoint-diff/20260302-083324-fallback-off`): baseline `mismatch` 6 / `ocr-no-digits` 7; challenger `mismatch` 4 / `ocr-no-digits` 10.
+  - Fallback `ON` (`output/roi-checkpoint-diff/20260302-083529-fallback-on`): baseline `mismatch` 10 / `ocr-no-digits` 3; challenger `mismatch` 13 / `ocr-no-digits` 1.
+  - Net: no accuracy gain (`0/14` stays `0/14`), with strong false-positive shift (`ocr-no-digits` -> `mismatch`), so fallback stays disabled.
 
 ## Next TODOs
 
 1. Keep `roi-rotaug-e30-640.pt` as default until a challenger beats it on end-to-end OCR metrics, not only detection presence.
-2. Build a per-image diff report between old and new ROI checkpoints (`Detected`, stage `5/6` snapshots, reject reason) to isolate why `ocr-no-digits` increased.
+2. Re-run `npm run benchmark:roi-diff` after each ROI challenger to track per-image movement (`Detected`, stage `5/6` snapshots, reject reason), then summarize deltas in notes/PR.
 3. Tune strip preprocessing and candidate ranking for the current hard failures (`meter_07012020.JPEG`, `meter_02192026.JPEG`, `meter_02202026.JPEG`, `meter_02242026.JPEG`).
-4. Add a gated fallback that uses the digit classifier only when OCR returns no digits, then benchmark with and without fallback.
-5. Define checkpoint promotion gates in docs: minimum no-detection rate, minimum `Value Match`, and no regression in `ocr-no-digits`.
+4. Keep classifier fallback disabled until it beats fallback-off on `Value Match`; focus on stricter fallback acceptance/ranking before re-testing.
+5. Enforce checkpoint promotion gates from docs: minimum no-detection rate, minimum `Value Match`, and no regression in `ocr-no-digits`.
 6. Keep running both `npm run test:e2e` and UI `Run test set` before commits; include histogram deltas in commit/PR notes.
 
 ## Dataset Expansion Loop (`4/5/6/9`)
@@ -98,4 +103,4 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
    - `cd backend && source .venv/bin/activate && python validate_digit_dataset.py`
 4. Retrain classifier only after class coverage improves:
    - `cd backend && source .venv/bin/activate && python train_digit_classifier.py --device cpu`
-5. Re-enable classifier only as a gated fallback path, then re-run OCR test-set benchmarks.
+5. Keep classifier fallback disabled by default; only enable if benchmarked `Value Match` improves without `mismatch` regression.

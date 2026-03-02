@@ -2,11 +2,12 @@
 
 This playbook documents the practical loop used to improve OCR quality in Jarvis.
 
-Current baseline (March 1, 2026):
+Current baseline (March 2, 2026, fallback `OFF`):
 
 - Test set: `0/14`
-- Dominant failures: `mismatch` and `ocr-no-digits`
-- ROI no-detection: rare (1 image)
+- Pinned model (`roi-rotaug-e30-640.pt`): `mismatch` 6, `ocr-no-digits` 7, `no-detection` 1
+- Challenger (`roi.pt`): `mismatch` 4, `ocr-no-digits` 10, `no-detection` 0
+- Gated fallback experiment (`JARVIS_DIGIT_FALLBACK=1`) reduced `ocr-no-digits` but increased `mismatch` with no accuracy gain, so fallback remains disabled.
 
 ## Goals
 
@@ -61,6 +62,48 @@ npm run test:e2e
 
 - Keep only changes with clear net improvement.
 - Revert changes that shift failures without improving accuracy.
+
+## Automated Checkpoint Diff
+
+Use the scripted checkpoint comparison to produce a per-image report between the pinned baseline and a challenger model:
+
+```bash
+npm run benchmark:roi-diff
+```
+
+For the gated classifier fallback experiment (fallback only after `ocr-no-digits`), run:
+
+```bash
+JARVIS_DIGIT_FALLBACK=1 npm run benchmark:roi-diff
+```
+
+Compare fallback `ON` vs `OFF` with the same promotion gates; do not accept `ocr-no-digits` reductions that simply convert into `mismatch`.
+
+Artifacts are saved to:
+
+- `output/roi-checkpoint-diff/<timestamp>/roi-diff-report.md`
+- `output/roi-checkpoint-diff/<timestamp>/roi-diff-report.json`
+- `output/roi-checkpoint-diff/<timestamp>/{baseline,challenger}/stages/*` (stage `5` and `6` snapshots)
+
+The report includes:
+
+- Per-image `Detected`, `Failure Reason`, and top reject reason.
+- Side-by-side stage `5. detected strip crop` and `6. OCR input candidate`.
+- Summary deltas for `mismatch`, `ocr-no-digits`, and `no-detection`.
+
+## Checkpoint Promotion Gates
+
+Promote a challenger checkpoint only if all gates pass on the same test-set run:
+
+1. **No-detection gate**: challenger `no-detection` count must be less than or equal to baseline.
+2. **Value Match gate**: challenger `Correct` must be at least baseline and at least `1` image on the current 14-image set.
+3. **OCR no-digits gate**: challenger `ocr-no-digits` count must be less than or equal to baseline.
+
+If any gate fails, keep `roi-rotaug-e30-640.pt` as default and continue tuning extraction/selection.
+
+Fallback-specific rule:
+
+- Keep `digitClassifier.enabled=false` by default until fallback `ON` beats fallback `OFF` on `Correct` and does not increase `mismatch`.
 
 ## High-Impact Tuning Areas
 
