@@ -43,6 +43,8 @@ const OCR_CONFIG = {
     endpoint: 'http://127.0.0.1:8001/digit/predict-cells',
     timeoutMs: 1800,
     minCellConfidence: 0.28,
+    fallbackOnNoDigitsOnly: true,
+    fallbackMinAcceptedCells: 4,
     disableAfterFailures: 2,
     cooldownMs: 8000
   },
@@ -65,6 +67,24 @@ const OCR_CONFIG = {
     }
   }
 };
+
+const applyRuntimeOverrides = () => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  const overrides = window.__JARVIS_OCR_CONFIG_OVERRIDE__;
+  if (!overrides || typeof overrides !== 'object') {
+    return;
+  }
+  if (overrides.digitClassifier && typeof overrides.digitClassifier === 'object') {
+    OCR_CONFIG.digitClassifier = {
+      ...OCR_CONFIG.digitClassifier,
+      ...overrides.digitClassifier
+    };
+  }
+};
+
+applyRuntimeOverrides();
 
 const ALIGNMENT_CONFIG = {
   centerOffsetLimit: 0.14,

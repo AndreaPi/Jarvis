@@ -1,6 +1,6 @@
 # App Logic
 
-This document describes the current Jarvis OCR execution path, including neural ROI gating and OCR fallback behavior.
+This document describes the current Jarvis OCR execution path, including neural ROI gating and the optional gated classifier fallback.
 
 ## End-to-End OCR Flow
 
@@ -23,7 +23,12 @@ flowchart TD
   L --> M{"Best 4-digit reading found?"}
   M -- "No" --> N["Sparse scan OCR on ROI crop<br/>(SPARSE_TEXT, soft)"]
   M -- "Yes" --> O["finalizeSelection()<br/>evidence ranking + word-pass support guardrail"]
-  N --> O
+  N --> N2{"Still no accepted reading?"}
+  N2 -- "No" --> O
+  N2 -- "Yes" --> N3{"Classifier fallback enabled<br/>and no-digits rejects seen?"}
+  N3 -- "No" --> O
+  N3 -- "Yes" --> N4["Digit-classifier fallback<br/>(4 cells from ROI candidate)"]
+  N4 --> O
 
   O --> P{"Final selection exists?"}
   P -- "Yes" --> Q["Return reading + fill UI input"]
@@ -47,8 +52,9 @@ flowchart TD
 3. OCR acceptance gate
    - Word-pass result is preferred.
    - Sparse scan is attempted if no word-pass result is available.
+   - Optional classifier fallback runs only when enabled and the branch has `ocr-no-digits` rejects.
    - `finalizeSelection` ranks evidence across OCR passes and applies the active word-pass support guardrail (`hits` / `topHits` vs `minWordPassHits`) before returning a value.
-   - There is no active refined-stage confirmation guardrail in the current strip-only pipeline.
+   - Default config keeps classifier fallback disabled (`digitClassifier.enabled=false`) because current benchmark shows no accuracy gain.
 
 ## What Gets Logged
 

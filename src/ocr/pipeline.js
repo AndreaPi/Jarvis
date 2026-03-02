@@ -5,12 +5,14 @@ import {
   drawImageToCanvas,
   preprocessCanvas,
   cropCanvas,
+  splitIntoCells,
   normalizeRectToCanvas,
   drawOverlayCanvas,
   normalizeAngle
 } from './canvas-utils.js';
 import { buildDigitCandidates } from './alignment.js';
 import { getWorker, selectBestReading } from './recognition.js';
+import { predictDigitCells } from './digit-classifier.js';
 import { detectNeuralRoi } from './neural-roi.js';
 
 const resolveNeuralRoiRect = (canvas, roiDetection, roiConfig) => {
@@ -330,6 +332,8 @@ const evaluateCandidateBranch = async ({
   const minCandidateHeight = Number.isFinite(geometryConfig.minCandidateHeight) ? geometryConfig.minCandidateHeight : 28;
   const minCandidateAspect = Number.isFinite(geometryConfig.minCandidateAspect) ? geometryConfig.minCandidateAspect : 0.12;
   const maxCandidateAspect = Number.isFinite(geometryConfig.maxCandidateAspect) ? geometryConfig.maxCandidateAspect : 18;
+  const minCellWidth = Number.isFinite(geometryConfig.minCellWidth) ? geometryConfig.minCellWidth : 20;
+  const minCellHeight = Number.isFinite(geometryConfig.minCellHeight) ? geometryConfig.minCellHeight : 24;
   const rejectMap = new Map();
 
   const recordReject = (reason, detail = {}) => {
@@ -416,6 +420,126 @@ const evaluateCandidateBranch = async ({
     }
   };
 
+  const hasValidCellGeometry = (cellCanvases, stage, extra = {}) => {
+    for (let i = 0; i < cellCanvases.length; i += 1) {
+      const cell = cellCanvases[i];
+      if (!cell || cell.width < minCellWidth || cell.height < minCellHeight) {
+        recordReject('cell-too-small', {
+          stage,
+          index: i,
+          sourceLabel: extra.sourceLabel || null,
+          width: cell ? cell.width : 0,
+          height: cell ? cell.height : 0
+        });
+        return false;
+      }
+    }
+    return true;
+  };
+
+  const tryClassifierFallback = async () => {
+    if (bestResult) {
+      return null;
+    }
+
+    const classifierConfig = OCR_CONFIG.digitClassifier || {};
+    if (!classifierConfig.enabled) {
+      return null;
+    }
+
+    const fallbackOnNoDigitsOnly = classifierConfig.fallbackOnNoDigitsOnly !== false;
+    const noDigitsRejects = rejectMap.get('ocr-no-digits');
+    if (fallbackOnNoDigitsOnly && !(noDigitsRejects && noDigitsRejects.count > 0)) {
+      return null;
+    }
+
+    const fallbackCandidates = [...activeCandidates];
+    if (scanCanvas) {
+      fallbackCandidates.push({ canvas: scanCanvas, label: 'scan-roi' });
+    }
+
+    const fallbackCandidate = fallbackCandidates.find((candidate) =>
+      hasValidCandidateGeometry(candidate, 'classifier-fallback')
+    );
+    if (!fallbackCandidate) {
+      recordReject('classifier-no-candidate', {
+        stage: 'classifier-fallback'
+      });
+      return null;
+    }
+
+    const overlap = Number.isFinite(roiDeterministic.cellOverlap) ? roiDeterministic.cellOverlap : 0.03;
+    const cellCanvases = splitIntoCells(fallbackCandidate.canvas, OCR_CONFIG.digitCellCount, overlap);
+    if (!hasValidCellGeometry(cellCanvases, 'classifier-fallback', { sourceLabel: fallbackCandidate.label })) {
+      return null;
+    }
+
+    if (setProgress) {
+      setProgress('Fallback: classifier check...');
+    }
+    const classifierProbe = await predictDigitCells(cellCanvases, classifierConfig);
+    if (!classifierProbe.ok) {
+      if (classifierProbe.reason !== 'disabled') {
+        recordReject('classifier-unavailable', {
+          stage: 'classifier-fallback',
+          sourceLabel: fallbackCandidate.label,
+          reason: classifierProbe.reason
+        });
+      }
+      return null;
+    }
+
+    const minAcceptedCells = Number.isFinite(classifierConfig.fallbackMinAcceptedCells)
+      ? Math.max(1, Math.min(OCR_CONFIG.digitCellCount, Math.round(classifierConfig.fallbackMinAcceptedCells)))
+      : OCR_CONFIG.digitCellCount;
+    const digits = classifierProbe.predictions.map((item) => (item && item.accepted ? item.digit : ''));
+    const acceptedCount = digits.filter(Boolean).length;
+    if (acceptedCount < minAcceptedCells) {
+      recordReject('classifier-insufficient-cell-digits', {
+        stage: 'classifier-fallback',
+        sourceLabel: fallbackCandidate.label,
+        accepted: acceptedCount,
+        required: minAcceptedCells
+      });
+      return null;
+    }
+
+    const value = digits.join('');
+    if (!value || value.length !== OCR_CONFIG.preferredDigits) {
+      recordReject('classifier-non4-reading', {
+        stage: 'classifier-fallback',
+        sourceLabel: fallbackCandidate.label,
+        value
+      });
+      return null;
+    }
+
+    const cellConfidences = classifierProbe.predictions.map((item) => {
+      if (!item || !item.accepted || !Number.isFinite(item.confidence)) {
+        return 0;
+      }
+      return clamp(item.confidence * 100, 0, 100);
+    });
+    const confidenceSum = cellConfidences.reduce((sum, score) => sum + score, 0);
+    const averageConfidence = confidenceSum / Math.max(acceptedCount, 1);
+    const normalizedConfidence = clamp(averageConfidence / 100, 0, 1);
+    const score = clamp(0.42 + normalizedConfidence * 0.46, 0, 0.94);
+
+    const fallbackReading = applyReadingMetadata({
+      value,
+      confidence: averageConfidence,
+      areaRatio: 0.28,
+      score,
+      cellDigits: digits,
+      cellConfidences
+    }, fallbackCandidate, 'digit-classifier-fallback');
+    if (!fallbackReading) {
+      return null;
+    }
+    recordCandidateReadings(fallbackReading, `${fallbackCandidate.label}:classifier`);
+    return fallbackReading;
+  };
+
   if (useWordPass) {
     await worker.setParameters({
       tessedit_pageseg_mode: Tesseract.PSM.SINGLE_WORD,
@@ -494,6 +618,13 @@ const evaluateCandidateBranch = async ({
     if (fullCandidate) {
       bestResult = fullCandidate;
       recordCandidateReadings(fullCandidate, 'scan-roi');
+    }
+  }
+
+  if (!bestResult) {
+    const classifierFallback = await tryClassifierFallback();
+    if (classifierFallback) {
+      bestResult = classifierFallback;
     }
   }
 
