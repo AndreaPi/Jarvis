@@ -100,6 +100,19 @@ Run Playwright checks for neural-ROI failure handling and OCR selection guard re
 npm run test:e2e
 ```
 
+Generate a per-image ROI checkpoint comparison report (`roi-rotaug-e30-640.pt` vs `roi.pt`) with stage `5/6` debug snapshots:
+
+```bash
+npm run benchmark:roi-diff
+```
+
+Report artifacts are written under `output/roi-checkpoint-diff/<timestamp>/`.
+To benchmark with digit-classifier fallback enabled (gated to `ocr-no-digits`), run:
+
+```bash
+JARVIS_DIGIT_FALLBACK=1 npm run benchmark:roi-diff
+```
+
 CI runs these tests on every pull request and on pushes to `master`.
 
 ## File Overview

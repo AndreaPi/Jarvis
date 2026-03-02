@@ -7,7 +7,8 @@
     "serve": "python3 -m http.server 8000",
     "dev": "python3 -m http.server 8000",
     "test:e2e": "playwright test",
-    "test:e2e:headed": "playwright test --headed"
+    "test:e2e:headed": "playwright test --headed",
+    "benchmark:roi-diff": "node scripts/compare-roi-checkpoints.cjs"
   },
   "devDependencies": {
     "@playwright/test": "1.58.1"
