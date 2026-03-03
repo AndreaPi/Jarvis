@@ -94,6 +94,13 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
 4. Keep classifier fallback disabled until it beats fallback-off on `MAE` while respecting exact-match and no-read guardrails; focus on stricter fallback acceptance/ranking before re-testing.
 5. Enforce checkpoint promotion gates from docs: no MAE regression, no exact-match regression, no no-read regression, and no regression in `ocr-no-digits`.
 6. Keep running both `npm run test:e2e` and UI `Run test set` before commits; include histogram deltas in commit/PR notes.
+7. Medium-term: evaluate YOLO OBB ROI detection to reduce rotation/edge ambiguity; this requires OBB relabeling, retraining, and backend response/schema changes before frontend adoption.
+
+### OBB Notes (Re-verify Before Implementation)
+
+- OBB inference outputs rotated geometry (`xywhr`) and polygon corners.
+- OBB training labels use corners format: `class x1 y1 x2 y2 x3 y3 x4 y4`.
+- OBB angle handling has constraints (Ultralytics OBB uses angles in the `0-90` exclusive range).
 
 ## Dataset Expansion Loop (`4/5/6/9`)
 
