@@ -2,12 +2,13 @@
 
 This playbook documents the practical loop used to improve OCR quality in Jarvis.
 
-Current baseline (March 2, 2026, fallback `OFF`):
+Current baseline (March 2, 2026, fallback `OFF`, historical exact-match snapshot):
 
-- Test set: `0/14`
+- Test set: `0/14` exact-match (`Correct`)
 - Pinned model (`roi-rotaug-e30-640.pt`): `mismatch` 6, `ocr-no-digits` 7, `no-detection` 1
 - Challenger (`roi.pt`): `mismatch` 4, `ocr-no-digits` 10, `no-detection` 0
-- Gated fallback experiment (`JARVIS_DIGIT_FALLBACK=1`) reduced `ocr-no-digits` but increased `mismatch` with no accuracy gain, so fallback remains disabled.
+- Gated fallback experiment (`JARVIS_DIGIT_FALLBACK=1`) reduced `ocr-no-digits` but increased `mismatch` with no exact-match gain, so fallback remains disabled.
+- Evaluation now uses `MAE` as the primary promotion signal; exact-match and no-read rates are guardrails.
 
 ## Goals
 
@@ -61,7 +62,7 @@ npm run test:e2e
 5. Keep or revert
 
 - Keep only changes with clear net improvement.
-- Revert changes that shift failures without improving accuracy.
+- Revert changes that shift failures without improving `MAE`.
 
 ## Automated Checkpoint Diff
 
@@ -89,21 +90,23 @@ The report includes:
 
 - Per-image `Detected`, `Failure Reason`, and top reject reason.
 - Side-by-side stage `5. detected strip crop` and `6. OCR input candidate`.
-- Summary deltas for `mismatch`, `ocr-no-digits`, and `no-detection`.
+- Summary deltas for `MAE`, guardrail rates (`Exact Match`, `No-read`), `mismatch`, `ocr-no-digits`, and `no-detection`.
 
 ## Checkpoint Promotion Gates
 
 Promote a challenger checkpoint only if all gates pass on the same test-set run:
 
 1. **No-detection gate**: challenger `no-detection` count must be less than or equal to baseline.
-2. **Value Match gate**: challenger `Correct` must be at least baseline and at least `1` image on the current 14-image set.
-3. **OCR no-digits gate**: challenger `ocr-no-digits` count must be less than or equal to baseline.
+2. **MAE gate**: challenger `MAE` must be less than or equal to baseline.
+3. **Exact-match guardrail**: challenger `Exact Match` rate must be greater than or equal to baseline.
+4. **No-read guardrail**: challenger `No-read` rate must be less than or equal to baseline.
+5. **OCR no-digits gate**: challenger `ocr-no-digits` count must be less than or equal to baseline.
 
 If any gate fails, keep `roi-rotaug-e30-640.pt` as default and continue tuning extraction/selection.
 
 Fallback-specific rule:
 
-- Keep `digitClassifier.enabled=false` by default until fallback `ON` beats fallback `OFF` on `Correct` and does not increase `mismatch`.
+- Keep `digitClassifier.enabled=false` by default until fallback `ON` beats fallback `OFF` on `MAE` and does not regress exact-match/no-read guardrails or increase `mismatch`.
 
 ## High-Impact Tuning Areas
 
@@ -168,5 +171,5 @@ Recent test-set verification showed no `invalid-geometry` failures.
 
 1. `npm run test:e2e` passes.
 2. UI test-set rerun completed.
-3. Histogram delta documented (`mismatch` vs `ocr-no-digits`).
+3. `MAE` and guardrail deltas documented (`Exact Match`, `No-read`, and improved/regressed image counts).
 4. Any tuning knob changes are explained in PR notes.

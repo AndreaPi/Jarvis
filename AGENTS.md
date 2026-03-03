@@ -42,7 +42,7 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
 - `npm run test:e2e`: Runs `tests/e2e/neural-roi.spec.js` (neural ROI failure handling + ROI geometry + strip-only OCR behavior).
 - CI: `.github/workflows/e2e.yml` runs on each pull request and on pushes to `master`.
 - Frontend manual checks: upload image, run OCR, verify email draft fields, and confirm Gmail draft link.
-- OCR test-set checks: run "Run test set" and inspect `Value Match`, `Failure Reason`, and debug stages.
+- OCR test-set checks: run "Run test set" and inspect `MAE`, `Exact Match`, `No-read`, `Failure Reason`, and debug stages.
 - Backend sanity checks: `GET /health` and confirm `ready: true`, `roi_ready: true`, and expected `model_path`.
 - Prefer running the test set from UI with debug overlay enabled.
 - Before committing OCR changes, run both `npm run test:e2e` and the UI "Run test set".
@@ -70,28 +70,29 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
 - `train_roi.py` enforces augmentation policy by default: heavy online augmentation + rotation expansion `90,180,270,360`.
 - Digit-classifier inference is optional behind `OCR_CONFIG.digitClassifier.enabled` (default `false`).
 - Backend serves ROI + digit endpoints and reports readiness via `GET /health`.
-- Test-set table includes `Detected`, `Value Match`, `Failure Reason`, and `Result`.
+- Test-set table includes `Detected`, `Absolute Error`, `Failure Reason`, and `Result`.
 - Frontend OCR branch evaluation is strip-only (word-pass + sparse scan); the 4-cell refine stage is removed from the active pipeline.
 - ROI word-pass defaults to raw candidate input (`roiDeterministic.wordPassModes: ['raw']`); debug stage `6. OCR input candidate` mirrors this mode.
 - Single-hit strip reads are currently allowed via `roiDeterministic.minWordPassHits: 1`.
 - Current local benchmark set has `14` images.
 - Latest checkpoint comparison (March 2, 2026, fallback `OFF`):
-  - `roi-rotaug-e30-640.pt` (default pinned): `0/14` correct, failure mix `ocr-no-digits` (7), `mismatch` (6), `no-detection` (1).
-  - `roi.pt` (challenger): `0/14` correct, failure mix `ocr-no-digits` (10), `mismatch` (4), `no-detection` (0).
+  - `roi-rotaug-e30-640.pt` (default pinned): exact-match `0/14`, failure mix `ocr-no-digits` (7), `mismatch` (6), `no-detection` (1).
+  - `roi.pt` (challenger): exact-match `0/14`, failure mix `ocr-no-digits` (10), `mismatch` (4), `no-detection` (0).
 - Automated diff workflow is available via `npm run benchmark:roi-diff` (recent artifacts: `output/roi-checkpoint-diff/20260302-083324-fallback-off/roi-diff-report.md`, `output/roi-checkpoint-diff/20260302-083529-fallback-on/roi-diff-report.md`).
 - Gated digit-classifier fallback is implemented in pipeline but remains disabled by default (`digitClassifier.enabled: false`).
 - Fallback benchmark (March 2, 2026):
   - Fallback `OFF` (`output/roi-checkpoint-diff/20260302-083324-fallback-off`): baseline `mismatch` 6 / `ocr-no-digits` 7; challenger `mismatch` 4 / `ocr-no-digits` 10.
   - Fallback `ON` (`output/roi-checkpoint-diff/20260302-083529-fallback-on`): baseline `mismatch` 10 / `ocr-no-digits` 3; challenger `mismatch` 13 / `ocr-no-digits` 1.
-  - Net: no accuracy gain (`0/14` stays `0/14`), with strong false-positive shift (`ocr-no-digits` -> `mismatch`), so fallback stays disabled.
+  - Net: no exact-match gain (`0/14` stays `0/14`), with strong false-positive shift (`ocr-no-digits` -> `mismatch`), so fallback stays disabled.
+- Promotion and rollback decisions should now use `MAE` from `roi-diff-report` as the primary signal, with exact-match and no-read as guardrails.
 
 ## Next TODOs
 
 1. Keep `roi-rotaug-e30-640.pt` as default until a challenger beats it on end-to-end OCR metrics, not only detection presence.
 2. Re-run `npm run benchmark:roi-diff` after each ROI challenger to track per-image movement (`Detected`, stage `5/6` snapshots, reject reason), then summarize deltas in notes/PR.
 3. Tune strip preprocessing and candidate ranking for the current hard failures (`meter_07012020.JPEG`, `meter_02192026.JPEG`, `meter_02202026.JPEG`, `meter_02242026.JPEG`).
-4. Keep classifier fallback disabled until it beats fallback-off on `Value Match`; focus on stricter fallback acceptance/ranking before re-testing.
-5. Enforce checkpoint promotion gates from docs: minimum no-detection rate, minimum `Value Match`, and no regression in `ocr-no-digits`.
+4. Keep classifier fallback disabled until it beats fallback-off on `MAE` while respecting exact-match and no-read guardrails; focus on stricter fallback acceptance/ranking before re-testing.
+5. Enforce checkpoint promotion gates from docs: no MAE regression, no exact-match regression, no no-read regression, and no regression in `ocr-no-digits`.
 6. Keep running both `npm run test:e2e` and UI `Run test set` before commits; include histogram deltas in commit/PR notes.
 
 ## Dataset Expansion Loop (`4/5/6/9`)
@@ -103,4 +104,4 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
    - `cd backend && source .venv/bin/activate && python validate_digit_dataset.py`
 4. Retrain classifier only after class coverage improves:
    - `cd backend && source .venv/bin/activate && python train_digit_classifier.py --device cpu`
-5. Keep classifier fallback disabled by default; only enable if benchmarked `Value Match` improves without `mismatch` regression.
+5. Keep classifier fallback disabled by default; only enable if benchmarked `MAE` improves without exact-match/no-read guardrail regressions.

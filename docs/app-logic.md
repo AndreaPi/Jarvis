@@ -54,7 +54,7 @@ flowchart TD
    - Sparse scan is attempted if no word-pass result is available.
    - Optional classifier fallback runs only when enabled and the branch has `ocr-no-digits` rejects.
    - `finalizeSelection` ranks evidence across OCR passes and applies the active word-pass support guardrail (`hits` / `topHits` vs `minWordPassHits`) before returning a value.
-   - Default config keeps classifier fallback disabled (`digitClassifier.enabled=false`) because current benchmark shows no accuracy gain.
+   - Default config keeps classifier fallback disabled (`digitClassifier.enabled=false`) because current benchmark shows no MAE gain without exact-match/no-read guardrail safety.
 
 ## What Gets Logged
 

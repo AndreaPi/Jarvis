@@ -8,37 +8,22 @@ const parseCsv = (text) => {
     .map(([filename, value]) => ({ filename, value }));
 };
 
-const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
-
-const computeDebugScore = (expected, detected) => {
-  const expectedDigits = String(expected || '').replace(/\D/g, '');
-  const detectedDigits = String(detected || '').replace(/\D/g, '');
-  if (!expectedDigits) {
+const parseMeterValue = (value) => {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (!digits) {
     return null;
   }
-  if (!detectedDigits) {
-    return 0;
-  }
+  const parsed = Number.parseInt(digits, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+};
 
-  const expectedNumber = Number.parseInt(expectedDigits, 10);
-  const detectedNumber = Number.parseInt(detectedDigits, 10);
-  if (Number.isFinite(expectedNumber) && Number.isFinite(detectedNumber)) {
-    const denominator = Math.max(Math.abs(expectedNumber), 1);
-    const mse = ((expectedNumber - detectedNumber) / denominator) ** 2;
-    return clamp(1 - mse, 0, 1);
-  }
-
-  const maxLength = Math.max(expectedDigits.length, detectedDigits.length);
-  if (!maxLength) {
+const computeAbsoluteError = (expected, detected) => {
+  const expectedValue = parseMeterValue(expected);
+  const detectedValue = parseMeterValue(detected);
+  if (!Number.isFinite(expectedValue) || !Number.isFinite(detectedValue)) {
     return null;
   }
-  let mismatches = 0;
-  for (let i = 0; i < maxLength; i += 1) {
-    if ((expectedDigits[i] || '') !== (detectedDigits[i] || '')) {
-      mismatches += 1;
-    }
-  }
-  return clamp(1 - mismatches / maxLength, 0, 1);
+  return Math.abs(expectedValue - detectedValue);
 };
 
 const getSelectionLogs = () => {
@@ -111,7 +96,7 @@ const renderHistogram = (title, rows, total) => {
   return section;
 };
 
-const renderTestResults = (resultsEl, results, correct, total, histograms = {}) => {
+const renderTestResults = (resultsEl, results, total, histograms = {}) => {
   if (!resultsEl) {
     return;
   }
@@ -120,7 +105,7 @@ const renderTestResults = (resultsEl, results, correct, total, histograms = {}) 
 
   const table = document.createElement('table');
   const header = document.createElement('tr');
-  ['File', 'Expected', 'Detected', 'Value Match', 'Failure Reason', 'Result'].forEach((label) => {
+  ['File', 'Expected', 'Detected', 'Absolute Error', 'Failure Reason', 'Result'].forEach((label) => {
     const th = document.createElement('th');
     th.textContent = label;
     header.appendChild(th);
@@ -130,9 +115,9 @@ const renderTestResults = (resultsEl, results, correct, total, histograms = {}) 
   results.forEach((result) => {
     const row = document.createElement('tr');
     const statusClass = result.match ? 'pass' : 'fail';
-    const scoreDisplay = result.score !== null ? result.score.toFixed(2) : 'n/a';
+    const errorDisplay = Number.isFinite(result.absoluteError) ? String(result.absoluteError) : '—';
     const failureDisplay = result.match ? '—' : (result.failureReason || 'unknown');
-    [result.filename, result.expected, result.detected || '—', scoreDisplay, failureDisplay].forEach((value) => {
+    [result.filename, result.expected, result.detected || '—', errorDisplay, failureDisplay].forEach((value) => {
       const cell = document.createElement('td');
       cell.textContent = value;
       row.appendChild(cell);
@@ -148,7 +133,20 @@ const renderTestResults = (resultsEl, results, correct, total, histograms = {}) 
 
   const summary = document.createElement('p');
   summary.className = 'summary';
-  summary.textContent = `Accuracy: ${correct}/${total} (${Math.round((correct / total) * 100)}%)`;
+  const absoluteErrors = results
+    .map((result) => result.absoluteError)
+    .filter((value) => Number.isFinite(value));
+  const mae = absoluteErrors.length
+    ? absoluteErrors.reduce((sum, value) => sum + value, 0) / absoluteErrors.length
+    : null;
+  const maeText = mae === null
+    ? 'n/a'
+    : mae.toFixed(2);
+  const exactMatchCount = results.filter((result) => result.match).length;
+  const noReadCount = results.filter((result) => !result.detected).length;
+  const exactMatchRate = total ? ((exactMatchCount / total) * 100).toFixed(1) : '0.0';
+  const noReadRate = total ? ((noReadCount / total) * 100).toFixed(1) : '0.0';
+  summary.textContent = `MAE: ${maeText} (${absoluteErrors.length}/${total} reads) | Exact Match: ${exactMatchCount}/${total} (${exactMatchRate}%) | No-read: ${noReadCount}/${total} (${noReadRate}%)`;
   resultsEl.appendChild(summary);
 
   const failureRows = Array.isArray(histograms.failureReasons) ? histograms.failureReasons : [];
@@ -214,6 +212,9 @@ const createTestSetRunner = ({
       const results = [];
       let correct = 0;
       let rowErrors = 0;
+      let absoluteErrorSum = 0;
+      let absoluteErrorCount = 0;
+      let noReadCount = 0;
       const failureReasonHistogram = new Map();
       const rejectReasonHistogram = new Map();
 
@@ -223,13 +224,13 @@ const createTestSetRunner = ({
           setStatus(`Reading ${i + 1}/${rows.length}: ${row.filename}`);
           const imageResponse = await fetch(`assets/${row.filename}`, { cache: 'no-store' });
           if (!imageResponse.ok) {
-            const debugScore = computeDebugScore(row.value, '');
+            noReadCount += 1;
             results.push({
               filename: row.filename,
               expected: row.value,
               detected: '',
               match: false,
-              score: debugScore,
+              absoluteError: null,
               failureReason: 'missing-image'
             });
             incrementHistogram(failureReasonHistogram, 'missing-image');
@@ -249,7 +250,14 @@ const createTestSetRunner = ({
 
           const detected = result && result.value ? result.value : '';
           const match = detected === row.value;
-          const debugScore = computeDebugScore(row.value, detected);
+          const absoluteError = computeAbsoluteError(row.value, detected);
+          if (Number.isFinite(absoluteError)) {
+            absoluteErrorSum += absoluteError;
+            absoluteErrorCount += 1;
+          }
+          if (!detected) {
+            noReadCount += 1;
+          }
           const rejectReason = topRejectReason(selectionLog);
           const failureReason = match
             ? '—'
@@ -277,19 +285,19 @@ const createTestSetRunner = ({
             expected: row.value,
             detected,
             match,
-            score: debugScore,
+            absoluteError,
             failureReason
           });
         } catch (rowError) {
           rowErrors += 1;
           console.error(`Test row failed for ${row.filename}`, rowError);
-          const debugScore = computeDebugScore(row.value, '');
+          noReadCount += 1;
           results.push({
             filename: row.filename,
             expected: row.value,
             detected: '',
             match: false,
-            score: debugScore,
+            absoluteError: null,
             failureReason: `error:${formatError(rowError)}`
           });
           incrementHistogram(failureReasonHistogram, `error:${formatError(rowError)}`);
@@ -305,6 +313,12 @@ const createTestSetRunner = ({
         totalRows: rows.length,
         correct,
         failed: rows.length - correct,
+        exactMatchRate: rows.length ? correct / rows.length : 0,
+        noReadCount,
+        noReadRate: rows.length ? noReadCount / rows.length : 0,
+        mae: absoluteErrorCount ? absoluteErrorSum / absoluteErrorCount : null,
+        maeRows: absoluteErrorCount,
+        maeSum: absoluteErrorSum,
         failureReasons,
         failureTotal,
         rejectReasons,
@@ -314,12 +328,15 @@ const createTestSetRunner = ({
         window.__jarvisLastTestSetHistogram = runHistogram;
       }
 
+      const maeText = absoluteErrorCount ? (absoluteErrorSum / absoluteErrorCount).toFixed(2) : 'n/a';
+      const exactMatchRateText = rows.length ? ((correct / rows.length) * 100).toFixed(1) : '0.0';
+      const noReadRateText = rows.length ? ((noReadCount / rows.length) * 100).toFixed(1) : '0.0';
       setStatus(
         rowErrors
-          ? `Done. ${correct}/${rows.length} correct. ${rowErrors} row error(s); see console.`
-          : `Done. ${correct}/${rows.length} correct.`
+          ? `Done. MAE ${maeText}. Exact Match ${correct}/${rows.length} (${exactMatchRateText}%). No-read ${noReadCount}/${rows.length} (${noReadRateText}%). ${rowErrors} row error(s); see console.`
+          : `Done. MAE ${maeText}. Exact Match ${correct}/${rows.length} (${exactMatchRateText}%). No-read ${noReadCount}/${rows.length} (${noReadRateText}%).`
       );
-      renderTestResults(resultsEl, results, correct, rows.length, runHistogram);
+      renderTestResults(resultsEl, results, rows.length, runHistogram);
     } catch (error) {
       console.error(error);
       setStatus(`Test run failed: ${formatError(error)}.`);

@@ -350,7 +350,7 @@ const runUiTestSet = async () => {
             filename: cells[0],
             expected: cells[1],
             detected: cells[2] === '—' ? '' : cells[2],
-            valueMatch: cells[3],
+            absoluteError: cells[3] === '—' ? '' : cells[3],
             failureReason: cells[4] === '—' ? '' : cells[4],
             result: cells[5]
           });
@@ -459,6 +459,32 @@ const classifyReason = (reason) => {
   return text;
 };
 
+const parseMeterValue = (value) => {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (!digits) {
+    return null;
+  }
+  const parsed = Number.parseInt(digits, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const computeRowAbsoluteError = (row) => {
+  if (!row) {
+    return null;
+  }
+  const expectedValue = parseMeterValue(row.expected);
+  const detectedValue = parseMeterValue(row.detected);
+  if (!Number.isFinite(expectedValue) || !Number.isFinite(detectedValue)) {
+    return null;
+  }
+  return Math.abs(expectedValue - detectedValue);
+};
+
+const comparisonErrorValue = (row) => {
+  const absoluteError = computeRowAbsoluteError(row);
+  return Number.isFinite(absoluteError) ? absoluteError : Number.POSITIVE_INFINITY;
+};
+
 const buildFailureHistogram = (rows) => {
   const counts = new Map();
   for (const row of rows || []) {
@@ -475,33 +501,58 @@ const buildFailureHistogram = (rows) => {
 
 const computeMetrics = (rows) => {
   const total = rows.length;
-  let correct = 0;
+  let exactMatchCount = 0;
+  let noReadCount = 0;
+  let maeSum = 0;
+  let maeRows = 0;
   let mismatch = 0;
   let ocrNoDigits = 0;
   let noDetection = 0;
 
   for (const row of rows) {
+    const hasDetectedValue = Boolean(String(row.detected || '').trim());
+    if (!hasDetectedValue) {
+      noReadCount += 1;
+    }
+
     if (row.result === 'Pass') {
-      correct += 1;
-      continue;
+      exactMatchCount += 1;
+    } else {
+      const reasonClass = classifyReason(row.failureReason);
+      if (reasonClass === 'mismatch') {
+        mismatch += 1;
+      }
+      if (reasonClass === 'ocr-no-digits') {
+        ocrNoDigits += 1;
+      }
+      if (reasonClass === 'no-detection') {
+        noDetection += 1;
+      }
     }
-    const reasonClass = classifyReason(row.failureReason);
-    if (reasonClass === 'mismatch') {
-      mismatch += 1;
-    }
-    if (reasonClass === 'ocr-no-digits') {
-      ocrNoDigits += 1;
-    }
-    if (reasonClass === 'no-detection') {
-      noDetection += 1;
+
+    const absoluteError = computeRowAbsoluteError(row);
+    if (Number.isFinite(absoluteError)) {
+      maeSum += absoluteError;
+      maeRows += 1;
     }
   }
 
+  const mae = maeRows ? maeSum / maeRows : null;
+  const exactMatchRate = total ? exactMatchCount / total : 0;
+  const noReadRate = total ? noReadCount / total : 0;
+
   return {
     total,
-    correct,
-    failed: total - correct,
-    accuracy: total ? correct / total : 0,
+    correct: exactMatchCount,
+    failed: total - exactMatchCount,
+    accuracy: exactMatchRate,
+    exactMatchCount,
+    exactMatchRate,
+    noReadCount,
+    noReadRate,
+    mae,
+    maeRows,
+    maeSum,
     mismatch,
     ocrNoDigits,
     noDetection,
@@ -510,6 +561,8 @@ const computeMetrics = (rows) => {
 };
 
 const formatPct = (value) => `${(value * 100).toFixed(1)}%`;
+const formatSigned = (value, digits = 3) => `${value >= 0 ? '+' : ''}${value.toFixed(digits)}`;
+const formatMae = (value) => (Number.isFinite(value) ? value.toFixed(2) : 'n/a');
 
 const markdownEscape = (value) => String(value || '').replace(/\|/g, '\\|');
 
@@ -532,23 +585,48 @@ const buildComparison = (baselineRun, challengerRun) => {
         detected: base.detected || '',
         failureReason: base.failureReason || '',
         result: base.result || '',
-        valueMatch: base.valueMatch || '',
+        absoluteError: base.absoluteError || '',
         topRejectReason: computeTopRejectReason(baseLog)
       } : null,
       challenger: next ? {
         detected: next.detected || '',
         failureReason: next.failureReason || '',
         result: next.result || '',
-        valueMatch: next.valueMatch || '',
+        absoluteError: next.absoluteError || '',
         topRejectReason: computeTopRejectReason(nextLog)
       } : null
     };
   });
 
-  const improved = rows.filter((row) => row.baseline && row.challenger
-    && row.baseline.result !== 'Pass' && row.challenger.result === 'Pass').length;
-  const regressed = rows.filter((row) => row.baseline && row.challenger
-    && row.baseline.result === 'Pass' && row.challenger.result !== 'Pass').length;
+  const EPSILON = 1e-9;
+  const improved = rows.filter((row) => {
+    if (!row.baseline || !row.challenger) {
+      return false;
+    }
+    const baselineError = comparisonErrorValue({
+      expected: row.expected,
+      detected: row.baseline.detected
+    });
+    const challengerError = comparisonErrorValue({
+      expected: row.expected,
+      detected: row.challenger.detected
+    });
+    return challengerError < baselineError - EPSILON;
+  }).length;
+  const regressed = rows.filter((row) => {
+    if (!row.baseline || !row.challenger) {
+      return false;
+    }
+    const baselineError = comparisonErrorValue({
+      expected: row.expected,
+      detected: row.baseline.detected
+    });
+    const challengerError = comparisonErrorValue({
+      expected: row.expected,
+      detected: row.challenger.detected
+    });
+    return challengerError > baselineError + EPSILON;
+  }).length;
 
   return {
     rows,
@@ -582,13 +660,15 @@ const renderMarkdownReport = ({
   lines.push('');
   lines.push('| Metric | Baseline | Challenger | Delta |');
   lines.push('| --- | ---: | ---: | ---: |');
-  lines.push(`| Correct | ${baselineMetrics.correct}/${baselineMetrics.total} | ${challengerMetrics.correct}/${challengerMetrics.total} | ${challengerMetrics.correct - baselineMetrics.correct} |`);
-  lines.push(`| Accuracy | ${formatPct(baselineMetrics.accuracy)} | ${formatPct(challengerMetrics.accuracy)} | ${(challengerMetrics.accuracy - baselineMetrics.accuracy >= 0 ? '+' : '')}${formatPct(challengerMetrics.accuracy - baselineMetrics.accuracy)} |`);
+  lines.push(`| MAE (lower is better) | ${formatMae(baselineMetrics.mae)} | ${formatMae(challengerMetrics.mae)} | ${Number.isFinite(baselineMetrics.mae) && Number.isFinite(challengerMetrics.mae) ? formatSigned(challengerMetrics.mae - baselineMetrics.mae, 2) : 'n/a'} |`);
+  lines.push(`| MAE rows | ${baselineMetrics.maeRows}/${baselineMetrics.total} | ${challengerMetrics.maeRows}/${challengerMetrics.total} | ${challengerMetrics.maeRows - baselineMetrics.maeRows} |`);
+  lines.push(`| Exact Match (guardrail) | ${baselineMetrics.exactMatchCount}/${baselineMetrics.total} (${formatPct(baselineMetrics.exactMatchRate)}) | ${challengerMetrics.exactMatchCount}/${challengerMetrics.total} (${formatPct(challengerMetrics.exactMatchRate)}) | ${formatSigned((challengerMetrics.exactMatchRate - baselineMetrics.exactMatchRate) * 100, 1)}% |`);
+  lines.push(`| No-read (guardrail, lower is better) | ${baselineMetrics.noReadCount}/${baselineMetrics.total} (${formatPct(baselineMetrics.noReadRate)}) | ${challengerMetrics.noReadCount}/${challengerMetrics.total} (${formatPct(challengerMetrics.noReadRate)}) | ${formatSigned((challengerMetrics.noReadRate - baselineMetrics.noReadRate) * 100, 1)}% |`);
   lines.push(`| mismatch | ${baselineMetrics.mismatch} | ${challengerMetrics.mismatch} | ${challengerMetrics.mismatch - baselineMetrics.mismatch} |`);
   lines.push(`| ocr-no-digits | ${baselineMetrics.ocrNoDigits} | ${challengerMetrics.ocrNoDigits} | ${challengerMetrics.ocrNoDigits - baselineMetrics.ocrNoDigits} |`);
   lines.push(`| no-detection | ${baselineMetrics.noDetection} | ${challengerMetrics.noDetection} | ${challengerMetrics.noDetection - baselineMetrics.noDetection} |`);
-  lines.push(`| Improved images | - | ${improved} | - |`);
-  lines.push(`| Regressed images | - | ${regressed} | - |`);
+  lines.push(`| Improved images (by absolute error) | - | ${improved} | - |`);
+  lines.push(`| Regressed images (by absolute error) | - | ${regressed} | - |`);
   lines.push('');
   lines.push('## Failure Histogram');
   lines.push('');
@@ -610,19 +690,29 @@ const renderMarkdownReport = ({
   lines.push('');
   lines.push('## Per-image Diff');
   lines.push('');
-  lines.push('| File | Expected | Baseline detected | Challenger detected | Baseline reason | Challenger reason | Baseline reject | Challenger reject | Baseline stage5 | Challenger stage5 | Baseline stage6 | Challenger stage6 |');
-  lines.push('| --- | ---: | ---: | ---: | --- | --- | --- | --- | --- | --- | --- | --- |');
+  lines.push('| File | Expected | Baseline detected | Challenger detected | Baseline abs error | Challenger abs error | Baseline reason | Challenger reason | Baseline reject | Challenger reject | Baseline stage5 | Challenger stage5 | Baseline stage6 | Challenger stage6 |');
+  lines.push('| --- | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | --- | --- | --- |');
 
   comparisonRows.forEach((row) => {
     const base = row.baseline || {};
     const next = row.challenger || {};
     const baseStage = baselineRun.stageIndex.get(row.filename) || {};
     const nextStage = challengerRun.stageIndex.get(row.filename) || {};
+    const baseAbsoluteError = computeRowAbsoluteError({
+      expected: row.expected,
+      detected: base.detected || ''
+    });
+    const nextAbsoluteError = computeRowAbsoluteError({
+      expected: row.expected,
+      detected: next.detected || ''
+    });
     const cols = [
       markdownEscape(row.filename),
       markdownEscape(row.expected),
       markdownEscape(base.detected || '—'),
       markdownEscape(next.detected || '—'),
+      markdownEscape(Number.isFinite(baseAbsoluteError) ? String(baseAbsoluteError) : '—'),
+      markdownEscape(Number.isFinite(nextAbsoluteError) ? String(nextAbsoluteError) : '—'),
       markdownEscape(base.failureReason || '—'),
       markdownEscape(next.failureReason || '—'),
       markdownEscape(base.topRejectReason || '—'),
@@ -762,8 +852,20 @@ const run = async () => {
       fallbackEnabled: ENABLE_DIGIT_FALLBACK,
       markdownReport: toRelativeFromRoot(mdPath),
       jsonReport: toRelativeFromRoot(jsonPath),
-      baseline: `${baselineMetrics.correct}/${baselineMetrics.total}`,
-      challenger: `${challengerMetrics.correct}/${challengerMetrics.total}`,
+      baselinePrimary: {
+        mae: Number.isFinite(baselineMetrics.mae) ? Number(baselineMetrics.mae.toFixed(4)) : null,
+        maeRows: baselineMetrics.maeRows
+      },
+      challengerPrimary: {
+        mae: Number.isFinite(challengerMetrics.mae) ? Number(challengerMetrics.mae.toFixed(4)) : null,
+        maeRows: challengerMetrics.maeRows
+      },
+      guardrails: {
+        baselineExactMatchRate: Number((baselineMetrics.exactMatchRate * 100).toFixed(2)),
+        challengerExactMatchRate: Number((challengerMetrics.exactMatchRate * 100).toFixed(2)),
+        baselineNoReadRate: Number((baselineMetrics.noReadRate * 100).toFixed(2)),
+        challengerNoReadRate: Number((challengerMetrics.noReadRate * 100).toFixed(2))
+      },
       baselineFailureMix: {
         mismatch: baselineMetrics.mismatch,
         ocrNoDigits: baselineMetrics.ocrNoDigits,

@@ -14,7 +14,7 @@ Jarvis is a lightweight personal assistant web app. The first module helps you r
 - OCR from a neural-ROI crop with conservative acceptance (unsupported OCR guesses are rejected to manual input).
 - Auto-fill an email draft with the current date in Italian format.
 - Open a Gmail draft or use a mailto fallback.
-- Run a built-in OCR test set table with `Detected`, `Value Match`, and `Failure Reason` columns.
+- Run a built-in OCR test set table with `Detected`, `Absolute Error`, and `Failure Reason` columns plus MAE/exact-match/no-read summary stats.
 
 ## Local Development
 1. Ensure Python 3 and Node.js are installed.
