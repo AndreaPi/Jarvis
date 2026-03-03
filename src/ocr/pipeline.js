@@ -11,7 +11,7 @@ import {
   normalizeAngle
 } from './canvas-utils.js';
 import { buildDigitCandidates } from './alignment.js';
-import { getWorker, selectBestReading } from './recognition.js';
+import { getWorker, selectBestReading, readDigitsByCells } from './recognition.js';
 import { predictDigitCells } from './digit-classifier.js';
 import { detectNeuralRoi } from './neural-roi.js';
 
@@ -83,6 +83,9 @@ const formatNeuralRoiMissReason = (probe) => {
 };
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+const isEdgeSourceLabel = (sourceLabel) => (
+  typeof sourceLabel === 'string' && sourceLabel.includes('-edge')
+);
 
 const recordSelectionEvidence = (
   evidenceMap,
@@ -107,7 +110,13 @@ const recordSelectionEvidence = (
     totalScore: 0,
     bestScore: -1,
     bestConfidence: 0,
-    sources: new Set()
+    sources: new Set(),
+    edgeHits: 0,
+    edgeTopHits: 0,
+    nonEdgeHits: 0,
+    nonEdgeTopHits: 0,
+    edgeSources: new Set(),
+    nonEdgeSources: new Set()
   };
 
   existing.hits += 1;
@@ -117,6 +126,19 @@ const recordSelectionEvidence = (
   }
   if (sourceLabel) {
     existing.sources.add(sourceLabel);
+    if (isEdgeSourceLabel(sourceLabel)) {
+      existing.edgeHits += 1;
+      existing.edgeSources.add(sourceLabel);
+      if (isTopPick) {
+        existing.edgeTopHits += 1;
+      }
+    } else {
+      existing.nonEdgeHits += 1;
+      existing.nonEdgeSources.add(sourceLabel);
+      if (isTopPick) {
+        existing.nonEdgeTopHits += 1;
+      }
+    }
   }
   if (score > existing.bestScore) {
     existing.bestScore = score;
@@ -134,6 +156,8 @@ const rankSelectionEvidence = (evidenceMap) => {
       const averageScore = entry.hits ? entry.totalScore / entry.hits : 0;
       const consensusBoost = clamp((entry.topHits - 1) * 0.12 + (entry.hits - entry.topHits) * 0.04, 0, 0.3);
       const sourceSpreadBoost = clamp((entry.sources.size - 1) * 0.02, 0, 0.08);
+      const nonEdgeSupportBoost = clamp(entry.nonEdgeHits * 0.03 + entry.nonEdgeTopHits * 0.04, 0, 0.12);
+      const edgeOnlyPenalty = entry.edgeHits > 0 && entry.nonEdgeHits === 0 ? 0.07 : 0;
       const preferredLengthBoost = entry.value.length === OCR_CONFIG.preferredDigits ? 0.05 : -0.08;
       const leadingZeroPenalty = (
         entry.value.length === OCR_CONFIG.preferredDigits
@@ -144,7 +168,9 @@ const rankSelectionEvidence = (evidenceMap) => {
           + averageScore * 0.27
           + consensusBoost
           + sourceSpreadBoost
+          + nonEdgeSupportBoost
           + preferredLengthBoost
+          - edgeOnlyPenalty
           - leadingZeroPenalty,
         0,
         0.99
@@ -154,7 +180,13 @@ const rankSelectionEvidence = (evidenceMap) => {
         ...entry,
         averageScore,
         score,
-        sourceCount: entry.sources.size
+        sourceCount: entry.sources.size,
+        edgeHits: entry.edgeHits,
+        edgeTopHits: entry.edgeTopHits,
+        nonEdgeHits: entry.nonEdgeHits,
+        nonEdgeTopHits: entry.nonEdgeTopHits,
+        edgeSourceCount: entry.edgeSources.size,
+        nonEdgeSourceCount: entry.nonEdgeSources.size
       };
     })
     .sort((a, b) => b.score - a.score || b.topHits - a.topHits || b.hits - a.hits || b.bestScore - a.bestScore);
@@ -230,6 +262,7 @@ const finalizeSelection = ({ debugLabel, roiUsed, bestResult, evidenceMap, branc
         branch: carryMetadata && carryMetadata.branch ? carryMetadata.branch : branchUsed,
         method: carryMetadata && carryMetadata.method ? carryMetadata.method : null,
         sourceLabel: carryMetadata && carryMetadata.sourceLabel ? carryMetadata.sourceLabel : null,
+        preprocessMode: carryMetadata && carryMetadata.preprocessMode ? carryMetadata.preprocessMode : null,
         angle: carryMetadata && Number.isFinite(carryMetadata.angle) ? carryMetadata.angle : null,
         cellDigits: carryMetadata && Array.isArray(carryMetadata.cellDigits) ? carryMetadata.cellDigits : null,
         cellConfidences: carryMetadata ? serializeCellConfidences(carryMetadata.cellConfidences) : null
@@ -248,6 +281,26 @@ const finalizeSelection = ({ debugLabel, roiUsed, bestResult, evidenceMap, branc
     }
   }
 
+  if (finalResult && isEdgeSourceLabel(finalResult.sourceLabel)) {
+    const support = rankedEvidence.find((entry) => entry.value === finalResult.value) || null;
+    const hasNonEdgeSupport = !!support && (
+      support.nonEdgeHits >= 1
+      || support.nonEdgeTopHits >= 1
+      || support.nonEdgeSourceCount >= 1
+    );
+    const cellConfidences = Array.isArray(finalResult.cellConfidences)
+      ? finalResult.cellConfidences.filter((value) => Number.isFinite(value))
+      : [];
+    const hasStrongCellEvidence = (
+      cellConfidences.length >= OCR_CONFIG.digitCellCount
+      && (cellConfidences.reduce((sum, value) => sum + value, 0) / cellConfidences.length) >= 90
+      && Math.min(...cellConfidences) >= 82
+    );
+    if (!hasNonEdgeSupport && !hasStrongCellEvidence) {
+      finalResult = null;
+    }
+  }
+
   pushSelectionLog({
     image: debugLabel,
     roiUsed,
@@ -260,6 +313,7 @@ const finalizeSelection = ({ debugLabel, roiUsed, bestResult, evidenceMap, branc
       branch: finalResult.branch || branchUsed,
       method: finalResult.method || null,
       sourceLabel: finalResult.sourceLabel || null,
+      preprocessMode: finalResult.preprocessMode || null,
       angle: Number.isFinite(finalResult.angle) ? finalResult.angle : null,
       cellDigits: Array.isArray(finalResult.cellDigits) ? finalResult.cellDigits : null,
       cellConfidences: serializeCellConfidences(finalResult.cellConfidences)
@@ -286,6 +340,26 @@ const extractCandidateAngle = (label) => {
     }
   }
   return Number.NaN;
+};
+
+const addWinningCandidateDebugStage = (debugSession, candidates, finalSelection) => {
+  if (!debugSession || !Array.isArray(candidates) || !finalSelection || !finalSelection.sourceLabel) {
+    return;
+  }
+  const selectedCandidate = candidates.find((candidate) => (
+    candidate
+    && candidate.label
+    && candidate.label === finalSelection.sourceLabel
+    && candidate.canvas
+  ));
+  if (!selectedCandidate) {
+    return;
+  }
+  const mode = typeof finalSelection.preprocessMode === 'string' ? finalSelection.preprocessMode : 'raw';
+  const preview = mode !== 'raw'
+    ? preprocessCanvas(selectedCandidate.canvas, mode)
+    : selectedCandidate.canvas;
+  addDebugStage(debugSession, '6. OCR input candidate', preview);
 };
 
 const isPreferredLengthReading = (reading) => {
@@ -437,6 +511,87 @@ const evaluateCandidateBranch = async ({
     return true;
   };
 
+  const verifyEdgeWordPassCandidate = async ({ candidate, mode, reading }) => {
+    if (!reading || !candidate || !candidate.label || mode !== 'raw' || !candidate.label.includes('-edge')) {
+      return {
+        reading,
+        method: 'word-pass'
+      };
+    }
+
+    const verified = await readDigitsByCells(worker, candidate.canvas, null, {
+      roiMode: true,
+      onReject: (detail) => {
+        recordReject('edge-word-pass-cell-reject', {
+          stage: 'word-pass',
+          sourceLabel: candidate.label,
+          mode,
+          reason: detail && detail.reason ? detail.reason : null
+        });
+      }
+    });
+
+    if (!verified || !isPreferredLengthReading(verified)) {
+      recordReject('edge-word-pass-unverified', {
+        stage: 'word-pass',
+        sourceLabel: candidate.label,
+        mode,
+        value: reading.value || null
+      });
+      return {
+        reading: null,
+        method: 'word-pass'
+      };
+    }
+
+    if (verified.value !== reading.value) {
+      const wordDigits = String(reading.value || '').replace(/\D/g, '');
+      const cellDigits = String(verified.value || '').replace(/\D/g, '');
+      const wordUniqueDigits = new Set(wordDigits.split('').filter(Boolean)).size;
+      const cellUniqueDigits = new Set(cellDigits.split('').filter(Boolean)).size;
+      if (cellUniqueDigits === 1 && wordUniqueDigits > 1) {
+        recordReject('edge-word-pass-cell-collapse', {
+          stage: 'word-pass',
+          sourceLabel: candidate.label,
+          mode,
+          wordPassValue: reading.value || null,
+          cellValue: verified.value || null
+        });
+        return {
+          reading: {
+            ...reading,
+            preprocessMode: mode
+          },
+          method: 'word-pass'
+        };
+      }
+      recordReject('edge-word-pass-cell-mismatch', {
+        stage: 'word-pass',
+        sourceLabel: candidate.label,
+        mode,
+        wordPassValue: reading.value || null,
+        cellValue: verified.value || null
+      });
+      return {
+        reading: {
+          ...verified,
+          preprocessMode: mode
+        },
+        method: 'cell-verify'
+      };
+    }
+
+    return {
+      reading: {
+        ...reading,
+        preprocessMode: mode,
+        cellDigits: Array.isArray(verified.cellDigits) ? verified.cellDigits : (reading.cellDigits || null),
+        cellConfidences: Array.isArray(verified.cellConfidences) ? verified.cellConfidences : (reading.cellConfidences || null)
+      },
+      method: 'word-pass'
+    };
+  };
+
   const tryClassifierFallback = async () => {
     if (bestResult) {
       return null;
@@ -561,6 +716,7 @@ const evaluateCandidateBranch = async ({
         const { data } = await worker.recognize(processed);
         const candidateRawBest = selectBestReading(data, processed);
         let candidateBest = candidateRawBest;
+        let candidateMethod = 'word-pass';
         if (!candidateRawBest) {
           recordReject('ocr-no-digits', {
             stage: 'word-pass',
@@ -576,7 +732,19 @@ const evaluateCandidateBranch = async ({
           });
           candidateBest = null;
         }
-        candidateBest = applyReadingMetadata(candidateBest, candidate, 'word-pass');
+        if (candidateBest) {
+          const verified = await verifyEdgeWordPassCandidate({
+            candidate,
+            mode,
+            reading: {
+              ...candidateBest,
+              preprocessMode: mode
+            }
+          });
+          candidateBest = verified.reading;
+          candidateMethod = verified.method;
+        }
+        candidateBest = applyReadingMetadata(candidateBest, candidate, candidateMethod);
         if (candidateBest && (!bestResult || candidateBest.score > bestResult.score)) {
           bestResult = candidateBest;
         }
@@ -703,6 +871,7 @@ const runMeterOcr = async (file, setProgress) => {
       branchUsed: isPreferredLengthReading(roiBranch.bestResult) ? 'roi-accepted' : 'roi-uncertain',
       rejectSummary: roiBranch.rejectSummary || []
     });
+    addWinningCandidateDebugStage(debugSession, roiCandidates, finalSelection);
 
     if (setProgress) {
       if (finalSelection && finalSelection.value) {
