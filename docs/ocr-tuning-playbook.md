@@ -2,13 +2,14 @@
 
 This playbook documents the practical loop used to improve OCR quality in Jarvis.
 
-Current baseline (March 2, 2026, fallback `OFF`, historical exact-match snapshot):
+Current baseline notes (March 2, 2026, fallback `OFF`, historical exact-match snapshot):
 
 - Test set: `0/14` exact-match (`Correct`)
 - Pinned model (`roi-rotaug-e30-640.pt`): `mismatch` 6, `ocr-no-digits` 7, `no-detection` 1
 - Challenger (`roi.pt`): `mismatch` 4, `ocr-no-digits` 10, `no-detection` 0
 - Gated fallback experiment (`JARVIS_DIGIT_FALLBACK=1`) reduced `ocr-no-digits` but increased `mismatch` with no exact-match gain, so fallback remains disabled.
 - Evaluation now uses `MAE` as the primary promotion signal; exact-match and no-read rates are guardrails.
+- The active local test-set CSV now has `15` images; keep historical `0/14` snapshots only for trend context.
 
 ## Goals
 
@@ -89,7 +90,9 @@ Artifacts are saved to:
 The report includes:
 
 - Per-image `Detected`, `Failure Reason`, and top reject reason.
+- Per-image selected metadata (`sourceLabel`, `method`, `preprocessMode`) from `window.__jarvisOcrSelectionLogs`.
 - Side-by-side stage `5. detected strip crop` and `6. OCR input candidate`.
+- Stage `6` export uses the last `6. OCR input candidate` frame from each debug session.
 - Summary deltas for `MAE`, guardrail rates (`Exact Match`, `No-read`), `mismatch`, `ocr-no-digits`, and `no-detection`.
 
 ## Checkpoint Promotion Gates
@@ -148,7 +151,7 @@ Focus:
 
 - Balance strictness (avoid false positives) vs recall (avoid no-read).
 - Validate with histogram movement, not single-image anecdotes.
-- Active guardrail in current pipeline: word-pass support (`hits` / `topHits` vs `minWordPassHits`).
+- Active guardrails in current pipeline: word-pass support (`hits` / `topHits` vs `minWordPassHits`) plus edge-candidate corroboration/cell-strength checks.
 
 ### 4) ROI Sanity Gates (usually not primary blocker)
 

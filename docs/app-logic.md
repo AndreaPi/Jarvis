@@ -15,7 +15,7 @@ flowchart TD
   F --> G["Show miss in debug + ask manual entry"]
 
   E -- "Yes" --> H["Expand + crop ROI"]
-  H --> I["Build ROI candidates<br/>(rotations + edge crops)"]
+  H --> I["Build ROI candidates<br/>(rotations + optional edge crops)"]
   I --> J{"Candidates available?"}
   J -- "No" --> K["Ask manual entry"]
   J -- "Yes" --> L["Word-pass OCR per candidate<br/>(SINGLE_WORD, digits only)"]
@@ -34,7 +34,7 @@ flowchart TD
   P -- "Yes" --> Q["Return reading + fill UI input"]
   P -- "No" --> R["Return null + ask manual entry"]
 
-  O --> S["Push selection log<br/>window.__jarvisOcrSelectionLogs"]
+  O --> S["Push selection log<br/>window.__jarvisOcrSelectionLogs<br/>(includes selected source/method/mode)"]
   S --> T["Run test set => failure/reject histograms"]
 ```
 
@@ -54,11 +54,13 @@ flowchart TD
    - Sparse scan is attempted if no word-pass result is available.
    - Optional classifier fallback runs only when enabled and the branch has `ocr-no-digits` rejects.
    - `finalizeSelection` ranks evidence across OCR passes and applies the active word-pass support guardrail (`hits` / `topHits` vs `minWordPassHits`) before returning a value.
+   - Edge-only winners are rejected unless corroborated by non-edge evidence or very strong per-cell confidence.
    - Default config keeps classifier fallback disabled (`digitClassifier.enabled=false`) because current benchmark shows no MAE gain without exact-match/no-read guardrail safety.
 
 ## What Gets Logged
 
 - Per-image selection logs are appended to `window.__jarvisOcrSelectionLogs`.
+- `selected` metadata includes `sourceLabel`, `method`, and `preprocessMode` for each accepted reading.
 - The test-set runner reads those logs to build:
   - `Failure Reason` values (`mismatch`, `ocr-no-digits`, etc.)
   - Reject histograms from OCR branch reject reasons.

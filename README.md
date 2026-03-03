@@ -107,6 +107,7 @@ npm run benchmark:roi-diff
 ```
 
 Report artifacts are written under `output/roi-checkpoint-diff/<timestamp>/`.
+Per-image diff tables include selected OCR metadata (`sourceLabel`, `method`, `preprocessMode`) and stage `6` exports use the last `6. OCR input candidate` frame from each debug session.
 To benchmark with digit-classifier fallback enabled (gated to `ocr-no-digits`), run:
 
 ```bash
@@ -130,8 +131,9 @@ CI runs these tests on every pull request and on pushes to `master`.
 - OCR runs fully in the browser using Tesseract.js.
 - OCR now relies on neural ROI detection; if the backend is unavailable or ROI fails, the app asks for manual reading input.
 - ROI word-pass defaults to raw strip input; stage `6. OCR input candidate` mirrors the configured OCR input mode.
+- Edge-derived ROI strip candidates are enabled by default and can be toggled with `OCR_CONFIG.roiDeterministic.useEdgeCandidates`.
 - Digit decoding can optionally use a backend classifier (`src/ocr/config.js` -> `digitClassifier.enabled`), which is `false` by default.
-- The selection layer is fail-safe: unsupported single-hit values are dropped instead of auto-filled.
+- The selection layer is fail-safe: isolated edge-only single hits are rejected unless independently corroborated.
 - Use the UI `Run test set` action plus `npm run test:e2e` for OCR regressions before and after tuning.
 - The Gmail flow opens a draft; you always review and send manually.
 

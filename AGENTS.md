@@ -73,18 +73,20 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
 - Test-set table includes `Detected`, `Absolute Error`, `Failure Reason`, and `Result`.
 - Frontend OCR branch evaluation is strip-only (word-pass + sparse scan); the 4-cell refine stage is removed from the active pipeline.
 - ROI word-pass defaults to raw candidate input (`roiDeterministic.wordPassModes: ['raw']`); debug stage `6. OCR input candidate` mirrors this mode.
-- Single-hit strip reads are currently allowed via `roiDeterministic.minWordPassHits: 1`.
-- Current local benchmark set has `14` images.
-- Latest checkpoint comparison (March 2, 2026, fallback `OFF`):
+- `roiDeterministic.minWordPassHits` is `1`, but isolated edge-only single hits are rejected unless corroborated by non-edge evidence or very strong per-cell confidence.
+- Edge-derived candidate generation is toggleable via `roiDeterministic.useEdgeCandidates` (default `true`) for controlled A/B experiments.
+- Current local benchmark set has `15` images.
+- Historical checkpoint comparison (March 2, 2026, fallback `OFF`, 14-image snapshot):
   - `roi-rotaug-e30-640.pt` (default pinned): exact-match `0/14`, failure mix `ocr-no-digits` (7), `mismatch` (6), `no-detection` (1).
   - `roi.pt` (challenger): exact-match `0/14`, failure mix `ocr-no-digits` (10), `mismatch` (4), `no-detection` (0).
-- Automated diff workflow is available via `npm run benchmark:roi-diff` (recent artifacts: `output/roi-checkpoint-diff/20260302-083324-fallback-off/roi-diff-report.md`, `output/roi-checkpoint-diff/20260302-083529-fallback-on/roi-diff-report.md`).
+- Automated diff workflow is available via `npm run benchmark:roi-diff` (recent artifacts: `output/roi-checkpoint-diff/20260303-194206-fallback-off/roi-diff-report.md`).
 - Gated digit-classifier fallback is implemented in pipeline but remains disabled by default (`digitClassifier.enabled: false`).
-- Fallback benchmark (March 2, 2026):
+- Historical fallback benchmark (March 2, 2026, 14-image snapshot):
   - Fallback `OFF` (`output/roi-checkpoint-diff/20260302-083324-fallback-off`): baseline `mismatch` 6 / `ocr-no-digits` 7; challenger `mismatch` 4 / `ocr-no-digits` 10.
   - Fallback `ON` (`output/roi-checkpoint-diff/20260302-083529-fallback-on`): baseline `mismatch` 10 / `ocr-no-digits` 3; challenger `mismatch` 13 / `ocr-no-digits` 1.
   - Net: no exact-match gain (`0/14` stays `0/14`), with strong false-positive shift (`ocr-no-digits` -> `mismatch`), so fallback stays disabled.
 - Promotion and rollback decisions should now use `MAE` from `roi-diff-report` as the primary signal, with exact-match and no-read as guardrails.
+- ROI diff reports now include per-image selected metadata columns (`sourceLabel`, `method`, `preprocessMode`) and explicitly export the last stage `6. OCR input candidate` snapshot.
 
 ## Next TODOs
 

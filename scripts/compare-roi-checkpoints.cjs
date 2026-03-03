@@ -386,6 +386,20 @@ const exportStageImages = async (sessions, runOutputDir, runId) => {
   await fsp.mkdir(stageDir, { recursive: true });
   const stageIndex = new Map();
 
+  const exportStage = async (stage, stageSlug, nameBase) => {
+    if (!stage || !stage.dataUrl) {
+      return null;
+    }
+    const parsed = parseDataUrl(stage.dataUrl);
+    if (!parsed) {
+      return null;
+    }
+    const fileName = `${nameBase}_${stageSlug}_${runId}.${parsed.extension}`;
+    const absPath = path.join(stageDir, fileName);
+    await fsp.writeFile(absPath, parsed.buffer);
+    return toRelativeFromRoot(absPath);
+  };
+
   for (const session of sessions || []) {
     const label = String(session && session.label ? session.label : '').trim();
     if (!label) {
@@ -394,26 +408,17 @@ const exportStageImages = async (sessions, runOutputDir, runId) => {
     const key = label;
     const nameBase = sanitizeFileToken(stripFileExt(label));
     const stages = Array.isArray(session.stages) ? session.stages : [];
-    const wanted = stages.filter((stage) => stage && (
-      stage.name === STAGE_NAMES.strip
-      || stage.name === STAGE_NAMES.ocr
-    ));
     const entry = {};
-    for (const stage of wanted) {
-      const parsed = parseDataUrl(stage.dataUrl);
-      if (!parsed) {
-        continue;
-      }
-      const stageSlug = stage.name === STAGE_NAMES.strip ? 'stage5_strip' : 'stage6_ocr';
-      const fileName = `${nameBase}_${stageSlug}_${runId}.${parsed.extension}`;
-      const absPath = path.join(stageDir, fileName);
-      await fsp.writeFile(absPath, parsed.buffer);
-      const relPath = toRelativeFromRoot(absPath);
-      if (stage.name === STAGE_NAMES.strip) {
-        entry.stage5 = relPath;
-      } else if (stage.name === STAGE_NAMES.ocr) {
-        entry.stage6 = relPath;
-      }
+    const stripStage = stages.find((stage) => stage && stage.name === STAGE_NAMES.strip) || null;
+    const ocrStages = stages.filter((stage) => stage && stage.name === STAGE_NAMES.ocr);
+    const lastOcrStage = ocrStages.length ? ocrStages[ocrStages.length - 1] : null;
+    const stripRelPath = await exportStage(stripStage, 'stage5_strip', nameBase);
+    const ocrRelPath = await exportStage(lastOcrStage, 'stage6_ocr', nameBase);
+    if (stripRelPath) {
+      entry.stage5 = stripRelPath;
+    }
+    if (ocrRelPath) {
+      entry.stage6 = ocrRelPath;
     }
     stageIndex.set(key, entry);
   }
@@ -565,6 +570,23 @@ const formatSigned = (value, digits = 3) => `${value >= 0 ? '+' : ''}${value.toF
 const formatMae = (value) => (Number.isFinite(value) ? value.toFixed(2) : 'n/a');
 
 const markdownEscape = (value) => String(value || '').replace(/\|/g, '\\|');
+const resolveSelectedMetadata = (selectionLog) => {
+  const selected = selectionLog && selectionLog.selected && typeof selectionLog.selected === 'object'
+    ? selectionLog.selected
+    : null;
+  if (!selected) {
+    return {
+      selectedSourceLabel: null,
+      selectedMethod: null,
+      selectedPreprocessMode: null
+    };
+  }
+  return {
+    selectedSourceLabel: selected.sourceLabel ? String(selected.sourceLabel) : null,
+    selectedMethod: selected.method ? String(selected.method) : null,
+    selectedPreprocessMode: selected.preprocessMode ? String(selected.preprocessMode) : null
+  };
+};
 
 const buildComparison = (baselineRun, challengerRun) => {
   const baselineRows = rowsByFilename(baselineRun.rows);
@@ -586,14 +608,16 @@ const buildComparison = (baselineRun, challengerRun) => {
         failureReason: base.failureReason || '',
         result: base.result || '',
         absoluteError: base.absoluteError || '',
-        topRejectReason: computeTopRejectReason(baseLog)
+        topRejectReason: computeTopRejectReason(baseLog),
+        ...resolveSelectedMetadata(baseLog)
       } : null,
       challenger: next ? {
         detected: next.detected || '',
         failureReason: next.failureReason || '',
         result: next.result || '',
         absoluteError: next.absoluteError || '',
-        topRejectReason: computeTopRejectReason(nextLog)
+        topRejectReason: computeTopRejectReason(nextLog),
+        ...resolveSelectedMetadata(nextLog)
       } : null
     };
   });
@@ -690,8 +714,8 @@ const renderMarkdownReport = ({
   lines.push('');
   lines.push('## Per-image Diff');
   lines.push('');
-  lines.push('| File | Expected | Baseline detected | Challenger detected | Baseline abs error | Challenger abs error | Baseline reason | Challenger reason | Baseline reject | Challenger reject | Baseline stage5 | Challenger stage5 | Baseline stage6 | Challenger stage6 |');
-  lines.push('| --- | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | --- | --- | --- |');
+  lines.push('| File | Expected | Baseline detected | Challenger detected | Baseline abs error | Challenger abs error | Baseline reason | Challenger reason | Baseline reject | Challenger reject | Baseline selected source | Challenger selected source | Baseline selected method | Challenger selected method | Baseline selected preprocess | Challenger selected preprocess | Baseline stage5 | Challenger stage5 | Baseline stage6 | Challenger stage6 |');
+  lines.push('| --- | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |');
 
   comparisonRows.forEach((row) => {
     const base = row.baseline || {};
@@ -717,6 +741,12 @@ const renderMarkdownReport = ({
       markdownEscape(next.failureReason || '—'),
       markdownEscape(base.topRejectReason || '—'),
       markdownEscape(next.topRejectReason || '—'),
+      markdownEscape(base.selectedSourceLabel || '—'),
+      markdownEscape(next.selectedSourceLabel || '—'),
+      markdownEscape(base.selectedMethod || '—'),
+      markdownEscape(next.selectedMethod || '—'),
+      markdownEscape(base.selectedPreprocessMode || '—'),
+      markdownEscape(next.selectedPreprocessMode || '—'),
       markdownEscape(baseStage.stage5 || '—'),
       markdownEscape(nextStage.stage5 || '—'),
       markdownEscape(baseStage.stage6 || '—'),
@@ -729,6 +759,8 @@ const renderMarkdownReport = ({
   lines.push('## Notes');
   lines.push('');
   lines.push('- `topRejectReason` comes from each image selection log (`rejectSummary[0].reason`).');
+  lines.push('- `selected` columns come from each image selection log (`selected.sourceLabel`, `selected.method`, `selected.preprocessMode`).');
+  lines.push('- Stage `6. OCR input candidate` snapshot explicitly exports the last stage-6 frame from each debug session.');
   lines.push('- Stage snapshot paths are written relative to repository root and saved from debug overlay image data.');
   lines.push('');
 
