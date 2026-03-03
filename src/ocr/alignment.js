@@ -12,6 +12,7 @@ const buildNeuralRoiCandidates = (source, debugSession, addDebugStageFn = () => 
   const normalizeWidth = Number.isFinite(roiDeterministic.normalizeWidth)
     ? roiDeterministic.normalizeWidth
     : OCR_CONFIG.minScaleWidth;
+  const useEdgeCandidates = roiDeterministic.useEdgeCandidates !== false;
   const debugWordMode = Array.isArray(roiDeterministic.wordPassModes) && roiDeterministic.wordPassModes.length
     ? roiDeterministic.wordPassModes.find((mode) => mode === 'soft' || mode === 'binary' || mode === 'raw') || 'raw'
     : 'raw';
@@ -39,10 +40,12 @@ const buildNeuralRoiCandidates = (source, debugSession, addDebugStageFn = () => 
   angles.forEach((angle) => {
     const rotated = angle === 0 ? source : rotateCanvas(source, angle);
 
-    const edgeRect = findDigitWindowByEdges(rotated);
-    if (edgeRect) {
-      const edgeCrop = cropCanvas(rotated, edgeRect);
-      pushCandidate(edgeCrop, `roi-${angle}-edge`);
+    if (useEdgeCandidates) {
+      const edgeRect = findDigitWindowByEdges(rotated);
+      if (edgeRect) {
+        const edgeCrop = cropCanvas(rotated, edgeRect);
+        pushCandidate(edgeCrop, `roi-${angle}-edge`);
+      }
     }
 
     pushCandidate(rotated, `roi-${angle}-base`);

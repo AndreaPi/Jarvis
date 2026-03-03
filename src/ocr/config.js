@@ -36,7 +36,8 @@ const OCR_CONFIG = {
     maxStripAspect: 8.2,
     normalizeWidth: 520,
     deskewMaxAngle: 8,
-    deskewStep: 2
+    deskewStep: 2,
+    useEdgeCandidates: true
   },
   digitClassifier: {
     enabled: false,
