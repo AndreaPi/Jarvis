@@ -493,6 +493,11 @@ const readDigitsByCells = async (worker, source, setProgress, options = {}) => {
     const normalizeWidth = Number.isFinite(roiDeterministic.normalizeWidth) ? roiDeterministic.normalizeWidth : OCR_CONFIG.minScaleWidth;
     const orientationNormalized = normalizeRoiOrientation(canvas, tightenRatio);
     let normalized = orientationNormalized.canvas;
+    let majorAxisRotation = 0;
+    if (normalized && normalized.height > normalized.width) {
+      normalized = rotateCanvas(normalized, 90);
+      majorAxisRotation = 90;
+    }
     if (!hasValidCandidateGeometry(normalized, { mode: 'roi-initial' })) {
       return null;
     }
@@ -525,6 +530,10 @@ const readDigitsByCells = async (worker, source, setProgress, options = {}) => {
     }
 
     normalized = resizeCanvasWidth(normalized, normalizeWidth);
+    if (normalized && normalized.height > normalized.width) {
+      normalized = rotateCanvas(normalized, 90);
+      majorAxisRotation = normalizeAngle(majorAxisRotation + 90);
+    }
     if (!hasValidCandidateGeometry(normalized, { mode: 'roi-normalized' })) {
       return null;
     }
@@ -553,7 +562,8 @@ const readDigitsByCells = async (worker, source, setProgress, options = {}) => {
       canvas: normalized,
       deskewAngle: Number.isFinite(orientationNormalized.deskewAngle)
         ? orientationNormalized.deskewAngle
-        : 0
+        : 0,
+      majorAxisRotation
     };
   };
 
@@ -712,9 +722,12 @@ const readDigitsByCells = async (worker, source, setProgress, options = {}) => {
     if (!roiNormalized || !roiNormalized.canvas) {
       return null;
     }
+    const baseOrientation = Number.isFinite(roiNormalized.majorAxisRotation)
+      ? normalizeAngle(roiNormalized.majorAxisRotation)
+      : 0;
     const orientationVariants = [
-      { orientation: 0, canvas: roiNormalized.canvas },
-      { orientation: 180, canvas: rotateCanvas(roiNormalized.canvas, 180) }
+      { orientation: baseOrientation, canvas: roiNormalized.canvas },
+      { orientation: normalizeAngle(baseOrientation + 180), canvas: rotateCanvas(roiNormalized.canvas, 180) }
     ];
     let best = null;
 
