@@ -11,6 +11,15 @@ Current baseline notes (March 2, 2026, fallback `OFF`, historical exact-match sn
 - Evaluation now uses `MAE` as the primary promotion signal; exact-match and no-read rates are guardrails.
 - The active local test-set CSV now has `15` images; keep historical `0/14` snapshots only for trend context.
 
+Critical blocker note (March 4, 2026):
+
+- Digit-classifier training cells are currently unreliable due to strip orientation/cell-split issues in dataset export.
+- `build_digit_dataset.py` splits cells assuming left-to-right horizontal strips; vertical strips become thin non-digit slices.
+- Some horizontal strips are 180-deg inverted, so cell index to reading-digit assignment is reversed.
+- Concrete examples from manual QA:
+  - `meter_07012020_c3_4.png` appears as digit `1` in context.
+  - `meter_01122026_c2_0.png` is a thin register slice, not a usable digit crop.
+
 ## Goals
 
 1. Reduce `mismatch` (wrong 4-digit value returned).
