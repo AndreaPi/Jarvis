@@ -137,12 +137,40 @@
               </div>
               <p class="muted">Tip: open Gmail draft, review once more, then press send.</p>
             </section>
+
+            <section class="card qa-card" aria-labelledby="qa-title">
+              <div class="card-head">
+                <h3 id="qa-title">4. Debug the test set</h3>
+                <p class="muted">Runs the local assets test set and reports MAE, exact-match/no-read guardrails, and failure reasons.</p>
+              </div>
+              <div class="action-row">
+                <button class="ghost" id="run-test-btn" type="button">Run test set</button>
+                <p class="status" id="test-status">Test set idle.</p>
+              </div>
+              <div class="test-results" id="test-results"></div>
+              <section class="debug-panel" aria-labelledby="debug-title">
+                <div class="card-head">
+                  <h4 id="debug-title">Alignment debug overlay</h4>
+                  <p class="muted">Shows detected meter face, chosen rotation, detected digit strip, and final OCR input crop for each run.</p>
+                </div>
+                <div class="action-row">
+                  <label class="debug-toggle" for="debug-overlay-toggle">
+                    <input id="debug-overlay-toggle" type="checkbox" checked>
+                    Enable overlay capture
+                  </label>
+                  <button class="ghost" id="clear-debug-btn" type="button">Clear debug</button>
+                </div>
+                <div class="debug-results" id="debug-results">
+                  <p class="muted">No debug frames yet.</p>
+                </div>
+              </section>
+            </section>
           </div>
         </div>
       </section>
     </main>
 
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-    <script src="app.js"></script>
+    <script type="module" src="app.js"></script>
   </body>
 </html>

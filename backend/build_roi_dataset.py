@@ -1,0 +1,197 @@
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import shutil
+from pathlib import Path
+
+
+def parse_args() -> argparse.Namespace:
+  parser = argparse.ArgumentParser(
+    description="Build a YOLO dataset for digit_window ROI from assets + ROI manifest."
+  )
+  parser.add_argument(
+    "--csv",
+    default="../assets/meter_readings.csv",
+    help="Path to CSV with filename,value rows (relative to backend/ by default)."
+  )
+  parser.add_argument(
+    "--roi-json",
+    required=True,
+    help="Path to ROI JSON list (from browser extraction)."
+  )
+  parser.add_argument(
+    "--assets-dir",
+    default="../assets",
+    help="Directory containing source images (relative to backend/ by default)."
+  )
+  parser.add_argument(
+    "--out-dir",
+    default="data/roi_dataset",
+    help="Output dataset root directory (relative to backend/ by default)."
+  )
+  parser.add_argument(
+    "--preview-dir",
+    default="data/roi_dataset/previews",
+    help="Directory for visual QA previews (relative to backend/ by default)."
+  )
+  return parser.parse_args()
+
+
+def resolve(base_dir: Path, value: str) -> Path:
+  path = Path(value)
+  if path.is_absolute():
+    return path
+  return (base_dir / path).resolve()
+
+
+def read_rows(csv_path: Path) -> list[dict[str, str]]:
+  rows: list[dict[str, str]] = []
+  with csv_path.open("r", encoding="utf-8") as handle:
+    reader = csv.DictReader(handle)
+    for row in reader:
+      filename = (row.get("filename") or "").strip()
+      value = (row.get("value") or "").strip()
+      if filename and value:
+        rows.append({"filename": filename, "value": value})
+  return rows
+
+
+def read_roi_map(roi_json_path: Path) -> dict[str, dict]:
+  payload = json.loads(roi_json_path.read_text(encoding="utf-8"))
+  roi_map: dict[str, dict] = {}
+  for item in payload:
+    filename = item.get("filename")
+    rect_norm = item.get("rectNorm")
+    if not filename or not isinstance(rect_norm, dict):
+      continue
+    roi_map[str(filename)] = rect_norm
+  return roi_map
+
+
+def clamp01(value: float) -> float:
+  return max(0.0, min(1.0, value))
+
+
+def normalize_yolo(rect_norm: dict) -> tuple[float, float, float, float]:
+  x = float(rect_norm.get("x", 0))
+  y = float(rect_norm.get("y", 0))
+  width = float(rect_norm.get("width", 0))
+  height = float(rect_norm.get("height", 0))
+
+  x = clamp01(x)
+  y = clamp01(y)
+  width = clamp01(width)
+  height = clamp01(height)
+
+  if width <= 0 or height <= 0:
+    raise ValueError("Invalid ROI width/height in manifest.")
+
+  if x + width > 1:
+    width = max(0.001, 1 - x)
+  if y + height > 1:
+    height = max(0.001, 1 - y)
+
+  xc = clamp01(x + width * 0.5)
+  yc = clamp01(y + height * 0.5)
+  return xc, yc, width, height
+
+
+def split_for_index(index: int, total: int) -> str:
+  test_count = 1 if total >= 3 else 0
+  val_count = 1 if total >= 4 else 0
+  train_count = max(1, total - val_count - test_count)
+
+  if index < train_count:
+    return "train"
+  if index < train_count + val_count:
+    return "val"
+  return "test"
+
+
+def ensure_dataset_dirs(root: Path) -> None:
+  for split in ("train", "val", "test"):
+    (root / "images" / split).mkdir(parents=True, exist_ok=True)
+    (root / "labels" / split).mkdir(parents=True, exist_ok=True)
+
+
+def write_preview(preview_path: Path, image_path: Path, rect_norm: dict) -> None:
+  try:
+    from PIL import Image, ImageDraw
+  except ImportError:
+    return
+
+  with Image.open(image_path) as image:
+    width, height = image.size
+    x = clamp01(float(rect_norm.get("x", 0))) * width
+    y = clamp01(float(rect_norm.get("y", 0))) * height
+    w = clamp01(float(rect_norm.get("width", 0))) * width
+    h = clamp01(float(rect_norm.get("height", 0))) * height
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((x, y, x + w, y + h), outline=(0, 255, 255), width=max(2, width // 350))
+    preview_path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(preview_path)
+
+
+def main() -> None:
+  args = parse_args()
+  base_dir = Path(__file__).resolve().parent
+
+  csv_path = resolve(base_dir, args.csv)
+  roi_json_path = resolve(base_dir, args.roi_json)
+  assets_dir = resolve(base_dir, args.assets_dir)
+  out_dir = resolve(base_dir, args.out_dir)
+  preview_dir = resolve(base_dir, args.preview_dir)
+
+  if not csv_path.exists():
+    raise FileNotFoundError(f"CSV not found: {csv_path}")
+  if not roi_json_path.exists():
+    raise FileNotFoundError(f"ROI manifest not found: {roi_json_path}")
+  if not assets_dir.exists():
+    raise FileNotFoundError(f"Assets dir not found: {assets_dir}")
+
+  rows = read_rows(csv_path)
+  if not rows:
+    raise RuntimeError(f"No dataset rows found in CSV: {csv_path}")
+
+  roi_map = read_roi_map(roi_json_path)
+  ensure_dataset_dirs(out_dir)
+
+  created = []
+  for index, row in enumerate(rows):
+    filename = row["filename"]
+    source_image = assets_dir / filename
+    if not source_image.exists():
+      raise FileNotFoundError(f"Missing source image: {source_image}")
+    if filename not in roi_map:
+      raise KeyError(f"Missing ROI entry for {filename} in {roi_json_path}")
+
+    split = split_for_index(index, len(rows))
+    target_image = out_dir / "images" / split / filename
+    target_label = out_dir / "labels" / split / f"{Path(filename).stem}.txt"
+
+    shutil.copy2(source_image, target_image)
+
+    xc, yc, width, height = normalize_yolo(roi_map[filename])
+    target_label.write_text(f"0 {xc:.6f} {yc:.6f} {width:.6f} {height:.6f}\n", encoding="utf-8")
+
+    preview_path = preview_dir / f"{Path(filename).stem}_bbox.jpg"
+    write_preview(preview_path, source_image, roi_map[filename])
+    created.append((filename, split, target_image, target_label, preview_path))
+
+  manifest_target = out_dir / "roi_boxes.json"
+  shutil.copy2(roi_json_path, manifest_target)
+
+  split_counts = {"train": 0, "val": 0, "test": 0}
+  for _, split, *_ in created:
+    split_counts[split] += 1
+
+  print(f"Built ROI dataset at: {out_dir}")
+  print(f"Rows: {len(created)} (train={split_counts['train']}, val={split_counts['val']}, test={split_counts['test']})")
+  print(f"ROI manifest copied to: {manifest_target}")
+  print(f"Preview images: {preview_dir}")
+
+
+if __name__ == "__main__":
+  main()
