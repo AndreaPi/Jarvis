@@ -2,7 +2,6 @@ const path = require('path');
 const { test, expect } = require('@playwright/test');
 
 const METER_IMAGE_PATH = path.resolve(__dirname, '..', '..', 'assets', 'meter_02142026.JPEG');
-const TESSERACT_CDN_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 
 const noDetectionPayload = JSON.stringify({
   ok: false,
@@ -41,107 +40,63 @@ const tallRoiPayload = JSON.stringify({
   model: 'mock-roi'
 });
 
-const buildFailIfUsedTesseractStub = () => `
-(() => {
-  window.__jarvisCreateWorkerCalls = 0;
-  window.__jarvisRecognizeCalls = 0;
-  window.Tesseract = {
-    PSM: { SINGLE_WORD: 8, SPARSE_TEXT: 11, SINGLE_CHAR: 10 },
-    createWorker: async () => {
-      window.__jarvisCreateWorkerCalls += 1;
-      throw new Error('Tesseract worker should not run after neural ROI failure.');
-    }
-  };
-})();
-`;
+const buildDigitClassifierPayload = (digits, confidence = 0.96) => {
+  const normalized = Array.from({ length: 4 }, (_, index) => {
+    const value = digits[index] || '0';
+    return {
+      digit: String(value),
+      confidence,
+      accepted: true
+    };
+  });
 
-const buildSuccessTesseractStub = (digits) => `
-(() => {
-  const sequence = ${JSON.stringify(digits)};
-  const joined = sequence.join('');
-  window.__jarvisCreateWorkerCalls = 0;
-  window.__jarvisRecognizeCalls = 0;
-  window.Tesseract = {
-    PSM: { SINGLE_WORD: 8, SPARSE_TEXT: 11, SINGLE_CHAR: 10 },
-    createWorker: async () => {
-      window.__jarvisCreateWorkerCalls += 1;
-      return {
-        loadLanguage: async () => {},
-        initialize: async () => {},
-        setParameters: async () => {},
-        recognize: async () => {
-          window.__jarvisRecognizeCalls += 1;
-          return {
-            data: {
-              text: joined || '0',
-              confidence: 96,
-              symbols: sequence.map((digit) => ({ text: digit, confidence: 96 }))
-            }
-          };
-        }
-      };
-    }
-  };
-})();
-`;
+  return JSON.stringify({
+    ok: true,
+    model: 'mock-digit',
+    device: 'cpu',
+    predictions: normalized
+  });
+};
 
-const buildSingleHitWordPassStub = (digits) => `
-(() => {
-  const sequence = ${JSON.stringify(digits)};
-  const joined = sequence.join('');
-  window.__jarvisCreateWorkerCalls = 0;
-  window.__jarvisRecognizeCalls = 0;
-  let currentPsm = 8;
-  let servedWordPass = false;
-  window.Tesseract = {
-    PSM: { SINGLE_WORD: 8, SPARSE_TEXT: 11, SINGLE_CHAR: 10 },
-    createWorker: async () => {
-      window.__jarvisCreateWorkerCalls += 1;
-      return {
-        loadLanguage: async () => {},
-        initialize: async () => {},
-        setParameters: async (params = {}) => {
-          if (Number.isFinite(params.tessedit_pageseg_mode)) {
-            currentPsm = params.tessedit_pageseg_mode;
-          }
+const installDigitClassifierMock = async (page, options = {}) => {
+  const {
+    digits = ['0', '0', '0', '0'],
+    confidence = 0.96,
+    mode = 'success'
+  } = options;
+
+  let calls = 0;
+  await page.route('**/digit/predict-cells', async (route) => {
+    calls += 1;
+    if (mode === 'network-error') {
+      await route.abort('failed');
+      return;
+    }
+    if (mode === 'http-error') {
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        headers: {
+          'access-control-allow-origin': '*'
         },
-        recognize: async () => {
-          window.__jarvisRecognizeCalls += 1;
-          if (currentPsm === 8 && !servedWordPass) {
-            servedWordPass = true;
-            return {
-              data: {
-                text: joined || '0',
-                confidence: 97,
-                symbols: sequence.map((digit) => ({ text: digit, confidence: 97 }))
-              }
-            };
-          }
-          return {
-            data: {
-              text: '',
-              confidence: 0,
-              symbols: []
-            }
-          };
-        }
-      };
+        body: JSON.stringify({ ok: false, error: 'mock failure' })
+      });
+      return;
     }
-  };
-})();
-`;
 
-const installTesseractStub = async (page, scriptBody) => {
-  await page.route(TESSERACT_CDN_URL, async (route) => {
     await route.fulfill({
       status: 200,
-      contentType: 'application/javascript',
-      body: scriptBody,
+      contentType: 'application/json',
       headers: {
         'access-control-allow-origin': '*'
-      }
+      },
+      body: buildDigitClassifierPayload(digits, confidence)
     });
   });
+
+  return {
+    getCalls: () => calls
+  };
 };
 
 const openAppAndUploadImage = async (page) => {
@@ -182,7 +137,7 @@ const fulfillNoDetection = async (route) => {
 };
 
 test('asks for manual input when neural ROI returns no detection', async ({ page }) => {
-  await installTesseractStub(page, buildFailIfUsedTesseractStub());
+  const digitMock = await installDigitClassifierMock(page, { digits: ['9', '9', '9', '9'] });
   await page.route('**/roi/detect', fulfillNoDetection);
   await openAppAndUploadImage(page);
 
@@ -191,13 +146,11 @@ test('asks for manual input when neural ROI returns no detection', async ({ page
   const status = page.locator('#ocr-status');
   await expect(status).toContainText('Neural ROI failed (no-detection). Enter the measurement manually.');
   await expect(page.locator('#reading-input')).toHaveValue('');
-
-  const workerCalls = await page.evaluate(() => window.__jarvisCreateWorkerCalls);
-  expect(workerCalls).toBe(0);
+  expect(digitMock.getCalls()).toBe(0);
 });
 
 test('does not timeout on a 4.5s neural ROI response', async ({ page }) => {
-  await installTesseractStub(page, buildFailIfUsedTesseractStub());
+  const digitMock = await installDigitClassifierMock(page, { digits: ['9', '9', '9', '9'] });
   await page.route('**/roi/detect', async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 4500));
     await fulfillNoDetection(route);
@@ -211,10 +164,11 @@ test('does not timeout on a 4.5s neural ROI response', async ({ page }) => {
     timeout: 20_000
   });
   await expect(status).not.toContainText('timeout');
+  expect(digitMock.getCalls()).toBe(0);
 });
 
 test('asks for manual input when neural ROI endpoint is unreachable', async ({ page }) => {
-  await installTesseractStub(page, buildFailIfUsedTesseractStub());
+  const digitMock = await installDigitClassifierMock(page, { digits: ['9', '9', '9', '9'] });
   await page.route('**/roi/detect', async (route) => {
     await route.abort('failed');
   });
@@ -225,10 +179,11 @@ test('asks for manual input when neural ROI endpoint is unreachable', async ({ p
   await expect(page.locator('#ocr-status')).toContainText(
     'Neural ROI failed (network-error). Enter the measurement manually.'
   );
+  expect(digitMock.getCalls()).toBe(0);
 });
 
-test('completes with a detected reading when neural ROI succeeds', async ({ page }) => {
-  await installTesseractStub(page, buildSuccessTesseractStub(['2', '3', '1', '1']));
+test('completes with a detected reading when neural ROI and classifier succeed', async ({ page }) => {
+  const digitMock = await installDigitClassifierMock(page, { digits: ['2', '3', '1', '1'], confidence: 0.98 });
   await page.route('**/roi/detect', async (route) => {
     await route.fulfill({
       status: 200,
@@ -245,13 +200,11 @@ test('completes with a detected reading when neural ROI succeeds', async ({ page
 
   await expect(page.locator('#ocr-status')).toContainText('Reading detected: 2311. Review if needed.');
   await expect(page.locator('#reading-input')).toHaveValue('2311');
-
-  const workerCalls = await page.evaluate(() => window.__jarvisCreateWorkerCalls);
-  expect(workerCalls).toBeGreaterThan(0);
+  expect(digitMock.getCalls()).toBeGreaterThan(0);
 });
 
-test('rejects an isolated edge word-pass hit in strip-only mode', async ({ page }) => {
-  await installTesseractStub(page, buildSingleHitWordPassStub(['8', '5', '8', '8']));
+test('asks for manual input when classifier endpoint fails after ROI success', async ({ page }) => {
+  await installDigitClassifierMock(page, { mode: 'network-error' });
   await page.route('**/roi/detect', async (route) => {
     await route.fulfill({
       status: 200,
@@ -271,7 +224,7 @@ test('rejects an isolated edge word-pass hit in strip-only mode', async ({ page 
 });
 
 test('keeps ROI debug crop geometry stable for narrow neural ROI boxes', async ({ page }) => {
-  await installTesseractStub(page, buildSuccessTesseractStub(['2', '3', '1', '2']));
+  await installDigitClassifierMock(page, { digits: ['2', '3', '1', '2'], confidence: 0.97 });
   await page.route('**/roi/detect', async (route) => {
     await route.fulfill({
       status: 200,

@@ -4,16 +4,13 @@ import {
   loadImageBitmap,
   drawImageToCanvas,
   preprocessCanvas,
-  scaleCanvas,
   cropCanvas,
-  splitIntoCells,
   normalizeRectToCanvas,
   drawOverlayCanvas,
   normalizeAngle
 } from './canvas-utils.js';
 import { buildDigitCandidates } from './alignment.js';
-import { getWorker, selectBestReading, readDigitsByCells } from './recognition.js';
-import { predictDigitCells } from './digit-classifier.js';
+import { readDigitsByCells } from './recognition.js';
 import { detectNeuralRoi } from './neural-roi.js';
 
 const resolveNeuralRoiRect = (canvas, roiDetection, roiConfig) => {
@@ -233,11 +230,7 @@ const serializeCellConfidences = (confidences) => {
 const finalizeSelection = ({ debugLabel, roiUsed, bestResult, evidenceMap, branchUsed, rejectSummary = [] }) => {
   const rankedEvidence = rankSelectionEvidence(evidenceMap);
   const evidenceBest = rankedEvidence[0] || null;
-  const roiDeterministic = OCR_CONFIG.roiDeterministic || {};
   const classifierConfig = OCR_CONFIG.digitClassifier || {};
-  const minWordPassHits = Number.isFinite(roiDeterministic.minWordPassHits)
-    ? Math.max(1, Math.round(roiDeterministic.minWordPassHits))
-    : 2;
   let finalResult = bestResult;
   let finalRejectReason = null;
   let finalRejectDetail = null;
@@ -274,27 +267,6 @@ const finalizeSelection = ({ debugLabel, roiUsed, bestResult, evidenceMap, branc
     }
   }
 
-  if (finalResult && finalResult.method === 'word-pass') {
-    const support = rankedEvidence.find((entry) => entry.value === finalResult.value) || null;
-    const confirmed = !!support && (
-      support.hits >= minWordPassHits
-      || support.topHits >= minWordPassHits
-    );
-    if (!confirmed) {
-      finalRejectReason = 'word-pass-unconfirmed-finalize';
-      finalRejectDetail = {
-        stage: 'selection-finalize',
-        method: finalResult.method || null,
-        sourceLabel: finalResult.sourceLabel || null,
-        value: finalResult.value || null,
-        requiredHits: minWordPassHits,
-        supportHits: support ? support.hits : 0,
-        supportTopHits: support ? support.topHits : 0
-      };
-      finalResult = null;
-    }
-  }
-
   if (finalResult && isEdgeSourceLabel(finalResult.sourceLabel)) {
     const support = rankedEvidence.find((entry) => entry.value === finalResult.value) || null;
     const hasNonEdgeSupport = !!support && (
@@ -311,9 +283,9 @@ const finalizeSelection = ({ debugLabel, roiUsed, bestResult, evidenceMap, branc
     const minCellConfidence = cellConfidences.length
       ? Math.min(...cellConfidences)
       : 0;
-    const isClassifierFallback = String(finalResult.method || '').startsWith('digit-classifier-fallback');
+    const isClassifierResult = String(finalResult.method || '').startsWith('digit-classifier');
 
-    if (isClassifierFallback) {
+    if (isClassifierResult) {
       const fallbackEdgeMinAverageConfidence = Number.isFinite(classifierConfig.fallbackEdgeMinAverageConfidence)
         ? clamp(classifierConfig.fallbackEdgeMinAverageConfidence, 0, 100)
         : 65;
@@ -477,36 +449,29 @@ const prependRejectSummary = (rejectSummary, reason, detail = {}) => {
 
 const evaluateCandidateBranch = async ({
   candidates,
-  worker,
   setProgress,
-  useWordPass = true,
-  allowSparseScan = false,
   scanCanvas = null
 }) => {
-  const activeCandidates = Array.isArray(candidates) && candidates.length
-    ? candidates
-    : [{ canvas: scanCanvas, label: 'raw-fallback-roi' }];
+  const activeCandidates = Array.isArray(candidates)
+    ? candidates.filter((candidate) => !!(candidate && candidate.canvas))
+    : [];
+  if (!activeCandidates.length && scanCanvas) {
+    activeCandidates.push({ canvas: scanCanvas, label: 'raw-fallback-roi' });
+  }
+  if (scanCanvas) {
+    activeCandidates.push({ canvas: scanCanvas, label: 'scan-roi' });
+  }
+
   let bestResult = null;
   const valueEvidence = new Map();
   const roiDeterministic = OCR_CONFIG.roiDeterministic || {};
-  const configuredModes = Array.isArray(roiDeterministic.wordPassModes)
-    ? roiDeterministic.wordPassModes
-    : [];
-  const modes = (configuredModes.length ? configuredModes : ['raw'])
-    .filter((mode) => mode === 'soft' || mode === 'binary' || mode === 'raw');
-  if (!modes.length) {
-    modes.push('raw');
-  }
-  let pass = 0;
-  const expectedPasses = Math.max(1, activeCandidates.length * modes.length);
+  const classifierConfig = OCR_CONFIG.digitClassifier || {};
   const branchLabel = 'roi';
   const geometryConfig = OCR_CONFIG.geometry || {};
   const minCandidateWidth = Number.isFinite(geometryConfig.minCandidateWidth) ? geometryConfig.minCandidateWidth : 120;
   const minCandidateHeight = Number.isFinite(geometryConfig.minCandidateHeight) ? geometryConfig.minCandidateHeight : 28;
   const minCandidateAspect = Number.isFinite(geometryConfig.minCandidateAspect) ? geometryConfig.minCandidateAspect : 0.12;
   const maxCandidateAspect = Number.isFinite(geometryConfig.maxCandidateAspect) ? geometryConfig.maxCandidateAspect : 18;
-  const minCellWidth = Number.isFinite(geometryConfig.minCellWidth) ? geometryConfig.minCellWidth : 20;
-  const minCellHeight = Number.isFinite(geometryConfig.minCellHeight) ? geometryConfig.minCellHeight : 24;
   const rejectMap = new Map();
 
   const recordReject = (reason, detail = {}) => {
@@ -593,168 +558,10 @@ const evaluateCandidateBranch = async ({
     }
   };
 
-  const hasValidCellGeometry = (cellCanvases, stage, extra = {}) => {
-    for (let i = 0; i < cellCanvases.length; i += 1) {
-      const cell = cellCanvases[i];
-      if (!cell || cell.width < minCellWidth || cell.height < minCellHeight) {
-        recordReject('cell-too-small', {
-          stage,
-          index: i,
-          sourceLabel: extra.sourceLabel || null,
-          width: cell ? cell.width : 0,
-          height: cell ? cell.height : 0
-        });
-        return false;
-      }
-    }
-    return true;
-  };
-
-  const pickSingleDigit = (data) => {
-    const symbolDigits = (data && Array.isArray(data.symbols) ? data.symbols : [])
-      .map((item) => ({
-        digit: (item && item.text ? String(item.text) : '').replace(/\D/g, '').slice(0, 1),
-        confidence: Number.isFinite(item && item.confidence) ? item.confidence : (Number.isFinite(data && data.confidence) ? data.confidence : 0)
-      }))
-      .filter((item) => item.digit);
-    const bestSymbol = symbolDigits.sort((a, b) => b.confidence - a.confidence)[0];
-    if (bestSymbol) {
-      return bestSymbol;
-    }
-    const textDigits = (data && data.text ? String(data.text) : '').replace(/\D/g, '');
-    if (textDigits) {
-      return {
-        digit: textDigits[0],
-        confidence: Number.isFinite(data && data.confidence) ? data.confidence : 0
-      };
-    }
-    return null;
-  };
-
-  const refineSingleCellWithTesseract = async ({ cellCanvases, index, sourceLabel }) => {
-    if (!Array.isArray(cellCanvases) || !cellCanvases[index]) {
-      return null;
-    }
-    const modes = ['binary', 'soft', 'raw'];
-    let best = null;
-    for (const mode of modes) {
-      const processed = mode === 'raw'
-        ? cellCanvases[index]
-        : preprocessCanvas(cellCanvases[index], mode);
-      const scaled = scaleCanvas(processed, OCR_CONFIG.minDigitWidth);
-      const { data } = await worker.recognize(scaled);
-      const picked = pickSingleDigit(data);
-      if (!picked) {
-        continue;
-      }
-      const confidence = Number.isFinite(picked.confidence)
-        ? clamp(picked.confidence, 0, 100)
-        : 0;
-      if (!best || confidence > best.confidence) {
-        best = {
-          digit: picked.digit,
-          confidence,
-          mode
-        };
-      }
-    }
-    if (!best) {
-      recordReject('classifier-single-cell-refine-no-digit', {
-        stage: 'classifier-fallback',
-        sourceLabel,
-        index
-      });
-      return null;
-    }
-    return best;
-  };
-
-  const verifyEdgeWordPassCandidate = async ({ candidate, mode, reading }) => {
-    if (!reading || !candidate || !candidate.label || mode !== 'raw' || !candidate.label.includes('-edge')) {
-      return {
-        reading,
-        method: 'word-pass'
-      };
-    }
-
-    const verified = await readDigitsByCells(worker, candidate.canvas, null, {
-      roiMode: true,
-      onReject: (detail) => {
-        recordReject('edge-word-pass-cell-reject', {
-          stage: 'word-pass',
-          sourceLabel: candidate.label,
-          mode,
-          reason: detail && detail.reason ? detail.reason : null
-        });
-      }
-    });
-
-    if (!verified || !isPreferredLengthReading(verified)) {
-      recordReject('edge-word-pass-unverified', {
-        stage: 'word-pass',
-        sourceLabel: candidate.label,
-        mode,
-        value: reading.value || null
-      });
-      return {
-        reading: null,
-        method: 'word-pass'
-      };
-    }
-
-    if (verified.value !== reading.value) {
-      const wordDigits = String(reading.value || '').replace(/\D/g, '');
-      const cellDigits = String(verified.value || '').replace(/\D/g, '');
-      const wordUniqueDigits = new Set(wordDigits.split('').filter(Boolean)).size;
-      const cellUniqueDigits = new Set(cellDigits.split('').filter(Boolean)).size;
-      if (cellUniqueDigits === 1 && wordUniqueDigits > 1) {
-        recordReject('edge-word-pass-cell-collapse', {
-          stage: 'word-pass',
-          sourceLabel: candidate.label,
-          mode,
-          wordPassValue: reading.value || null,
-          cellValue: verified.value || null
-        });
-        return {
-          reading: {
-            ...reading,
-            preprocessMode: mode
-          },
-          method: 'word-pass'
-        };
-      }
-      recordReject('edge-word-pass-cell-mismatch', {
-        stage: 'word-pass',
-        sourceLabel: candidate.label,
-        mode,
-        wordPassValue: reading.value || null,
-        cellValue: verified.value || null
-      });
-      return {
-        reading: {
-          ...verified,
-          preprocessMode: mode
-        },
-        method: 'cell-verify'
-      };
-    }
-
-    return {
-      reading: {
-        ...reading,
-        preprocessMode: mode,
-        cellDigits: Array.isArray(verified.cellDigits) ? verified.cellDigits : (reading.cellDigits || null),
-        cellConfidences: Array.isArray(verified.cellConfidences) ? verified.cellConfidences : (reading.cellConfidences || null)
-      },
-      method: 'word-pass'
-    };
-  };
-
-  const rankClassifierFallbackCandidates = (rawCandidates) => {
+  const rankClassifierCandidates = (rawCandidates) => {
     if (!Array.isArray(rawCandidates) || !rawCandidates.length) {
       return [];
     }
-    const classifierConfig = OCR_CONFIG.digitClassifier || {};
     const fallbackPreferNonEdge = classifierConfig.fallbackPreferNonEdge !== false;
     const fallbackTargetAspect = Number.isFinite(classifierConfig.fallbackTargetAspect)
       ? Math.max(0.4, classifierConfig.fallbackTargetAspect)
@@ -763,7 +570,7 @@ const evaluateCandidateBranch = async ({
     const maxStripAspect = Number.isFinite(roiDeterministic.maxStripAspect) ? roiDeterministic.maxStripAspect : 8.2;
 
     return rawCandidates
-      .filter((candidate) => hasValidCandidateGeometry(candidate, 'classifier-fallback'))
+      .filter((candidate) => hasValidCandidateGeometry(candidate, 'classifier-primary'))
       .map((candidate) => {
         const width = candidate.canvas.width;
         const height = candidate.canvas.height;
@@ -803,290 +610,115 @@ const evaluateCandidateBranch = async ({
       ));
   };
 
-  const tryClassifierFallback = async () => {
-    if (bestResult) {
-      return null;
-    }
-
-    const classifierConfig = OCR_CONFIG.digitClassifier || {};
-    if (!classifierConfig.enabled) {
-      return null;
-    }
-
-    const fallbackOnNoDigitsOnly = classifierConfig.fallbackOnNoDigitsOnly !== false;
-    const noDigitsRejects = rejectMap.get('ocr-no-digits');
-    if (fallbackOnNoDigitsOnly && !(noDigitsRejects && noDigitsRejects.count > 0)) {
-      return null;
-    }
-
-    const fallbackCandidates = [...activeCandidates];
-    if (scanCanvas) {
-      fallbackCandidates.push({ canvas: scanCanvas, label: 'scan-roi' });
-    }
-
-    const rankedFallbackCandidates = rankClassifierFallbackCandidates(fallbackCandidates);
-    const fallbackCandidate = rankedFallbackCandidates[0] || null;
-    if (!fallbackCandidate) {
-      recordReject('classifier-no-candidate', {
-        stage: 'classifier-fallback'
-      });
-      return null;
-    }
-    if (isEdgeSourceLabel(fallbackCandidate.label)) {
-      recordReject('classifier-fallback-edge-selected', {
-        stage: 'classifier-fallback',
-        sourceLabel: fallbackCandidate.label,
-        score: Number(fallbackCandidate.fallbackScore.toFixed(3)),
-        aspect: Number(fallbackCandidate.fallbackAspect.toFixed(3)),
-        nonEdgeAlternative: rankedFallbackCandidates.some((candidate) => !isEdgeSourceLabel(candidate.label))
-      });
-    }
-
-    const overlap = Number.isFinite(roiDeterministic.cellOverlap) ? roiDeterministic.cellOverlap : 0.03;
-    const cellCanvases = splitIntoCells(fallbackCandidate.canvas, OCR_CONFIG.digitCellCount, overlap);
-    if (!hasValidCellGeometry(cellCanvases, 'classifier-fallback', { sourceLabel: fallbackCandidate.label })) {
-      return null;
-    }
-
-    if (setProgress) {
-      setProgress('Fallback: classifier check...');
-    }
-    const classifierProbe = await predictDigitCells(cellCanvases, classifierConfig);
-    if (!classifierProbe.ok) {
-      if (classifierProbe.reason !== 'disabled') {
-        recordReject('classifier-unavailable', {
-          stage: 'classifier-fallback',
-          sourceLabel: fallbackCandidate.label,
-          reason: classifierProbe.reason
-        });
-      }
-      return null;
-    }
-
-    const minAcceptedCells = Number.isFinite(classifierConfig.fallbackMinAcceptedCells)
-      ? Math.max(1, Math.min(OCR_CONFIG.digitCellCount, Math.round(classifierConfig.fallbackMinAcceptedCells)))
-      : OCR_CONFIG.digitCellCount;
-    const digits = classifierProbe.predictions.map((item) => (item && item.accepted ? item.digit : ''));
-    const rawCellConfidences = classifierProbe.predictions.map((item) => {
-      if (!item || !Number.isFinite(item.confidence)) {
-        return 0;
-      }
-      return clamp(item.confidence, 0, 1);
-    });
-    const cellConfidences = classifierProbe.predictions.map((item) => {
-      if (!item || !item.accepted || !Number.isFinite(item.confidence)) {
-        return 0;
-      }
-      return clamp(item.confidence * 100, 0, 100);
-    });
-    let acceptedCount = digits.filter(Boolean).length;
-
-    const singleCellRefineEnabled = classifierConfig.singleCellRefine !== false;
-    const lowConfidenceThresholdRaw = Number.isFinite(classifierConfig.singleCellLowConfidence)
-      ? classifierConfig.singleCellLowConfidence
-      : (
-        Number.isFinite(classifierConfig.minCellConfidence)
-          ? classifierConfig.minCellConfidence + 0.2
-          : 0.55
-      );
-    const lowConfidenceThreshold = clamp(lowConfidenceThresholdRaw, 0, 1);
-    const singleCellRefineMinConfidence = Number.isFinite(classifierConfig.singleCellRefineMinConfidence)
-      ? clamp(classifierConfig.singleCellRefineMinConfidence, 0, 100)
-      : 42;
-    const singleCellRefineSwitchMargin = Number.isFinite(classifierConfig.singleCellRefineSwitchMargin)
-      ? Math.max(0, classifierConfig.singleCellRefineSwitchMargin)
-      : 4;
-    const lowConfidenceIndices = classifierProbe.predictions
-      .map((item, index) => {
-        const accepted = !!(item && item.accepted && item.digit);
-        const confidence = rawCellConfidences[index];
-        return (!accepted || confidence < lowConfidenceThreshold) ? index : -1;
-      })
-      .filter((index) => index >= 0);
-    let refinedCellIndex = null;
-
-    if (
-      singleCellRefineEnabled
-      && lowConfidenceIndices.length === 1
-      && acceptedCount >= Math.max(0, minAcceptedCells - 1)
-    ) {
-      const targetIndex = lowConfidenceIndices[0];
-      if (setProgress) {
-        setProgress('Fallback: refining one low-confidence section...');
-      }
-      const refined = await refineSingleCellWithTesseract({
-        cellCanvases,
-        index: targetIndex,
-        sourceLabel: fallbackCandidate.label
-      });
-      if (refined && refined.digit) {
-        const previousDigit = digits[targetIndex] || '';
-        const previousConfidence = cellConfidences[targetIndex] || 0;
-        const shouldApply = !previousDigit
-          ? refined.confidence >= singleCellRefineMinConfidence
-          : (
-            refined.digit === previousDigit
-            || refined.confidence >= (previousConfidence + singleCellRefineSwitchMargin)
-          );
-        if (shouldApply) {
-          digits[targetIndex] = refined.digit;
-          cellConfidences[targetIndex] = Math.max(previousConfidence, refined.confidence);
-          acceptedCount = digits.filter(Boolean).length;
-          refinedCellIndex = targetIndex;
-        } else {
-          recordReject('classifier-single-cell-refine-skipped', {
-            stage: 'classifier-fallback',
-            sourceLabel: fallbackCandidate.label,
-            index: targetIndex,
-            classifierDigit: previousDigit || null,
-            classifierConfidence: Number(previousConfidence.toFixed(1)),
-            refinedDigit: refined.digit,
-            refinedConfidence: Number(refined.confidence.toFixed(1))
-          });
+  const recordDecodeReject = (candidate, detail = {}, stage = 'classifier-primary') => {
+    const reason = detail && detail.reason ? detail.reason : 'classifier-reject';
+    const payload = {
+      stage,
+      sourceLabel: candidate && candidate.label ? candidate.label : null
+    };
+    if (detail && typeof detail === 'object') {
+      Object.keys(detail).forEach((key) => {
+        if (key !== 'reason') {
+          payload[key] = detail[key];
         }
-      }
-    }
-
-    if (acceptedCount < minAcceptedCells) {
-      recordReject('classifier-insufficient-cell-digits', {
-        stage: 'classifier-fallback',
-        sourceLabel: fallbackCandidate.label,
-        accepted: acceptedCount,
-        required: minAcceptedCells
       });
-      return null;
     }
-
-    const value = digits.join('');
-    if (!value || value.length !== OCR_CONFIG.preferredDigits) {
-      recordReject('classifier-non4-reading', {
-        stage: 'classifier-fallback',
-        sourceLabel: fallbackCandidate.label,
-        value
-      });
-      return null;
-    }
-
-    const confidenceSum = cellConfidences.reduce((sum, score) => sum + score, 0);
-    const averageConfidence = confidenceSum / Math.max(acceptedCount, 1);
-    const normalizedConfidence = clamp(averageConfidence / 100, 0, 1);
-    const score = clamp(0.42 + normalizedConfidence * 0.46, 0, 0.94);
-
-    const fallbackReading = applyReadingMetadata({
-      value,
-      confidence: averageConfidence,
-      areaRatio: 0.28,
-      score,
-      decoder: refinedCellIndex === null ? 'digit-classifier' : 'digit-classifier-single-cell-refine',
-      cellDigits: digits,
-      cellConfidences,
-      refinedCellIndex
-    }, fallbackCandidate, 'digit-classifier-fallback');
-    if (!fallbackReading) {
-      return null;
-    }
-    recordCandidateReadings(fallbackReading, `${fallbackCandidate.label}:classifier`);
-    return fallbackReading;
+    recordReject(reason, payload);
   };
 
-  if (useWordPass) {
-    await worker.setParameters({
-      tessedit_pageseg_mode: Tesseract.PSM.SINGLE_WORD,
-      tessedit_char_whitelist: '0123456789',
-      classify_bln_numeric_mode: 1
+  if (!classifierConfig.enabled || !classifierConfig.endpoint) {
+    recordReject('classifier-disabled', {
+      stage: 'classifier-primary'
     });
-    for (const candidate of activeCandidates) {
-      if (!hasValidCandidateGeometry(candidate, 'word-pass')) {
-        continue;
-      }
-      for (const mode of modes) {
-        pass += 1;
-        if (setProgress) {
-          setProgress(`Analyzing meter (${pass}/${expectedPasses})`);
-        }
-        const processed = mode === 'raw'
-          ? candidate.canvas
-          : preprocessCanvas(candidate.canvas, mode);
-        const { data } = await worker.recognize(processed);
-        const candidateRawBest = selectBestReading(data, processed);
-        let candidateBest = candidateRawBest;
-        let candidateMethod = 'word-pass';
-        if (!candidateRawBest) {
-          recordReject('ocr-no-digits', {
-            stage: 'word-pass',
-            sourceLabel: candidate.label,
-            mode
-          });
-        } else if (!isPreferredLengthReading(candidateRawBest)) {
-          recordReject('ocr-non4-reading', {
-            stage: 'word-pass',
-            sourceLabel: candidate.label,
-            mode,
-            value: candidateRawBest.value || null
-          });
-          candidateBest = null;
-        }
-        if (candidateBest) {
-          const verified = await verifyEdgeWordPassCandidate({
-            candidate,
-            mode,
-            reading: {
-              ...candidateBest,
-              preprocessMode: mode
-            }
-          });
-          candidateBest = verified.reading;
-          candidateMethod = verified.method;
-        }
-        candidateBest = applyReadingMetadata(candidateBest, candidate, candidateMethod);
-        if (candidateBest && (!bestResult || candidateBest.score > bestResult.score)) {
-          bestResult = candidateBest;
-        }
-        if (candidateBest) {
-          recordCandidateReadings(candidateBest, candidate.label);
-        }
-      }
-    }
+    return {
+      bestResult: null,
+      evidenceMap: valueEvidence,
+      rejectSummary: summarizeRejectMap(rejectMap)
+    };
   }
 
-  if (!bestResult && allowSparseScan && scanCanvas) {
+  const rankedCandidates = rankClassifierCandidates(activeCandidates);
+  const maxPrimaryCandidates = Number.isFinite(classifierConfig.maxPrimaryCandidates)
+    ? Math.max(1, Math.min(20, Math.round(classifierConfig.maxPrimaryCandidates)))
+    : (
+      Number.isFinite(OCR_CONFIG.fallbackCandidates)
+        ? Math.max(1, Math.min(20, Math.round(OCR_CONFIG.fallbackCandidates)))
+        : 6
+    );
+  const selectedCandidates = rankedCandidates.slice(0, maxPrimaryCandidates);
+  if (!selectedCandidates.length) {
+    recordReject('classifier-no-candidate', {
+      stage: 'classifier-primary'
+    });
+    return {
+      bestResult: null,
+      evidenceMap: valueEvidence,
+      rejectSummary: summarizeRejectMap(rejectMap)
+    };
+  }
+
+  const nonEdgeAvailable = selectedCandidates.some((candidate) => !isEdgeSourceLabel(candidate.label));
+  let pass = 0;
+  const expectedPasses = selectedCandidates.length;
+
+  for (const candidate of selectedCandidates) {
+    pass += 1;
     if (setProgress) {
-      setProgress('Scanning full image...');
+      setProgress(`Classifying digits (${pass}/${expectedPasses})`);
     }
-    await worker.setParameters({
-      tessedit_pageseg_mode: Tesseract.PSM.SPARSE_TEXT,
-      tessedit_char_whitelist: '0123456789'
-    });
-    const softened = preprocessCanvas(scanCanvas, 'soft');
-    const { data } = await worker.recognize(softened);
-    const sparseRawCandidate = selectBestReading(data, softened);
-    let fullCandidate = sparseRawCandidate;
-    if (!sparseRawCandidate) {
-      recordReject('ocr-no-digits', {
-        stage: 'sparse-scan',
-        sourceLabel: 'scan-roi',
-        mode: 'soft'
-      });
-    } else if (!isPreferredLengthReading(sparseRawCandidate)) {
-      recordReject('ocr-non4-reading', {
-        stage: 'sparse-scan',
-        sourceLabel: 'scan-roi',
-        mode: 'soft',
-        value: sparseRawCandidate.value || null
-      });
-      fullCandidate = null;
-    }
-    fullCandidate = applyReadingMetadata(fullCandidate, { label: 'scan-roi' }, 'sparse-scan');
-    if (fullCandidate) {
-      bestResult = fullCandidate;
-      recordCandidateReadings(fullCandidate, 'scan-roi');
-    }
-  }
 
-  if (!bestResult) {
-    const classifierFallback = await tryClassifierFallback();
-    if (classifierFallback) {
-      bestResult = classifierFallback;
+    if (isEdgeSourceLabel(candidate.label)) {
+      recordReject('classifier-edge-candidate-selected', {
+        stage: 'classifier-primary',
+        sourceLabel: candidate.label,
+        score: Number(candidate.fallbackScore.toFixed(3)),
+        aspect: Number(candidate.fallbackAspect.toFixed(3)),
+        nonEdgeAlternative: nonEdgeAvailable
+      });
+    }
+
+    const reading = await readDigitsByCells(candidate.canvas, null, {
+      roiMode: true,
+      onReject: (detail) => recordDecodeReject(candidate, detail, 'classifier-primary')
+    });
+    if (!reading) {
+      continue;
+    }
+    if (!isPreferredLengthReading(reading)) {
+      recordReject('classifier-non4-reading', {
+        stage: 'classifier-primary',
+        sourceLabel: candidate.label,
+        value: reading.value || null
+      });
+      continue;
+    }
+
+    const classifierReading = applyReadingMetadata({
+      ...reading,
+      preprocessMode: 'raw'
+    }, candidate, 'digit-classifier-primary');
+    if (!classifierReading) {
+      continue;
+    }
+
+    if (
+      !bestResult
+      || classifierReading.score > bestResult.score
+      || (
+        classifierReading.score === bestResult.score
+        && (classifierReading.confidence ?? 0) > (bestResult.confidence ?? 0)
+      )
+    ) {
+      bestResult = classifierReading;
+    }
+    recordCandidateReadings(classifierReading, `${candidate.label}:classifier`);
+
+    if (
+      bestResult
+      && bestResult.score >= OCR_CONFIG.earlyStopScore
+      && !isEdgeSourceLabel(bestResult.sourceLabel)
+    ) {
+      break;
     }
   }
 
@@ -1139,7 +771,6 @@ const runMeterOcr = async (file, setProgress) => {
       }))
       : [];
 
-    const worker = await getWorker();
     if (!roiCandidates.length) {
       const message = 'Neural ROI crop did not produce OCR candidates. Enter the measurement manually.';
       if (setProgress) {
@@ -1150,10 +781,7 @@ const runMeterOcr = async (file, setProgress) => {
 
     const roiBranch = await evaluateCandidateBranch({
       candidates: roiCandidates,
-      worker,
       setProgress,
-      useWordPass: true,
-      allowSparseScan: true,
       scanCanvas: roiCrop
     });
 

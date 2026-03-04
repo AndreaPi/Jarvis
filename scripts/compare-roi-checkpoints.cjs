@@ -12,7 +12,6 @@ const OUTPUT_ROOT = path.join(ROOT_DIR, 'output', 'roi-checkpoint-diff');
 const FRONTEND_URL = process.env.JARVIS_FRONTEND_URL || 'http://127.0.0.1:8000';
 const BACKEND_URL = process.env.JARVIS_BACKEND_URL || 'http://127.0.0.1:8001';
 const BACKEND_HEALTH_URL = `${BACKEND_URL}/health`;
-const ENABLE_DIGIT_FALLBACK = process.env.JARVIS_DIGIT_FALLBACK === '1';
 
 const parseHttpUrl = (raw, fallbackRaw) => {
   try {
@@ -299,16 +298,13 @@ const runUiTestSet = async () => {
   const page = await browser.newPage();
 
   try {
-    if (ENABLE_DIGIT_FALLBACK) {
-      await page.addInitScript(() => {
-        window.__JARVIS_OCR_CONFIG_OVERRIDE__ = {
-          digitClassifier: {
-            enabled: true,
-            fallbackOnNoDigitsOnly: true
-          }
-        };
-      });
-    }
+    await page.addInitScript(() => {
+      window.__JARVIS_OCR_CONFIG_OVERRIDE__ = {
+        digitClassifier: {
+          enabled: true
+        }
+      };
+    });
     await page.goto(FRONTEND_URL, { waitUntil: 'networkidle' });
     await page.waitForSelector('#run-test-btn', { timeout: 30000 });
     await page.evaluate(() => {
@@ -661,7 +657,6 @@ const buildComparison = (baselineRun, challengerRun) => {
 
 const renderMarkdownReport = ({
   generatedAt,
-  fallbackEnabled,
   baselineRun,
   challengerRun,
   baselineMetrics,
@@ -677,7 +672,7 @@ const renderMarkdownReport = ({
   lines.push(`- Generated: ${generatedAt}`);
   lines.push(`- Baseline model: \`${baselineRun.model.label}\` (\`${baselineRun.health.model_path}\`)`);
   lines.push(`- Challenger model: \`${challengerRun.model.label}\` (\`${challengerRun.health.model_path}\`)`);
-  lines.push(`- Digit classifier fallback: \`${fallbackEnabled ? 'enabled' : 'disabled'}\``);
+  lines.push('- Digit decoder: `neural classifier (backend /digit/predict-cells)`');
   lines.push(`- Output directory: \`${toRelativeFromRoot(outputDir)}\``);
   lines.push('');
   lines.push('## Summary');
@@ -816,7 +811,7 @@ const ensureModelFilesExist = () => {
 const run = async () => {
   ensureModelFilesExist();
   const runId = timestampId();
-  const modeSuffix = ENABLE_DIGIT_FALLBACK ? 'fallback-on' : 'fallback-off';
+  const modeSuffix = 'neural-digit';
   const outputDir = path.join(OUTPUT_ROOT, `${runId}-${modeSuffix}`);
   await fsp.mkdir(outputDir, { recursive: true });
 
@@ -838,7 +833,7 @@ const run = async () => {
     const generatedAt = new Date().toISOString();
     const reportJson = {
       generatedAt,
-      fallbackEnabled: ENABLE_DIGIT_FALLBACK,
+      digitDecoder: 'neural-classifier',
       outputDir: toRelativeFromRoot(outputDir),
       baseline: {
         model: baselineRun.model,
@@ -863,7 +858,6 @@ const run = async () => {
 
     const markdown = renderMarkdownReport({
       generatedAt,
-      fallbackEnabled: ENABLE_DIGIT_FALLBACK,
       baselineRun,
       challengerRun,
       baselineMetrics,
@@ -881,7 +875,7 @@ const run = async () => {
 
     const consoleSummary = {
       outputDir: toRelativeFromRoot(outputDir),
-      fallbackEnabled: ENABLE_DIGIT_FALLBACK,
+      digitDecoder: 'neural-classifier',
       markdownReport: toRelativeFromRoot(mdPath),
       jsonReport: toRelativeFromRoot(jsonPath),
       baselinePrimary: {
