@@ -44,20 +44,32 @@ The API default is pinned to `backend/models/roi-rotaug-e30-640.pt`; use `ROI_MO
 
 ## Build a digit OCR dataset from ROI labels
 
-This creates:
-- strip crops + sequence labels (`data/digit_dataset/strips`, `data/digit_dataset/strip_labels`)
-- per-cell crops grouped by digit class (`data/digit_dataset/cells`)
-- manifests and QA previews (`data/digit_dataset/manifests`, `data/digit_dataset/qa_previews`)
+Current recommended flow:
+
+1. Extract ROI windows by split.
+2. Canonicalize orientation and split each window into 4 equispaced sections.
+3. Label each section from the 4-digit reading string.
 
 ```bash
 cd backend
 source .venv/bin/activate
-python build_digit_dataset.py --clean
+python extract_digit_windows.py --clean
+python split_digit_windows.py --clean
+python label_digit_sections.py --clean
 ```
 
-Validate manifest/file consistency and QA preview coverage:
+This creates:
+
+- `data/digit_dataset/windows/{train,val,test}`
+- `data/digit_dataset/windows_canonical/{train,val,test}`
+- `data/digit_dataset/sections/{train,val,test}`
+- `data/digit_dataset/sections_labeled/{train,val,test}/{0..9}`
+- manifests under `data/digit_dataset/manifests`
+
+Legacy flow (kept for backward compatibility tooling):
 
 ```bash
+python build_digit_dataset.py --clean
 python validate_digit_dataset.py
 ```
 

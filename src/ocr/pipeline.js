@@ -386,8 +386,40 @@ const extractCandidateAngle = (label) => {
   return Number.NaN;
 };
 
-const addWinningCandidateDebugStage = (debugSession, candidates, finalSelection) => {
+const resolveWinningDecodeCanvas = (decodeCanvasBySource, finalSelection) => {
+  if (
+    !(decodeCanvasBySource instanceof Map)
+    || !finalSelection
+    || typeof finalSelection.sourceLabel !== 'string'
+  ) {
+    return null;
+  }
+  const entries = decodeCanvasBySource.get(finalSelection.sourceLabel);
+  if (!Array.isArray(entries) || !entries.length) {
+    return null;
+  }
+  const targetAngle = Number.isFinite(finalSelection.angle) ? normalizeAngle(finalSelection.angle) : null;
+  if (targetAngle === null) {
+    return entries[0].canvas || null;
+  }
+  const exactMatch = entries.find((entry) => entry && entry.angle === targetAngle && entry.canvas);
+  if (exactMatch) {
+    return exactMatch.canvas;
+  }
+  const neutralMatch = entries.find((entry) => entry && entry.angle === null && entry.canvas);
+  if (neutralMatch) {
+    return neutralMatch.canvas;
+  }
+  return entries[0].canvas || null;
+};
+
+const addWinningCandidateDebugStage = (debugSession, candidates, finalSelection, decodeCanvasBySource = null) => {
   if (!debugSession || !Array.isArray(candidates) || !finalSelection || !finalSelection.sourceLabel) {
+    return;
+  }
+  const winningDecodeCanvas = resolveWinningDecodeCanvas(decodeCanvasBySource, finalSelection);
+  if (winningDecodeCanvas) {
+    addDebugStage(debugSession, '6. OCR input candidate', winningDecodeCanvas);
     return;
   }
   const selectedCandidate = candidates.find((candidate) => (
@@ -464,6 +496,7 @@ const evaluateCandidateBranch = async ({
 
   let bestResult = null;
   const valueEvidence = new Map();
+  const decodeCanvasBySource = new Map();
   const roiDeterministic = OCR_CONFIG.roiDeterministic || {};
   const classifierConfig = OCR_CONFIG.digitClassifier || {};
   const branchLabel = 'roi';
@@ -626,6 +659,25 @@ const evaluateCandidateBranch = async ({
     recordReject(reason, payload);
   };
 
+  const recordDecodeCanvas = (sourceLabel, angle, canvas) => {
+    if (!sourceLabel || !canvas) {
+      return;
+    }
+    const normalizedAngle = Number.isFinite(angle) ? normalizeAngle(angle) : null;
+    const entries = decodeCanvasBySource.get(sourceLabel) || [];
+    const existingIndex = entries.findIndex((entry) => entry && entry.angle === normalizedAngle);
+    const nextEntry = {
+      angle: normalizedAngle,
+      canvas
+    };
+    if (existingIndex >= 0) {
+      entries[existingIndex] = nextEntry;
+    } else {
+      entries.push(nextEntry);
+    }
+    decodeCanvasBySource.set(sourceLabel, entries);
+  };
+
   if (!classifierConfig.enabled || !classifierConfig.endpoint) {
     recordReject('classifier-disabled', {
       stage: 'classifier-primary'
@@ -633,7 +685,8 @@ const evaluateCandidateBranch = async ({
     return {
       bestResult: null,
       evidenceMap: valueEvidence,
-      rejectSummary: summarizeRejectMap(rejectMap)
+      rejectSummary: summarizeRejectMap(rejectMap),
+      decodeCanvasBySource
     };
   }
 
@@ -645,7 +698,13 @@ const evaluateCandidateBranch = async ({
         ? Math.max(1, Math.min(20, Math.round(OCR_CONFIG.fallbackCandidates)))
         : 6
     );
-  const selectedCandidates = rankedCandidates.slice(0, maxPrimaryCandidates);
+  let selectedCandidates = rankedCandidates.slice(0, maxPrimaryCandidates);
+  if (classifierConfig.forceInitialPreviewCandidate === true) {
+    const initialCandidate = activeCandidates.find((candidate) => (
+      hasValidCandidateGeometry(candidate, 'classifier-primary-force-initial')
+    ));
+    selectedCandidates = initialCandidate ? [initialCandidate] : [];
+  }
   if (!selectedCandidates.length) {
     recordReject('classifier-no-candidate', {
       stage: 'classifier-primary'
@@ -653,7 +712,8 @@ const evaluateCandidateBranch = async ({
     return {
       bestResult: null,
       evidenceMap: valueEvidence,
-      rejectSummary: summarizeRejectMap(rejectMap)
+      rejectSummary: summarizeRejectMap(rejectMap),
+      decodeCanvasBySource
     };
   }
 
@@ -668,11 +728,21 @@ const evaluateCandidateBranch = async ({
     }
 
     if (isEdgeSourceLabel(candidate.label)) {
+      const fallbackScore = Number.isFinite(candidate.fallbackScore)
+        ? Number(candidate.fallbackScore.toFixed(3))
+        : null;
+      const fallbackAspect = Number.isFinite(candidate.fallbackAspect)
+        ? Number(candidate.fallbackAspect.toFixed(3))
+        : (
+          candidate.canvas
+            ? Number((candidate.canvas.width / Math.max(1, candidate.canvas.height)).toFixed(3))
+            : null
+        );
       recordReject('classifier-edge-candidate-selected', {
         stage: 'classifier-primary',
         sourceLabel: candidate.label,
-        score: Number(candidate.fallbackScore.toFixed(3)),
-        aspect: Number(candidate.fallbackAspect.toFixed(3)),
+        score: fallbackScore,
+        aspect: fallbackAspect,
         nonEdgeAlternative: nonEdgeAvailable
       });
     }
@@ -700,18 +770,27 @@ const evaluateCandidateBranch = async ({
     if (!classifierReading) {
       continue;
     }
+    if (classifierReading.sourceLabel && classifierReading.decodedStripCanvas) {
+      recordDecodeCanvas(
+        classifierReading.sourceLabel,
+        classifierReading.angle,
+        classifierReading.decodedStripCanvas
+      );
+    }
+    const classifierReadingForSelection = { ...classifierReading };
+    delete classifierReadingForSelection.decodedStripCanvas;
 
     if (
       !bestResult
-      || classifierReading.score > bestResult.score
+      || classifierReadingForSelection.score > bestResult.score
       || (
-        classifierReading.score === bestResult.score
-        && (classifierReading.confidence ?? 0) > (bestResult.confidence ?? 0)
+        classifierReadingForSelection.score === bestResult.score
+        && (classifierReadingForSelection.confidence ?? 0) > (bestResult.confidence ?? 0)
       )
     ) {
-      bestResult = classifierReading;
+      bestResult = classifierReadingForSelection;
     }
-    recordCandidateReadings(classifierReading, `${candidate.label}:classifier`);
+    recordCandidateReadings(classifierReadingForSelection, `${candidate.label}:classifier`);
 
     if (
       bestResult
@@ -725,7 +804,8 @@ const evaluateCandidateBranch = async ({
   return {
     bestResult,
     evidenceMap: valueEvidence,
-    rejectSummary: summarizeRejectMap(rejectMap)
+    rejectSummary: summarizeRejectMap(rejectMap),
+    decodeCanvasBySource
   };
 };
 
@@ -793,7 +873,12 @@ const runMeterOcr = async (file, setProgress) => {
       branchUsed: isPreferredLengthReading(roiBranch.bestResult) ? 'roi-accepted' : 'roi-uncertain',
       rejectSummary: roiBranch.rejectSummary || []
     });
-    addWinningCandidateDebugStage(debugSession, roiCandidates, finalSelection);
+    addWinningCandidateDebugStage(
+      debugSession,
+      roiCandidates,
+      finalSelection,
+      roiBranch.decodeCanvasBySource
+    );
 
     if (setProgress) {
       if (finalSelection && finalSelection.value) {

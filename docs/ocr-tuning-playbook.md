@@ -2,27 +2,31 @@
 
 This playbook documents the practical loop used to improve OCR quality in Jarvis.
 
-Current baseline notes (March 4, 2026, neural-digit-only):
+Current baseline policy:
 
-- Test set: `0/14` exact-match (`Correct`)
-- Pinned model (`roi-rotaug-e30-640.pt`): `mismatch` 6, `ocr-no-digits` 7, `no-detection` 1
-- Challenger (`roi.pt`): `mismatch` 4, `ocr-no-digits` 10, `no-detection` 0
-- Evaluation now uses `MAE` as the primary promotion signal; exact-match and no-read rates are guardrails.
-- The active local test-set CSV now has `15` images; keep historical `0/14` snapshots only for trend context.
+- Use the latest UI **Run test set** histogram as source of truth (`window.__jarvisLastTestSetHistogram`).
+- Treat fixed numeric snapshots as historical only; they go stale quickly as thresholds/ranking change.
+- Evaluation uses `MAE` as the primary promotion signal; `Exact Match` and `No-read` are guardrails.
+- The active local test-set CSV has `15` images.
 
-Critical blocker note (March 4, 2026):
+Digit dataset status (current workflow):
 
-- Digit-classifier training cells are currently unreliable due to strip orientation/cell-split issues in dataset export.
-- `build_digit_dataset.py` splits cells assuming left-to-right horizontal strips; vertical strips become thin non-digit slices.
-- Some horizontal strips are 180-deg inverted, so cell index to reading-digit assignment is reversed.
-- Concrete examples from manual QA:
-  - `meter_07012020_c3_4.png` appears as digit `1` in context.
-  - `meter_01122026_c2_0.png` is a thin register slice, not a usable digit crop.
+- Dataset generation now uses `extract_digit_windows.py` -> `split_digit_windows.py` -> `label_digit_sections.py`.
+- `split_digit_windows.py` canonicalizes orientation (major axis + optional reading-direction `flip180` overrides) before equispaced 4-way split.
+- Classifier training consumes `data/digit_dataset/sections_labeled/{train,val,test}`.
+- Synthetic generation remains train-only (`sections_synthetic/train`) and is mixed into training with `--synthetic-target-ratio`.
+
+## Immediate Next Steps (March 4, 2026)
+
+1. Keep `digitClassifier.forceInitialPreviewCandidate=false` by default (force mode increased no-read materially).
+2. Reduce `classifier-edge-gate-final-drop` with targeted edge-gate tuning and explicit A/B runs.
+3. Verify each edge-gate tweak on full test set with `MAE` + guardrails (`Exact Match`, `No-read`) before keeping it.
+4. Prioritize fixes on current top-absolute-error images after each run, not a fixed historical list.
 
 ## Goals
 
 1. Reduce `mismatch` (wrong 4-digit value returned).
-2. Reduce `ocr-no-digits` (no accepted 4-digit candidate).
+2. Reduce no-read outcomes (`ocr-no-digits`, `classifier-edge-gate-final-drop`, and related final drops).
 3. Preserve neural-ROI-only policy and strip-only OCR path.
 
 ## Standard Iteration Loop
@@ -38,16 +42,13 @@ npm run test:e2e
 
 2. Inspect hard failures
 
-- Prioritize:
-  - `meter_02202026.JPEG`
-  - `meter_02192026.JPEG`
-  - `meter_07012020.JPEG`
-  - `meter_02242026.JPEG`
+- Prioritize the current top `Absolute Error` rows and dominant `Failure Reason` buckets from the latest run.
 - Inspect debug stages:
   - `0. neural roi detection`
   - `0b. neural roi crop`
   - `5. detected strip crop`
-  - `6. OCR input candidate`
+  - `6a. OCR input candidate (initial preview)`
+  - `6. OCR input candidate` (winning decode input)
 - Inspect selection logs in `window.__jarvisOcrSelectionLogs`.
 
 3. Apply one narrow change
@@ -94,8 +95,9 @@ The report includes:
 - Per-image `Detected`, `Failure Reason`, and top reject reason.
 - Per-image selected metadata (`sourceLabel`, `method`, `preprocessMode`) from `window.__jarvisOcrSelectionLogs`.
 - Side-by-side stage `5. detected strip crop` and `6. OCR input candidate`.
+- Stage `6` now shows the exact strip variant used by the winning decode (after normalization/orientation selection).
 - Stage `6` export uses the last `6. OCR input candidate` frame from each debug session.
-- Summary deltas for `MAE`, guardrail rates (`Exact Match`, `No-read`), `mismatch`, `ocr-no-digits`, and `no-detection`.
+- Summary deltas for `MAE`, guardrail rates (`Exact Match`, `No-read`), and dominant failure buckets (`mismatch`, `classifier-edge-gate-final-drop`, `ocr-no-digits`, `no-detection`).
 
 ## Checkpoint Promotion Gates
 
@@ -105,7 +107,7 @@ Promote a challenger checkpoint only if all gates pass on the same test-set run:
 2. **MAE gate**: challenger `MAE` must be less than or equal to baseline.
 3. **Exact-match guardrail**: challenger `Exact Match` rate must be greater than or equal to baseline.
 4. **No-read guardrail**: challenger `No-read` rate must be less than or equal to baseline.
-5. **OCR no-digits gate**: challenger `ocr-no-digits` count must be less than or equal to baseline.
+5. **Failure-bucket gate**: challenger must not regress dominant no-read bucket counts (for example `classifier-edge-gate-final-drop` or `ocr-no-digits`) versus baseline.
 
 If any gate fails, keep `roi-rotaug-e30-640.pt` as default and continue tuning extraction/selection.
 

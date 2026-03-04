@@ -63,7 +63,7 @@ const buildNeuralRoiCandidates = (source, debugSession, addDebugStageFn = () => 
     const ocrPreview = debugWordMode === 'raw'
       ? candidates[0].canvas
       : preprocessCanvas(candidates[0].canvas, debugWordMode);
-    addDebugStageFn(debugSession, '6. OCR input candidate', ocrPreview);
+    addDebugStageFn(debugSession, '6a. OCR input candidate (initial preview)', ocrPreview);
   }
 
   return candidates;

@@ -107,7 +107,7 @@ npm run benchmark:roi-diff
 ```
 
 Report artifacts are written under `output/roi-checkpoint-diff/<timestamp>/`.
-Per-image diff tables include selected OCR metadata (`sourceLabel`, `method`, `preprocessMode`) and stage `6` exports use the last `6. OCR input candidate` frame from each debug session.
+Per-image diff tables include selected OCR metadata (`sourceLabel`, `method`, `preprocessMode`) and stage `6` exports use the last `6. OCR input candidate` frame from each debug session (the winning decode strip variant).
 
 CI runs these tests on every pull request and on pushes to `master`.
 

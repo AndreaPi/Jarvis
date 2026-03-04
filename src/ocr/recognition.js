@@ -453,12 +453,19 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
     if (!finalized) {
       continue;
     }
+    const finalizedWithDecodeCanvas = {
+      ...finalized,
+      decodedStripCanvas: variant.canvas
+    };
     if (
       !best
-      || finalized.score > best.score
-      || (finalized.score === best.score && finalized.confidence > best.confidence)
+      || finalizedWithDecodeCanvas.score > best.score
+      || (
+        finalizedWithDecodeCanvas.score === best.score
+        && finalizedWithDecodeCanvas.confidence > best.confidence
+      )
     ) {
-      best = finalized;
+      best = finalizedWithDecodeCanvas;
     }
   }
 

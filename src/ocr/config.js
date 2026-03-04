@@ -44,6 +44,7 @@ const OCR_CONFIG = {
     endpoint: 'http://127.0.0.1:8001/digit/predict-cells',
     timeoutMs: 1800,
     minCellConfidence: 0.28,
+    forceInitialPreviewCandidate: false,
     fallbackPreferNonEdge: true,
     fallbackTargetAspect: 2.6,
     maxPrimaryCandidates: 6,

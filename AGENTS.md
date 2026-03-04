@@ -10,10 +10,13 @@
 - `src/testset/`: Manual test-set runner logic.
 - `src/debug/`: Debug overlay rendering helpers.
 - `backend/`: Optional FastAPI service for neural ROI + digit classifier inference and training scripts.
-- `backend/build_digit_dataset.py`: Export strip/cell OCR datasets + QA previews from ROI labels.
+- `backend/extract_digit_windows.py`: Export ROI digit windows from ROI labels into split folders.
+- `backend/split_digit_windows.py`: Canonicalize window orientation and split each window into 4 equispaced sections.
+- `backend/label_digit_sections.py`: Auto-assign section labels from the 4-digit reading string.
+- `backend/build_digit_dataset.py`: Legacy strip/cell dataset exporter (kept for backward compatibility tooling).
 - `backend/generate_synthetic_digit_dataset.py`: Build synthetic train-only digit sections (direct cell augmentation + optional composed windows re-split equispaced).
 - `backend/plan_digit_expansion.py`: Generate prioritized capture plan for underrepresented digits.
-- `backend/validate_digit_dataset.py`: Validate manifest consistency and QA preview coverage.
+- `backend/validate_digit_dataset.py`: Validate legacy strip/cell manifests and QA preview coverage.
 - `backend/train_digit_classifier.py`: Train per-cell digit classifier checkpoint.
 - `package.json`: Local dev scripts.
 - `README.md`: Project overview and setup notes.
@@ -24,8 +27,10 @@
 - `npm run dev`: Alias of `npm run serve`.
 - `cd backend && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`: Backend setup.
 - `cd backend && source .venv/bin/activate && python train_roi.py --data data/roi_dataset.yaml --base-model yolov8n.pt --rotation-angles 90,180,270,360 --heavy-augment`: Fine-tune pretrained ROI detector with enforced augmentation policy.
-- `cd backend && source .venv/bin/activate && python build_digit_dataset.py --clean`: Rebuild digit strip/cell exports and QA previews.
-- `cd backend && source .venv/bin/activate && python validate_digit_dataset.py`: Validate dataset/manifests before training.
+- `cd backend && source .venv/bin/activate && python extract_digit_windows.py --clean`: Rebuild split-wise digit windows from ROI labels.
+- `cd backend && source .venv/bin/activate && python split_digit_windows.py --clean`: Canonicalize + split windows into 4 equispaced sections.
+- `cd backend && source .venv/bin/activate && python label_digit_sections.py --clean`: Build labeled section dataset (`sections_labeled/train|val|test/<digit>`).
+- `cd backend && source .venv/bin/activate && python validate_digit_dataset.py`: Validate legacy strip/cell manifests (only needed when using `build_digit_dataset.py`).
 - `cd backend && source .venv/bin/activate && python generate_synthetic_digit_dataset.py --clean --direct-per-real 6 --compose-window-count 180`: Generate synthetic train-only digit sections from real train labels.
 - `cd backend && source .venv/bin/activate && python plan_digit_expansion.py --target-train-per-digit 12 --priority-digits 4,5,6,9`: Refresh targeted capture checklist.
 - `cd backend && source .venv/bin/activate && python train_digit_classifier.py --device cpu`: Train per-cell digit classifier model (real-only).
@@ -77,22 +82,26 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
 - Frontend OCR branch evaluation is strip-only classifier-first candidate decoding (no Tesseract word-pass/sparse-scan stages).
 - Isolated edge-only winners are rejected unless corroborated by non-edge evidence or strong per-cell confidence (configurable edge safeguard thresholds).
 - Edge-derived candidate generation is toggleable via `roiDeterministic.useEdgeCandidates` (default `true`) for controlled A/B experiments.
+- Debug overlay semantics:
+  - `6a. OCR input candidate (initial preview)` = first valid ROI candidate before classifier ranking.
+  - `6. OCR input candidate` = winning decode input (exact strip variant/angle used by final selection).
 - Current local benchmark set has `15` images.
-- Historical checkpoint comparison (March 2, 2026, fallback `OFF`, 14-image snapshot):
+- Historical checkpoint comparison (March 2, 2026, legacy fallback `OFF`, 14-image snapshot):
   - `roi-rotaug-e30-640.pt` (default pinned): exact-match `0/14`, failure mix `ocr-no-digits` (7), `mismatch` (6), `no-detection` (1).
   - `roi.pt` (challenger): exact-match `0/14`, failure mix `ocr-no-digits` (10), `mismatch` (4), `no-detection` (0).
+- Recent force-mode A/B (March 4, 2026, 15-image set): forcing the initial preview candidate reduced MAE but sharply increased no-read due to `classifier-edge-gate-final-drop`; keep force mode disabled by default.
 - Automated diff workflow is available via `npm run benchmark:roi-diff`.
 - Diff artifacts now use `*-neural-digit` output folders because digit decoding is always neural-classifier-only.
 - Promotion and rollback decisions should now use `MAE` from `roi-diff-report` as the primary signal, with exact-match and no-read as guardrails.
-- ROI diff reports now include per-image selected metadata columns (`sourceLabel`, `method`, `preprocessMode`) and explicitly export the last stage `6. OCR input candidate` snapshot.
+- ROI diff reports now include per-image selected metadata columns (`sourceLabel`, `method`, `preprocessMode`) and explicitly export the last stage `6. OCR input candidate` snapshot (winning decode strip variant).
 
 ## Next TODOs
 
 1. Keep `roi-rotaug-e30-640.pt` as default until a challenger beats it on end-to-end OCR metrics, not only detection presence.
 2. Re-run `npm run benchmark:roi-diff` after each ROI challenger to track per-image movement (`Detected`, stage `5/6` snapshots, reject reason), then summarize deltas in notes/PR.
-3. Tune strip preprocessing and candidate ranking for the current hard failures (`meter_07012020.JPEG`, `meter_02192026.JPEG`, `meter_02202026.JPEG`, `meter_02242026.JPEG`).
-4. Improve classifier-first candidate ranking and acceptance thresholds to reduce `mismatch` while preserving low `ocr-no-digits`.
-5. Enforce checkpoint promotion gates from docs: no MAE regression, no exact-match regression, no no-read regression, and no regression in `ocr-no-digits`.
+3. Tune strip preprocessing and candidate ranking on the current highest-absolute-error rows from each new test-set run.
+4. Improve classifier-first candidate ranking and acceptance thresholds to reduce `mismatch` while preserving low no-read.
+5. Enforce checkpoint promotion gates from docs: no MAE regression, no exact-match regression, no no-read regression, and no regression in dominant no-read buckets (`classifier-edge-gate-final-drop` / `ocr-no-digits`).
 6. Keep running both `npm run test:e2e` and UI `Run test set` before commits; include histogram deltas in commit/PR notes.
 7. Medium-term: evaluate YOLO OBB ROI detection to reduce rotation/edge ambiguity; this requires OBB relabeling, retraining, and backend response/schema changes before frontend adoption.
 
@@ -108,7 +117,8 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
    - `cd backend && source .venv/bin/activate && python plan_digit_expansion.py --target-train-per-digit 12 --priority-digits 4,5,6,9`
 2. Add labeled captures with QA previews.
 3. Validate manifests after each dataset update:
-   - `cd backend && source .venv/bin/activate && python validate_digit_dataset.py`
+   - Confirm `data/digit_dataset/manifests/{windows.csv,canonical_windows.csv,sections.csv,section_labels.csv}` are regenerated and consistent with current splits.
+   - Use `python validate_digit_dataset.py` only for legacy strip/cell exports (`build_digit_dataset.py` path).
 4. Retrain classifier only after class coverage improves:
    - `cd backend && source .venv/bin/activate && python train_digit_classifier.py --device cpu`
 5. Keep classifier training/dataset refresh loop active; promote new checkpoints only when benchmarked `MAE` improves without exact-match/no-read guardrail regressions.

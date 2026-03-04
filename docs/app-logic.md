@@ -43,7 +43,7 @@ flowchart TD
 3. OCR acceptance gate
    - Candidate strips are decoded directly with the backend digit classifier.
    - `finalizeSelection` ranks evidence across classifier passes before returning a value.
-   - Edge-only winners are rejected unless corroborated by non-edge evidence or very strong per-cell confidence.
+   - Edge-only winners are rejected unless corroborated by non-edge evidence or by configured per-cell confidence thresholds.
    - Digit classifier is enabled by default (`digitClassifier.enabled=true`).
 
 ## What Gets Logged
@@ -51,7 +51,7 @@ flowchart TD
 - Per-image selection logs are appended to `window.__jarvisOcrSelectionLogs`.
 - `selected` metadata includes `sourceLabel`, `method`, and `preprocessMode` for each accepted reading.
 - The test-set runner reads those logs to build:
-  - `Failure Reason` values (`mismatch`, `ocr-no-digits`, etc.)
+  - `Failure Reason` values (`mismatch`, `classifier-edge-gate-final-drop`, `ocr-no-digits`, etc.)
   - Reject histograms from OCR branch reject reasons.
 
 ## Source Files
