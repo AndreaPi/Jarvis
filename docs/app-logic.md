@@ -1,6 +1,6 @@
 # App Logic
 
-This document describes the current Jarvis OCR execution path, including neural ROI gating and the optional gated classifier fallback.
+This document describes the current Jarvis OCR execution path, with neural ROI gating and neural digit-classifier-only decoding.
 
 ## End-to-End OCR Flow
 
@@ -18,17 +18,8 @@ flowchart TD
   H --> I["Build ROI candidates<br/>(rotations + optional edge crops)"]
   I --> J{"Candidates available?"}
   J -- "No" --> K["Ask manual entry"]
-  J -- "Yes" --> L["Word-pass OCR per candidate<br/>(SINGLE_WORD, digits only)"]
-
-  L --> M{"Best 4-digit reading found?"}
-  M -- "No" --> N["Sparse scan OCR on ROI crop<br/>(SPARSE_TEXT, soft)"]
-  M -- "Yes" --> O["finalizeSelection()<br/>evidence ranking + word-pass support guardrail"]
-  N --> N2{"Still no accepted reading?"}
-  N2 -- "No" --> O
-  N2 -- "Yes" --> N3{"Classifier fallback enabled<br/>and no-digits rejects seen?"}
-  N3 -- "No" --> O
-  N3 -- "Yes" --> N4["Digit-classifier fallback<br/>(4 cells from ROI candidate)"]
-  N4 --> O
+  J -- "Yes" --> L["Classifier-first OCR per candidate<br/>(4 cells, orientation-aware)"]
+  L --> O["finalizeSelection()<br/>evidence ranking + edge safeguard"]
 
   O --> P{"Final selection exists?"}
   P -- "Yes" --> Q["Return reading + fill UI input"]
@@ -50,12 +41,10 @@ flowchart TD
    - If ROI crop cannot produce valid OCR candidates, the app falls back to manual input.
 
 3. OCR acceptance gate
-   - Word-pass result is preferred.
-   - Sparse scan is attempted if no word-pass result is available.
-   - Optional classifier fallback runs only when enabled and the branch has `ocr-no-digits` rejects.
-   - `finalizeSelection` ranks evidence across OCR passes and applies the active word-pass support guardrail (`hits` / `topHits` vs `minWordPassHits`) before returning a value.
+   - Candidate strips are decoded directly with the backend digit classifier.
+   - `finalizeSelection` ranks evidence across classifier passes before returning a value.
    - Edge-only winners are rejected unless corroborated by non-edge evidence or very strong per-cell confidence.
-   - Default config keeps classifier fallback disabled (`digitClassifier.enabled=false`) because current benchmark shows no MAE gain without exact-match/no-read guardrail safety.
+   - Digit classifier is enabled by default (`digitClassifier.enabled=true`).
 
 ## What Gets Logged
 

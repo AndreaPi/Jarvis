@@ -71,23 +71,18 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
 - On neural ROI failure, the UI shows an explicit reason and asks for manual measurement input.
 - Backend default ROI model is pinned to `backend/models/roi-rotaug-e30-640.pt` (override with `ROI_MODEL_PATH`).
 - `train_roi.py` enforces augmentation policy by default: heavy online augmentation + rotation expansion `90,180,270,360`.
-- Digit-classifier inference is optional behind `OCR_CONFIG.digitClassifier.enabled` (default `false`).
+- Digit-classifier inference is mandatory in the frontend OCR flow (`OCR_CONFIG.digitClassifier.enabled` defaults to `true`).
 - Backend serves ROI + digit endpoints and reports readiness via `GET /health`.
 - Test-set table includes `Detected`, `Absolute Error`, `Failure Reason`, and `Result`.
-- Frontend OCR branch evaluation is strip-only (word-pass + sparse scan); the 4-cell refine stage is removed from the active pipeline.
-- ROI word-pass defaults to raw candidate input (`roiDeterministic.wordPassModes: ['raw']`); debug stage `6. OCR input candidate` mirrors this mode.
-- `roiDeterministic.minWordPassHits` is `1`, but isolated edge-only single hits are rejected unless corroborated by non-edge evidence or very strong per-cell confidence.
+- Frontend OCR branch evaluation is strip-only classifier-first candidate decoding (no Tesseract word-pass/sparse-scan stages).
+- Isolated edge-only winners are rejected unless corroborated by non-edge evidence or strong per-cell confidence (configurable edge safeguard thresholds).
 - Edge-derived candidate generation is toggleable via `roiDeterministic.useEdgeCandidates` (default `true`) for controlled A/B experiments.
 - Current local benchmark set has `15` images.
 - Historical checkpoint comparison (March 2, 2026, fallback `OFF`, 14-image snapshot):
   - `roi-rotaug-e30-640.pt` (default pinned): exact-match `0/14`, failure mix `ocr-no-digits` (7), `mismatch` (6), `no-detection` (1).
   - `roi.pt` (challenger): exact-match `0/14`, failure mix `ocr-no-digits` (10), `mismatch` (4), `no-detection` (0).
-- Automated diff workflow is available via `npm run benchmark:roi-diff` (recent artifacts: `output/roi-checkpoint-diff/20260303-194206-fallback-off/roi-diff-report.md`).
-- Gated digit-classifier fallback is implemented in pipeline but remains disabled by default (`digitClassifier.enabled: false`).
-- Historical fallback benchmark (March 2, 2026, 14-image snapshot):
-  - Fallback `OFF` (`output/roi-checkpoint-diff/20260302-083324-fallback-off`): baseline `mismatch` 6 / `ocr-no-digits` 7; challenger `mismatch` 4 / `ocr-no-digits` 10.
-  - Fallback `ON` (`output/roi-checkpoint-diff/20260302-083529-fallback-on`): baseline `mismatch` 10 / `ocr-no-digits` 3; challenger `mismatch` 13 / `ocr-no-digits` 1.
-  - Net: no exact-match gain (`0/14` stays `0/14`), with strong false-positive shift (`ocr-no-digits` -> `mismatch`), so fallback stays disabled.
+- Automated diff workflow is available via `npm run benchmark:roi-diff`.
+- Diff artifacts now use `*-neural-digit` output folders because digit decoding is always neural-classifier-only.
 - Promotion and rollback decisions should now use `MAE` from `roi-diff-report` as the primary signal, with exact-match and no-read as guardrails.
 - ROI diff reports now include per-image selected metadata columns (`sourceLabel`, `method`, `preprocessMode`) and explicitly export the last stage `6. OCR input candidate` snapshot.
 
@@ -96,7 +91,7 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
 1. Keep `roi-rotaug-e30-640.pt` as default until a challenger beats it on end-to-end OCR metrics, not only detection presence.
 2. Re-run `npm run benchmark:roi-diff` after each ROI challenger to track per-image movement (`Detected`, stage `5/6` snapshots, reject reason), then summarize deltas in notes/PR.
 3. Tune strip preprocessing and candidate ranking for the current hard failures (`meter_07012020.JPEG`, `meter_02192026.JPEG`, `meter_02202026.JPEG`, `meter_02242026.JPEG`).
-4. Keep classifier fallback disabled until it beats fallback-off on `MAE` while respecting exact-match and no-read guardrails; focus on stricter fallback acceptance/ranking before re-testing.
+4. Improve classifier-first candidate ranking and acceptance thresholds to reduce `mismatch` while preserving low `ocr-no-digits`.
 5. Enforce checkpoint promotion gates from docs: no MAE regression, no exact-match regression, no no-read regression, and no regression in `ocr-no-digits`.
 6. Keep running both `npm run test:e2e` and UI `Run test set` before commits; include histogram deltas in commit/PR notes.
 7. Medium-term: evaluate YOLO OBB ROI detection to reduce rotation/edge ambiguity; this requires OBB relabeling, retraining, and backend response/schema changes before frontend adoption.
@@ -116,4 +111,4 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
    - `cd backend && source .venv/bin/activate && python validate_digit_dataset.py`
 4. Retrain classifier only after class coverage improves:
    - `cd backend && source .venv/bin/activate && python train_digit_classifier.py --device cpu`
-5. Keep classifier fallback disabled by default; only enable if benchmarked `MAE` improves without exact-match/no-read guardrail regressions.
+5. Keep classifier training/dataset refresh loop active; promote new checkpoints only when benchmarked `MAE` improves without exact-match/no-read guardrail regressions.

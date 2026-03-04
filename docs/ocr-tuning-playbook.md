@@ -2,12 +2,11 @@
 
 This playbook documents the practical loop used to improve OCR quality in Jarvis.
 
-Current baseline notes (March 2, 2026, fallback `OFF`, historical exact-match snapshot):
+Current baseline notes (March 4, 2026, neural-digit-only):
 
 - Test set: `0/14` exact-match (`Correct`)
 - Pinned model (`roi-rotaug-e30-640.pt`): `mismatch` 6, `ocr-no-digits` 7, `no-detection` 1
 - Challenger (`roi.pt`): `mismatch` 4, `ocr-no-digits` 10, `no-detection` 0
-- Gated fallback experiment (`JARVIS_DIGIT_FALLBACK=1`) reduced `ocr-no-digits` but increased `mismatch` with no exact-match gain, so fallback remains disabled.
 - Evaluation now uses `MAE` as the primary promotion signal; exact-match and no-read rates are guardrails.
 - The active local test-set CSV now has `15` images; keep historical `0/14` snapshots only for trend context.
 
@@ -82,13 +81,7 @@ Use the scripted checkpoint comparison to produce a per-image report between the
 npm run benchmark:roi-diff
 ```
 
-For the gated classifier fallback experiment (fallback only after `ocr-no-digits`), run:
-
-```bash
-JARVIS_DIGIT_FALLBACK=1 npm run benchmark:roi-diff
-```
-
-Compare fallback `ON` vs `OFF` with the same promotion gates; do not accept `ocr-no-digits` reductions that simply convert into `mismatch`.
+The benchmark always runs neural-digit-only decode (classifier enabled).
 
 Artifacts are saved to:
 
@@ -116,9 +109,9 @@ Promote a challenger checkpoint only if all gates pass on the same test-set run:
 
 If any gate fails, keep `roi-rotaug-e30-640.pt` as default and continue tuning extraction/selection.
 
-Fallback-specific rule:
+Classifier-default rule:
 
-- Keep `digitClassifier.enabled=false` by default until fallback `ON` beats fallback `OFF` on `MAE` and does not regress exact-match/no-read guardrails or increase `mismatch`.
+- Keep `digitClassifier.enabled=true` by default and tune ranking/acceptance using `MAE` + guardrails.
 
 ## High-Impact Tuning Areas
 
@@ -137,17 +130,14 @@ Signal to watch:
 - Empty `topCandidates` in selection logs
 - Debug stage `6` visually clear but still no accepted candidate
 
-### 2) Word-pass Input Modes (`mismatch` vs `ocr-no-digits`)
+### 2) Classifier Candidate Ranking (`mismatch` vs `ocr-no-digits`)
 
-File: `src/ocr/config.js` (`OCR_CONFIG.roiDeterministic.wordPassModes`)
+Files:
 
-Examples:
+- `src/ocr/pipeline.js` (candidate ranking + early stop)
+- `src/ocr/config.js` (`digitClassifier.maxPrimaryCandidates`, edge safeguards)
 
-- `['raw']` (current default): conservative
-- `['raw', 'soft']`: can reduce no-read but may increase mismatches
-- `['raw', 'soft', 'binary']`: often increases wrong confident reads
-
-Use temporary experiments first, then codify only if net-positive.
+Use temporary ranking/threshold experiments first, then codify only if net-positive.
 
 ### 3) Acceptance/Support Guardrails
 
@@ -160,7 +150,7 @@ Focus:
 
 - Balance strictness (avoid false positives) vs recall (avoid no-read).
 - Validate with histogram movement, not single-image anecdotes.
-- Active guardrails in current pipeline: word-pass support (`hits` / `topHits` vs `minWordPassHits`) plus edge-candidate corroboration/cell-strength checks.
+- Active guardrails in current pipeline: evidence ranking plus edge-candidate corroboration/cell-strength checks.
 
 ### 4) ROI Sanity Gates (usually not primary blocker)
 

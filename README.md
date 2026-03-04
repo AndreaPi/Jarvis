@@ -85,7 +85,7 @@ uvicorn app:app --host 127.0.0.1 --port 8001 --reload
 ```
 
 By default, the frontend calls `http://127.0.0.1:8001/roi/detect` and requires neural ROI detection before OCR.
-The frontend can also call `http://127.0.0.1:8001/digit/predict-cells` when `OCR_CONFIG.digitClassifier.enabled` is set to `true`.
+Digit decoding is neural-classifier-only and calls `http://127.0.0.1:8001/digit/predict-cells`.
 Check backend readiness with:
 
 ```bash
@@ -108,11 +108,6 @@ npm run benchmark:roi-diff
 
 Report artifacts are written under `output/roi-checkpoint-diff/<timestamp>/`.
 Per-image diff tables include selected OCR metadata (`sourceLabel`, `method`, `preprocessMode`) and stage `6` exports use the last `6. OCR input candidate` frame from each debug session.
-To benchmark with digit-classifier fallback enabled (gated to `ocr-no-digits`), run:
-
-```bash
-JARVIS_DIGIT_FALLBACK=1 npm run benchmark:roi-diff
-```
 
 CI runs these tests on every pull request and on pushes to `master`.
 
@@ -128,11 +123,9 @@ CI runs these tests on every pull request and on pushes to `master`.
 - `assets/`: Static assets and example uploads.
 
 ## Notes
-- OCR runs fully in the browser using Tesseract.js.
 - OCR now relies on neural ROI detection; if the backend is unavailable or ROI fails, the app asks for manual reading input.
-- ROI word-pass defaults to raw strip input; stage `6. OCR input candidate` mirrors the configured OCR input mode.
+- Digit decoding uses the backend neural classifier endpoint (`/digit/predict-cells`) and is enabled by default.
 - Edge-derived ROI strip candidates are enabled by default and can be toggled with `OCR_CONFIG.roiDeterministic.useEdgeCandidates`.
-- Digit decoding can optionally use a backend classifier (`src/ocr/config.js` -> `digitClassifier.enabled`), which is `false` by default.
 - The selection layer is fail-safe: isolated edge-only single hits are rejected unless independently corroborated.
 - Use the UI `Run test set` action plus `npm run test:e2e` for OCR regressions before and after tuning.
 - The Gmail flow opens a draft; you always review and send manually.
