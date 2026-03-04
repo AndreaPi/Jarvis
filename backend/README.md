@@ -69,7 +69,7 @@ python plan_digit_expansion.py --target-train-per-digit 12 --priority-digits 4,5
 
 ## Train a dedicated digit classifier
 
-This trains a small per-cell CNN on `data/digit_dataset/cells` and writes:
+This trains a small per-cell CNN on real labeled sections (`data/digit_dataset/sections_labeled`) and writes:
 - weights: `backend/models/digit_classifier.pt`
 - training summary: `backend/runs/digit-classifier/digit_classifier_summary.json`
 
@@ -77,6 +77,20 @@ This trains a small per-cell CNN on `data/digit_dataset/cells` and writes:
 cd backend
 source .venv/bin/activate
 python train_digit_classifier.py --device cpu
+```
+
+Optional: generate synthetic **train-only** sections from real train patches, then mix real + synthetic in training.
+Val/test remain strictly real-only.
+
+```bash
+cd backend
+source .venv/bin/activate
+python generate_synthetic_digit_dataset.py --clean --direct-per-real 6 --compose-window-count 180
+python train_digit_classifier.py \
+  --device cpu \
+  --synthetic-root data/digit_dataset/sections_synthetic \
+  --synthetic-target-ratio 2.0 \
+  --name digit-classifier-synth-v1
 ```
 
 ## 3) Start the API

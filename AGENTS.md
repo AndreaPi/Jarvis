@@ -11,6 +11,7 @@
 - `src/debug/`: Debug overlay rendering helpers.
 - `backend/`: Optional FastAPI service for neural ROI + digit classifier inference and training scripts.
 - `backend/build_digit_dataset.py`: Export strip/cell OCR datasets + QA previews from ROI labels.
+- `backend/generate_synthetic_digit_dataset.py`: Build synthetic train-only digit sections (direct cell augmentation + optional composed windows re-split equispaced).
 - `backend/plan_digit_expansion.py`: Generate prioritized capture plan for underrepresented digits.
 - `backend/validate_digit_dataset.py`: Validate manifest consistency and QA preview coverage.
 - `backend/train_digit_classifier.py`: Train per-cell digit classifier checkpoint.
@@ -25,8 +26,10 @@
 - `cd backend && source .venv/bin/activate && python train_roi.py --data data/roi_dataset.yaml --base-model yolov8n.pt --rotation-angles 90,180,270,360 --heavy-augment`: Fine-tune pretrained ROI detector with enforced augmentation policy.
 - `cd backend && source .venv/bin/activate && python build_digit_dataset.py --clean`: Rebuild digit strip/cell exports and QA previews.
 - `cd backend && source .venv/bin/activate && python validate_digit_dataset.py`: Validate dataset/manifests before training.
+- `cd backend && source .venv/bin/activate && python generate_synthetic_digit_dataset.py --clean --direct-per-real 6 --compose-window-count 180`: Generate synthetic train-only digit sections from real train labels.
 - `cd backend && source .venv/bin/activate && python plan_digit_expansion.py --target-train-per-digit 12 --priority-digits 4,5,6,9`: Refresh targeted capture checklist.
-- `cd backend && source .venv/bin/activate && python train_digit_classifier.py --device cpu`: Train per-cell digit classifier model.
+- `cd backend && source .venv/bin/activate && python train_digit_classifier.py --device cpu`: Train per-cell digit classifier model (real-only).
+- `cd backend && source .venv/bin/activate && python train_digit_classifier.py --device cpu --synthetic-root data/digit_dataset/sections_synthetic --synthetic-target-ratio 2.0`: Train on mixed real + synthetic train split while keeping val/test real-only.
 - `cd backend && source .venv/bin/activate && uvicorn app:app --host 127.0.0.1 --port 8001 --reload`: Run neural ROI API.
 
 Open `http://localhost:8000` after running a serve command. Backend endpoints default to `http://127.0.0.1:8001/roi/detect` and `http://127.0.0.1:8001/digit/predict-cells`.

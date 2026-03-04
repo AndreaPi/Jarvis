@@ -142,6 +142,29 @@ def parse_args() -> argparse.Namespace:
     default=0.85,
     help="Probability of applying split-jitter augmentation on each train sample."
   )
+  parser.add_argument(
+    "--synthetic-root",
+    default="",
+    help=(
+      "Optional synthetic dataset root with train/<digit> folders. "
+      "When provided, synthetic samples are mixed into train only."
+    )
+  )
+  parser.add_argument(
+    "--synthetic-target-ratio",
+    type=float,
+    default=0.0,
+    help=(
+      "Target synthetic-to-real ratio for effective training set (train split only). "
+      "Example: 2.0 means up to 2 synthetic samples per real sample."
+    )
+  )
+  parser.add_argument(
+    "--synthetic-seed",
+    type=int,
+    default=42,
+    help="Sampling seed used when selecting synthetic samples for the requested ratio."
+  )
   parser.add_argument("--seed", type=int, default=42)
   parser.add_argument(
     "--device",
@@ -206,6 +229,59 @@ def count_labels(samples: list[Sample]) -> dict[str, int]:
 
 def format_counts(counts: dict[str, int]) -> str:
   return ", ".join([f"{digit}:{counts[str(digit)]}" for digit in range(DEFAULT_NUM_CLASSES)])
+
+
+def select_synthetic_samples(
+  real_samples: list[Sample],
+  synthetic_samples: list[Sample],
+  target_ratio: float,
+  seed: int
+) -> list[Sample]:
+  if not real_samples or not synthetic_samples:
+    return []
+  if target_ratio <= 0:
+    return []
+
+  desired_total = int(round(len(real_samples) * target_ratio))
+  if desired_total <= 0:
+    return []
+  desired_total = min(desired_total, len(synthetic_samples))
+
+  rng = random.Random(seed)
+  real_counts = count_labels(real_samples)
+  synthetic_by_label: dict[int, list[Sample]] = {index: [] for index in range(DEFAULT_NUM_CLASSES)}
+  for sample in synthetic_samples:
+    synthetic_by_label[sample.label].append(sample)
+
+  for bucket in synthetic_by_label.values():
+    rng.shuffle(bucket)
+
+  total_real = max(1, len(real_samples))
+  selected: list[Sample] = []
+  leftovers: list[Sample] = []
+  for label in range(DEFAULT_NUM_CLASSES):
+    pool = synthetic_by_label[label]
+    if not pool:
+      continue
+    quota = int(round(desired_total * (real_counts[str(label)] / total_real)))
+    quota = min(quota, len(pool))
+    if quota > 0:
+      selected.extend(pool[:quota])
+      leftovers.extend(pool[quota:])
+    else:
+      leftovers.extend(pool)
+
+  if len(selected) > desired_total:
+    rng.shuffle(selected)
+    selected = selected[:desired_total]
+    return selected
+
+  if len(selected) < desired_total and leftovers:
+    rng.shuffle(leftovers)
+    needed = desired_total - len(selected)
+    selected.extend(leftovers[:needed])
+
+  return selected
 
 
 def make_class_weights(train_samples: list[Sample], device: torch.device) -> torch.Tensor:
@@ -300,6 +376,7 @@ def main() -> None:
   args = parse_args()
   base_dir = Path(__file__).resolve().parent
   dataset_root = resolve_path(base_dir, args.dataset_root)
+  synthetic_root = resolve_path(base_dir, args.synthetic_root) if args.synthetic_root else None
   project_root = resolve_path(base_dir, args.project)
   output_path = resolve_path(base_dir, args.copy_to)
   run_dir = project_root / args.name
@@ -307,6 +384,8 @@ def main() -> None:
 
   if not dataset_root.exists():
     raise FileNotFoundError(f"Dataset root not found: {dataset_root}")
+  if synthetic_root and not synthetic_root.exists():
+    raise FileNotFoundError(f"Synthetic root not found: {synthetic_root}")
   if args.image_size <= 0:
     raise ValueError("--image-size must be positive.")
   if args.batch_size <= 0:
@@ -319,23 +398,51 @@ def main() -> None:
     raise ValueError("--split-jitter-y must be >= 0.")
   if args.split_jitter_prob < 0 or args.split_jitter_prob > 1:
     raise ValueError("--split-jitter-prob must be in [0, 1].")
+  if args.synthetic_target_ratio < 0:
+    raise ValueError("--synthetic-target-ratio must be >= 0.")
 
   set_seed(args.seed)
   device = resolve_device(args.device)
   if device.type.startswith("cuda") and not torch.cuda.is_available():
     raise RuntimeError("CUDA device requested but CUDA is not available.")
 
-  train_samples = collect_split_samples(dataset_root, "train")
+  real_train_samples = collect_split_samples(dataset_root, "train")
   val_samples = collect_split_samples(dataset_root, "val")
   test_samples = collect_split_samples(dataset_root, "test")
-  if not train_samples:
+  if not real_train_samples:
     raise RuntimeError(f"No train samples found under {dataset_root / 'train'}")
 
+  synthetic_train_all = (
+    collect_split_samples(synthetic_root, "train")
+    if synthetic_root is not None
+    else []
+  )
+  synthetic_train_selected = select_synthetic_samples(
+    real_samples=real_train_samples,
+    synthetic_samples=synthetic_train_all,
+    target_ratio=args.synthetic_target_ratio,
+    seed=args.synthetic_seed
+  )
+  train_samples = [*real_train_samples, *synthetic_train_selected]
+
   train_counts = count_labels(train_samples)
+  real_train_counts = count_labels(real_train_samples)
+  synthetic_train_counts = count_labels(synthetic_train_selected)
   val_counts = count_labels(val_samples)
   test_counts = count_labels(test_samples)
   print(f"Dataset: {dataset_root}")
-  print(f"Train samples: {len(train_samples)} ({format_counts(train_counts)})")
+  if synthetic_root is not None:
+    print(f"Synthetic root: {synthetic_root}")
+    print(
+      f"Train real samples: {len(real_train_samples)} "
+      f"({format_counts(real_train_counts)})"
+    )
+    print(
+      f"Train synthetic selected: {len(synthetic_train_selected)} / {len(synthetic_train_all)} "
+      f"(target_ratio={args.synthetic_target_ratio:.2f}, seed={args.synthetic_seed}) "
+      f"({format_counts(synthetic_train_counts)})"
+    )
+  print(f"Train effective samples: {len(train_samples)} ({format_counts(train_counts)})")
   print(f"Val samples: {len(val_samples)} ({format_counts(val_counts)})")
   print(f"Test samples: {len(test_samples)} ({format_counts(test_counts)})")
 
@@ -458,6 +565,8 @@ def main() -> None:
     "image_size": args.image_size,
     "best_epoch": best_epoch,
     "device": str(device),
+    "train_real_counts": real_train_counts,
+    "train_synthetic_counts": synthetic_train_counts,
     "train_counts": train_counts,
     "val_counts": val_counts,
     "test_counts": test_counts,
@@ -479,6 +588,11 @@ def main() -> None:
     "training_seconds": elapsed_s,
     "device": str(device),
     "class_names": DEFAULT_CLASS_NAMES,
+    "synthetic_root": str(synthetic_root) if synthetic_root is not None else None,
+    "synthetic_target_ratio": args.synthetic_target_ratio,
+    "synthetic_seed": args.synthetic_seed,
+    "train_real_counts": real_train_counts,
+    "train_synthetic_counts": synthetic_train_counts,
     "train_counts": train_counts,
     "val_counts": val_counts,
     "test_counts": test_counts,
