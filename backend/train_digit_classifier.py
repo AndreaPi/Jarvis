@@ -40,10 +40,21 @@ class Sample:
 
 
 class DigitCellDataset(Dataset):
-  def __init__(self, samples: list[Sample], image_size: int, augment: bool = False):
+  def __init__(
+    self,
+    samples: list[Sample],
+    image_size: int,
+    augment: bool = False,
+    split_jitter_x: float = 0.0,
+    split_jitter_y: float = 0.0,
+    split_jitter_prob: float = 0.0
+  ):
     self.samples = samples
     self.image_size = image_size
     self.augment = augment
+    self.split_jitter_x = max(0.0, float(split_jitter_x))
+    self.split_jitter_y = max(0.0, float(split_jitter_y))
+    self.split_jitter_prob = min(1.0, max(0.0, float(split_jitter_prob)))
 
   def __len__(self) -> int:
     return len(self.samples)
@@ -51,6 +62,23 @@ class DigitCellDataset(Dataset):
   def _augment_image(self, image: Image.Image) -> Image.Image:
     if not self.augment:
       return image
+    if self.split_jitter_prob > 0 and random.random() < self.split_jitter_prob:
+      max_dx = int(round(image.width * self.split_jitter_x))
+      max_dy = int(round(image.height * self.split_jitter_y))
+      if max_dx > 0 or max_dy > 0:
+        dx = random.randint(-max_dx, max_dx) if max_dx > 0 else 0
+        dy = random.randint(-max_dy, max_dy) if max_dy > 0 else 0
+        shifted = Image.new("L", image.size, color=255)
+        src_x0 = max(0, -dx)
+        src_y0 = max(0, -dy)
+        src_x1 = min(image.width, image.width - dx) if dx >= 0 else image.width
+        src_y1 = min(image.height, image.height - dy) if dy >= 0 else image.height
+        if src_x1 > src_x0 and src_y1 > src_y0:
+          patch = image.crop((src_x0, src_y0, src_x1, src_y1))
+          dst_x = max(0, dx)
+          dst_y = max(0, dy)
+          shifted.paste(patch, (dst_x, dst_y))
+          image = shifted
     if random.random() < 0.9:
       if hasattr(Image, "Resampling"):
         image = image.rotate(
@@ -85,7 +113,7 @@ def parse_args() -> argparse.Namespace:
   )
   parser.add_argument(
     "--dataset-root",
-    default="data/digit_dataset/cells",
+    default="data/digit_dataset/sections_labeled",
     help="Dataset root with split folders (train/val/test)."
   )
   parser.add_argument("--epochs", type=int, default=180)
@@ -96,6 +124,24 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--image-size", type=int, default=DEFAULT_IMAGE_SIZE)
   parser.add_argument("--epoch-sample-multiplier", type=int, default=6)
   parser.add_argument("--num-workers", type=int, default=0)
+  parser.add_argument(
+    "--split-jitter-x",
+    type=float,
+    default=0.08,
+    help="Max horizontal translation as a fraction of sample width for split-jitter augmentation."
+  )
+  parser.add_argument(
+    "--split-jitter-y",
+    type=float,
+    default=0.08,
+    help="Max vertical translation as a fraction of sample height for split-jitter augmentation."
+  )
+  parser.add_argument(
+    "--split-jitter-prob",
+    type=float,
+    default=0.85,
+    help="Probability of applying split-jitter augmentation on each train sample."
+  )
   parser.add_argument("--seed", type=int, default=42)
   parser.add_argument(
     "--device",
@@ -267,6 +313,12 @@ def main() -> None:
     raise ValueError("--batch-size must be positive.")
   if args.epochs <= 0:
     raise ValueError("--epochs must be positive.")
+  if args.split_jitter_x < 0:
+    raise ValueError("--split-jitter-x must be >= 0.")
+  if args.split_jitter_y < 0:
+    raise ValueError("--split-jitter-y must be >= 0.")
+  if args.split_jitter_prob < 0 or args.split_jitter_prob > 1:
+    raise ValueError("--split-jitter-prob must be in [0, 1].")
 
   set_seed(args.seed)
   device = resolve_device(args.device)
@@ -287,7 +339,14 @@ def main() -> None:
   print(f"Val samples: {len(val_samples)} ({format_counts(val_counts)})")
   print(f"Test samples: {len(test_samples)} ({format_counts(test_counts)})")
 
-  train_dataset = DigitCellDataset(train_samples, image_size=args.image_size, augment=True)
+  train_dataset = DigitCellDataset(
+    train_samples,
+    image_size=args.image_size,
+    augment=True,
+    split_jitter_x=args.split_jitter_x,
+    split_jitter_y=args.split_jitter_y,
+    split_jitter_prob=args.split_jitter_prob
+  )
   val_dataset = DigitCellDataset(val_samples, image_size=args.image_size, augment=False)
   test_dataset = DigitCellDataset(test_samples, image_size=args.image_size, augment=False)
 
