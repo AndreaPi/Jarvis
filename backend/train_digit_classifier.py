@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import random
 import time
 from dataclasses import dataclass
@@ -165,6 +166,21 @@ def parse_args() -> argparse.Namespace:
     default=42,
     help="Sampling seed used when selecting synthetic samples for the requested ratio."
   )
+  parser.add_argument(
+    "--synthetic-selection-strategy",
+    choices=("balanced", "proportional"),
+    default="balanced",
+    help=(
+      "How to select synthetic train samples when a target ratio is requested. "
+      "'balanced' prioritizes underrepresented digits; 'proportional' mirrors the real-label distribution."
+    )
+  )
+  parser.add_argument(
+    "--label-smoothing",
+    type=float,
+    default=0.05,
+    help="Cross-entropy label smoothing for classifier training."
+  )
   parser.add_argument("--seed", type=int, default=42)
   parser.add_argument(
     "--device",
@@ -235,7 +251,8 @@ def select_synthetic_samples(
   real_samples: list[Sample],
   synthetic_samples: list[Sample],
   target_ratio: float,
-  seed: int
+  seed: int,
+  strategy: str = "balanced"
 ) -> list[Sample]:
   if not real_samples or not synthetic_samples:
     return []
@@ -255,6 +272,45 @@ def select_synthetic_samples(
 
   for bucket in synthetic_by_label.values():
     rng.shuffle(bucket)
+
+  if strategy == "balanced":
+    current_counts = {
+      label: real_counts[str(label)]
+      for label in range(DEFAULT_NUM_CLASSES)
+    }
+    selected_counts = {label: 0 for label in range(DEFAULT_NUM_CLASSES)}
+    selected: list[Sample] = []
+    target_per_class = int(math.ceil((len(real_samples) + desired_total) / DEFAULT_NUM_CLASSES))
+
+    # First, bring weak classes toward a roughly uniform effective count.
+    for label in sorted(range(DEFAULT_NUM_CLASSES), key=lambda value: (current_counts[value], value)):
+      pool = synthetic_by_label[label]
+      deficit = max(0, target_per_class - current_counts[label])
+      take = min(deficit, len(pool), desired_total - len(selected))
+      if take <= 0:
+        continue
+      selected.extend(pool[:take])
+      synthetic_by_label[label] = pool[take:]
+      selected_counts[label] += take
+      current_counts[label] += take
+      if len(selected) >= desired_total:
+        return selected
+
+    # If synthetic budget remains, keep distributing one sample at a time to the smallest classes.
+    while len(selected) < desired_total:
+      candidates = [
+        label
+        for label in range(DEFAULT_NUM_CLASSES)
+        if synthetic_by_label[label]
+      ]
+      if not candidates:
+        break
+      candidates.sort(key=lambda value: (current_counts[value], selected_counts[value], value))
+      chosen = candidates[0]
+      selected.append(synthetic_by_label[chosen].pop())
+      selected_counts[chosen] += 1
+      current_counts[chosen] += 1
+    return selected
 
   total_real = max(1, len(real_samples))
   selected: list[Sample] = []
@@ -400,6 +456,8 @@ def main() -> None:
     raise ValueError("--split-jitter-prob must be in [0, 1].")
   if args.synthetic_target_ratio < 0:
     raise ValueError("--synthetic-target-ratio must be >= 0.")
+  if args.label_smoothing < 0 or args.label_smoothing >= 1:
+    raise ValueError("--label-smoothing must be in [0, 1).")
 
   set_seed(args.seed)
   device = resolve_device(args.device)
@@ -421,7 +479,8 @@ def main() -> None:
     real_samples=real_train_samples,
     synthetic_samples=synthetic_train_all,
     target_ratio=args.synthetic_target_ratio,
-    seed=args.synthetic_seed
+    seed=args.synthetic_seed,
+    strategy=args.synthetic_selection_strategy
   )
   train_samples = [*real_train_samples, *synthetic_train_selected]
 
@@ -439,7 +498,8 @@ def main() -> None:
     )
     print(
       f"Train synthetic selected: {len(synthetic_train_selected)} / {len(synthetic_train_all)} "
-      f"(target_ratio={args.synthetic_target_ratio:.2f}, seed={args.synthetic_seed}) "
+      f"(target_ratio={args.synthetic_target_ratio:.2f}, seed={args.synthetic_seed}, "
+      f"strategy={args.synthetic_selection_strategy}) "
       f"({format_counts(synthetic_train_counts)})"
     )
   print(f"Train effective samples: {len(train_samples)} ({format_counts(train_counts)})")
@@ -483,7 +543,10 @@ def main() -> None:
 
   model = build_digit_cnn(DEFAULT_NUM_CLASSES).to(device)
   class_weights = make_class_weights(train_samples, device)
-  criterion = nn.CrossEntropyLoss(weight=class_weights)
+  criterion = nn.CrossEntropyLoss(
+    weight=class_weights,
+    label_smoothing=args.label_smoothing
+  )
   optimizer = torch.optim.AdamW(
     model.parameters(),
     lr=args.learning_rate,

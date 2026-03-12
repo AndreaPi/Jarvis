@@ -42,6 +42,21 @@ python train_roi.py --data data/roi_dataset.yaml --base-model yolov8n.pt --allow
 After training, best weights are copied to `backend/models/roi.pt`.
 The API default is pinned to `backend/models/roi-rotaug-e30-640.pt`; use `ROI_MODEL_PATH` to explicitly test/use `roi.pt` or another checkpoint.
 
+Promoted checkpoints in `backend/models/*.pt` are Tier 1 artifacts. Track them with DVC and push them to your configured DVC remote:
+
+```bash
+cd ..
+uv pip install --python backend/.venv/bin/python dvc
+dvc add backend/models/*.pt
+dvc push
+```
+
+If your remote is not configured yet, add one once:
+
+```bash
+dvc remote add -d storage <your-remote-url>
+```
+
 ## Build a digit OCR dataset from ROI labels
 
 Current recommended flow:
@@ -104,6 +119,8 @@ python train_digit_classifier.py \
   --synthetic-target-ratio 2.0 \
   --name digit-classifier-synth-v1
 ```
+
+After promoting a new ROI or digit checkpoint, run `dvc add` for the changed artifacts, `dvc push`, then package Tier 1 artifacts and publish them as Release assets so the raw photos, labels, manifests, and promoted weights are recoverable off-machine.
 
 ## 3) Start the API
 

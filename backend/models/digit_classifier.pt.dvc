@@ -1,0 +1,5 @@
+outs:
+- md5: 1ddaf9ab7d334315fe37dba4a1671219
+  size: 990021
+  hash: md5
+  path: digit_classifier.pt

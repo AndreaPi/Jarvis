@@ -7,6 +7,8 @@ description: "Run a full Jarvis meter-image ingestion in one flow: clean assets 
 
 Execute this workflow from the Jarvis repository root.
 
+Use `backend/.venv` for any Python step in this workflow. Do not rely on the system Python for CV or image dependencies such as `ultralytics` or `Pillow`.
+
 ## Workflow
 
 1. Remove Windows sidecars every run.
@@ -50,7 +52,12 @@ Execute this workflow from the Jarvis repository root.
 9. Re-render full ROI QA overlays.
    - `cd backend && source .venv/bin/activate && python visualize_roi_labels.py`
 
-10. Validate and summarize.
+10. Refresh DVC-tracked artifacts.
+   - Run `dvc add backend/data/roi_dataset/images`
+   - Run `dvc add assets/<new-meter-file>` for each newly ingested raw photo
+   - Run `dvc push` if a DVC remote is configured
+
+11. Validate and summarize.
    - Confirm no sidecars remain.
    - Confirm every CSV filename exists in `assets/`.
    - Report:
@@ -73,3 +80,4 @@ Execute this workflow from the Jarvis repository root.
 
 - Default ROI model for sync helper: `backend/models/roi-rotaug-e30-640.pt`.
 - Override model path with `--model-path backend/models/<other-model>.pt` when needed.
+- Raw meter photos and ROI image binaries are retained with DVC; do not leave new ingested files outside DVC tracking.

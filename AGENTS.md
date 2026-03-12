@@ -26,6 +26,7 @@
 - `npm run serve`: Start a simple local web server on port 8000.
 - `npm run dev`: Alias of `npm run serve`.
 - `cd backend && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`: Backend setup.
+- For any Python task that depends on computer-vision packages or image tooling (for example `ultralytics`, `opencv`, or `Pillow`), use `backend/.venv` rather than the system Python.
 - `cd backend && source .venv/bin/activate && python train_roi.py --data data/roi_dataset.yaml --base-model yolov8n.pt --rotation-angles 90,180,270,360 --heavy-augment`: Fine-tune pretrained ROI detector with enforced augmentation policy.
 - `cd backend && source .venv/bin/activate && python extract_digit_windows.py --clean`: Rebuild split-wise digit windows from ROI labels.
 - `cd backend && source .venv/bin/activate && python split_digit_windows.py --clean`: Canonicalize + split windows into 4 equispaced sections.
@@ -65,6 +66,15 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
 - The Gmail draft flow opens a client-side draft; no credentials are stored in code.
 - OCR runs in the browser; avoid adding API keys to the client without a secure proxy.
 - Backend is intended for local use; keep host/CORS scoped to localhost unless explicitly deploying.
+
+## Artifact Retention
+- Treat raw `assets/` photos, `assets/meter_readings.csv`, ROI images/labels, digit manifests, and promoted `backend/models/*.pt` checkpoints as must-retain artifacts.
+- Use DVC for large Tier 1 binaries:
+  - per-file DVC tracking for raw meter photos in `assets/`
+  - `backend/data/roi_dataset/images.dvc`
+  - per-file DVC tracking for promoted `backend/models/*.pt`
+- After dataset ingestion or model promotion, run the relevant `dvc add ...` commands, then `dvc push`.
+- Use `scripts/package-tier1-artifacts.sh` plus the manual `Publish Artifacts` workflow for release-style snapshots after the DVC remote is up to date.
 
 ## IMPORTANT
 - When using Playwright in this environment, global `playwright-cli` may be more reliable than the wrapper if npm network is flaky.

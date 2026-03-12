@@ -44,6 +44,8 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+Use `backend/.venv` for any Python workflow that touches images or CV dependencies such as `ultralytics`, `opencv`, or `Pillow`.
+
 For CPU-only environments (for example Vercel), install:
 
 ```bash
@@ -70,6 +72,52 @@ Optional: train the per-cell digit classifier checkpoint:
 ```bash
 python train_digit_classifier.py --device cpu
 ```
+
+## Artifact Retention
+
+Treat the following as Tier 1 artifacts that must not be lost:
+
+- raw meter photos in `assets/`
+- `assets/meter_readings.csv`
+- `backend/data/roi_dataset/images/**`
+- `backend/data/roi_dataset/labels/**`
+- `backend/data/digit_dataset/manifests/**`
+- promoted checkpoints in `backend/models/*.pt`
+
+The repo now uses DVC for the large Tier 1 binaries:
+
+```bash
+uv pip install --python backend/.venv/bin/python dvc
+```
+
+Currently tracked by DVC:
+
+- each raw meter photo in `assets/` via per-file `*.dvc` pointers
+- `backend/data/roi_dataset/images` via `backend/data/roi_dataset/images.dvc`
+- promoted model weights in `backend/models/*.pt` via per-file `*.dvc` pointers
+
+After dataset ingestion or model promotion:
+
+```bash
+dvc add backend/data/roi_dataset/images
+dvc add backend/models/*.pt
+find assets -maxdepth 1 -type f ! -name 'meter_readings.csv' ! -name '*:Zone.Identifier' -print0 | xargs -0 dvc add
+dvc push
+```
+
+Configure an off-machine DVC remote once before using `dvc push`:
+
+```bash
+dvc remote add -d storage <your-remote-url>
+```
+
+Then create a backup archive when you want a releaseable snapshot:
+
+```bash
+scripts/package-tier1-artifacts.sh
+```
+
+For GitHub-hosted retention, set the `DVC_REMOTE_URL` repository secret and use the manual `Publish Artifacts` workflow to `dvc pull`, package, and upload a release snapshot.
 
 For dataset expansion/QA before retraining:
 

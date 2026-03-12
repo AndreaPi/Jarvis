@@ -1,0 +1,59 @@
+name: Publish Artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: Release tag to create or update
+        required: true
+      release_name:
+        description: Human-readable release name
+        required: true
+      archive_name:
+        description: Archive base name without extension
+        required: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install DVC
+        run: python -m pip install dvc
+
+      - name: Configure DVC remote
+        env:
+          DVC_REMOTE_URL: ${{ secrets.DVC_REMOTE_URL }}
+        run: |
+          if [ -z "$DVC_REMOTE_URL" ]; then
+            echo "DVC_REMOTE_URL secret is required for Publish Artifacts." >&2
+            exit 1
+          fi
+          dvc remote add -f -d storage "$DVC_REMOTE_URL"
+
+      - name: Pull DVC data
+        run: dvc pull
+
+      - name: Package Tier 1 artifacts
+        run: |
+          chmod +x scripts/package-tier1-artifacts.sh
+          scripts/package-tier1-artifacts.sh \
+            --output-dir output/artifacts/release \
+            --archive-name "${{ inputs.archive_name }}"
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag_name }}
+          name: ${{ inputs.release_name }}
+          files: |
+            output/artifacts/release/*
