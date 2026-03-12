@@ -18,7 +18,7 @@ Execute this workflow from the Jarvis repository root.
 
 3. Rename each candidate from EXIF date.
    - Read EXIF: `identify -format '%[EXIF:DateTimeOriginal]\n' assets/<file>`
-   - Rename to `meter_mmddyyyy` while preserving extension/case.
+   - Rename to `meter_yyyymmdd` while preserving extension/case.
    - If target exists, append `_1`, `_2`, `_3`, ...
 
 4. Read and record the meter value.

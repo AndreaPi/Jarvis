@@ -1,7 +1,7 @@
 const path = require('path');
 const { test, expect } = require('@playwright/test');
 
-const METER_IMAGE_PATH = path.resolve(__dirname, '..', '..', 'assets', 'meter_02142026.JPEG');
+const METER_IMAGE_PATH = path.resolve(__dirname, '..', '..', 'assets', 'meter_20260214.JPEG');
 
 const noDetectionPayload = JSON.stringify({
   ok: false,

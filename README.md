@@ -132,6 +132,6 @@ CI runs these tests on every pull request and on pushes to `master`.
 
 ## Asset Naming (Meter Images)
 - Use the EXIF `DateTimeOriginal` value as the source of truth for the acquisition date.
-- Rename files to `meter_mmddyyyy` (zero-padded) and keep the original extension.
+- Rename files to `meter_yyyymmdd` (zero-padded) and keep the original extension.
 - If multiple images share the same date, keep one as-is and add numeric suffixes to the rest (e.g., `_1`, `_2`).
 - If EXIF is missing, prefer a known date from the filename or capture notes and document it.
