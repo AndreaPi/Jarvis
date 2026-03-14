@@ -227,6 +227,13 @@ const serializeCellConfidences = (confidences) => {
   });
 };
 
+const isRepeatedDigitReading = (value) => {
+  if (typeof value !== 'string' || value.length !== OCR_CONFIG.preferredDigits) {
+    return false;
+  }
+  return new Set(value.split('')).size === 1;
+};
+
 const finalizeSelection = ({ debugLabel, roiUsed, bestResult, evidenceMap, branchUsed, rejectSummary = [] }) => {
   const rankedEvidence = rankSelectionEvidence(evidenceMap);
   const evidenceBest = rankedEvidence[0] || null;
@@ -595,14 +602,31 @@ const evaluateCandidateBranch = async ({
     if (!Array.isArray(rawCandidates) || !rawCandidates.length) {
       return [];
     }
-    const fallbackPreferNonEdge = classifierConfig.fallbackPreferNonEdge !== false;
     const fallbackTargetAspect = Number.isFinite(classifierConfig.fallbackTargetAspect)
       ? Math.max(0.4, classifierConfig.fallbackTargetAspect)
       : 2.6;
     const minStripAspect = Number.isFinite(roiDeterministic.minStripAspect) ? roiDeterministic.minStripAspect : 1.45;
     const maxStripAspect = Number.isFinite(roiDeterministic.maxStripAspect) ? roiDeterministic.maxStripAspect : 8.2;
+    const strongEdgeAngles = new Set(
+      rawCandidates
+        .filter((candidate) => candidate && candidate.canvas && isEdgeSourceLabel(candidate.label))
+        .map((candidate) => {
+          const angle = extractCandidateAngle(candidate.label);
+          const aspect = candidate.canvas.width / Math.max(1, candidate.canvas.height);
+          const inStripRange = aspect >= minStripAspect && aspect <= maxStripAspect;
+          return Number.isFinite(angle) && inStripRange ? angle : null;
+        })
+        .filter((angle) => Number.isFinite(angle))
+    );
 
     return rawCandidates
+      .filter((candidate) => {
+        if (!candidate || !candidate.canvas || !candidate.label || isEdgeSourceLabel(candidate.label)) {
+          return true;
+        }
+        const angle = extractCandidateAngle(candidate.label);
+        return !Number.isFinite(angle) || !strongEdgeAngles.has(angle);
+      })
       .filter((candidate) => hasValidCandidateGeometry(candidate, 'classifier-primary'))
       .map((candidate) => {
         const width = candidate.canvas.width;
@@ -619,9 +643,7 @@ const evaluateCandidateBranch = async ({
         fallbackScore += inStripRange ? 0.75 : -0.4;
         fallbackScore += aspectCloseness * 0.5;
         fallbackScore += heightCloseness * 0.2;
-        if (fallbackPreferNonEdge) {
-          fallbackScore += isEdge ? -0.35 : 0.35;
-        }
+        fallbackScore += isEdge ? 0.35 : -0.2;
         if (Number.isFinite(angle) && (angle === 90 || angle === 270)) {
           fallbackScore += 0.1;
         }
@@ -638,7 +660,7 @@ const evaluateCandidateBranch = async ({
       })
       .sort((a, b) => (
         b.fallbackScore - a.fallbackScore
-        || ((isEdgeSourceLabel(a.label) ? 1 : 0) - (isEdgeSourceLabel(b.label) ? 1 : 0))
+        || ((isEdgeSourceLabel(b.label) ? 1 : 0) - (isEdgeSourceLabel(a.label) ? 1 : 0))
         || (b.canvas.width - a.canvas.width)
       ));
   };
@@ -698,7 +720,11 @@ const evaluateCandidateBranch = async ({
         ? Math.max(1, Math.min(20, Math.round(OCR_CONFIG.fallbackCandidates)))
         : 6
     );
-  let selectedCandidates = rankedCandidates.slice(0, maxPrimaryCandidates);
+  const rankedEdgeCandidates = rankedCandidates.filter((candidate) => isEdgeSourceLabel(candidate.label));
+  const rankedBaseCandidates = rankedCandidates.filter((candidate) => !isEdgeSourceLabel(candidate.label));
+  let selectedCandidates = rankedEdgeCandidates.length
+    ? rankedEdgeCandidates.slice(0, maxPrimaryCandidates)
+    : rankedBaseCandidates.slice(0, maxPrimaryCandidates);
   if (classifierConfig.forceInitialPreviewCandidate === true) {
     const initialCandidate = activeCandidates.find((candidate) => (
       hasValidCandidateGeometry(candidate, 'classifier-primary-force-initial')
@@ -717,88 +743,110 @@ const evaluateCandidateBranch = async ({
     };
   }
 
-  const nonEdgeAvailable = selectedCandidates.some((candidate) => !isEdgeSourceLabel(candidate.label));
-  let pass = 0;
-  const expectedPasses = selectedCandidates.length;
+  const runCandidatePass = async (candidates, stageLabel) => {
+    const nonEdgeAvailable = candidates.some((candidate) => !isEdgeSourceLabel(candidate.label));
+    let pass = 0;
+    const expectedPasses = candidates.length;
 
-  for (const candidate of selectedCandidates) {
-    pass += 1;
-    if (setProgress) {
-      setProgress(`Classifying digits (${pass}/${expectedPasses})`);
-    }
+    for (const candidate of candidates) {
+      pass += 1;
+      if (setProgress) {
+        setProgress(`Classifying digits (${pass}/${expectedPasses})`);
+      }
 
-    if (isEdgeSourceLabel(candidate.label)) {
-      const fallbackScore = Number.isFinite(candidate.fallbackScore)
-        ? Number(candidate.fallbackScore.toFixed(3))
-        : null;
-      const fallbackAspect = Number.isFinite(candidate.fallbackAspect)
-        ? Number(candidate.fallbackAspect.toFixed(3))
-        : (
-          candidate.canvas
-            ? Number((candidate.canvas.width / Math.max(1, candidate.canvas.height)).toFixed(3))
-            : null
+      if (isEdgeSourceLabel(candidate.label)) {
+        const fallbackScore = Number.isFinite(candidate.fallbackScore)
+          ? Number(candidate.fallbackScore.toFixed(3))
+          : null;
+        const fallbackAspect = Number.isFinite(candidate.fallbackAspect)
+          ? Number(candidate.fallbackAspect.toFixed(3))
+          : (
+            candidate.canvas
+              ? Number((candidate.canvas.width / Math.max(1, candidate.canvas.height)).toFixed(3))
+              : null
+          );
+        recordReject('classifier-edge-candidate-selected', {
+          stage: stageLabel,
+          sourceLabel: candidate.label,
+          score: fallbackScore,
+          aspect: fallbackAspect,
+          nonEdgeAlternative: nonEdgeAvailable
+        });
+      }
+
+      const reading = await readDigitsByCells(candidate.canvas, null, {
+        roiMode: true,
+        onReject: (detail) => recordDecodeReject(candidate, detail, stageLabel)
+      });
+      if (!reading) {
+        continue;
+      }
+      if (!isPreferredLengthReading(reading)) {
+        recordReject('classifier-non4-reading', {
+          stage: stageLabel,
+          sourceLabel: candidate.label,
+          value: reading.value || null
+        });
+        continue;
+      }
+
+      const classifierReading = applyReadingMetadata({
+        ...reading,
+        preprocessMode: 'raw'
+      }, candidate, 'digit-classifier-primary');
+      if (!classifierReading) {
+        continue;
+      }
+      if (
+        !isEdgeSourceLabel(classifierReading.sourceLabel)
+        && String(classifierReading.method || '').startsWith('digit-classifier')
+        && isRepeatedDigitReading(classifierReading.value)
+      ) {
+        classifierReading.score = Math.max(0, (classifierReading.score ?? 0) - 0.22);
+        recordReject('classifier-repeated-digit-penalty', {
+          stage: stageLabel,
+          sourceLabel: classifierReading.sourceLabel,
+          value: classifierReading.value,
+          penalty: 0.22
+        });
+      }
+      if (classifierReading.sourceLabel && classifierReading.decodedStripCanvas) {
+        recordDecodeCanvas(
+          classifierReading.sourceLabel,
+          classifierReading.angle,
+          classifierReading.decodedStripCanvas
         );
-      recordReject('classifier-edge-candidate-selected', {
-        stage: 'classifier-primary',
-        sourceLabel: candidate.label,
-        score: fallbackScore,
-        aspect: fallbackAspect,
-        nonEdgeAlternative: nonEdgeAvailable
-      });
-    }
+      }
+      const classifierReadingForSelection = { ...classifierReading };
+      delete classifierReadingForSelection.decodedStripCanvas;
 
-    const reading = await readDigitsByCells(candidate.canvas, null, {
-      roiMode: true,
-      onReject: (detail) => recordDecodeReject(candidate, detail, 'classifier-primary')
-    });
-    if (!reading) {
-      continue;
-    }
-    if (!isPreferredLengthReading(reading)) {
-      recordReject('classifier-non4-reading', {
-        stage: 'classifier-primary',
-        sourceLabel: candidate.label,
-        value: reading.value || null
-      });
-      continue;
-    }
+      if (
+        !bestResult
+        || classifierReadingForSelection.score > bestResult.score
+        || (
+          classifierReadingForSelection.score === bestResult.score
+          && (classifierReadingForSelection.confidence ?? 0) > (bestResult.confidence ?? 0)
+        )
+      ) {
+        bestResult = classifierReadingForSelection;
+      }
+      recordCandidateReadings(classifierReadingForSelection, `${candidate.label}:classifier`);
 
-    const classifierReading = applyReadingMetadata({
-      ...reading,
-      preprocessMode: 'raw'
-    }, candidate, 'digit-classifier-primary');
-    if (!classifierReading) {
-      continue;
+      if (
+        bestResult
+        && bestResult.score >= OCR_CONFIG.earlyStopScore
+        && isEdgeSourceLabel(bestResult.sourceLabel)
+      ) {
+        return true;
+      }
     }
-    if (classifierReading.sourceLabel && classifierReading.decodedStripCanvas) {
-      recordDecodeCanvas(
-        classifierReading.sourceLabel,
-        classifierReading.angle,
-        classifierReading.decodedStripCanvas
-      );
-    }
-    const classifierReadingForSelection = { ...classifierReading };
-    delete classifierReadingForSelection.decodedStripCanvas;
+    return false;
+  };
 
-    if (
-      !bestResult
-      || classifierReadingForSelection.score > bestResult.score
-      || (
-        classifierReadingForSelection.score === bestResult.score
-        && (classifierReadingForSelection.confidence ?? 0) > (bestResult.confidence ?? 0)
-      )
-    ) {
-      bestResult = classifierReadingForSelection;
-    }
-    recordCandidateReadings(classifierReadingForSelection, `${candidate.label}:classifier`);
-
-    if (
-      bestResult
-      && bestResult.score >= OCR_CONFIG.earlyStopScore
-      && !isEdgeSourceLabel(bestResult.sourceLabel)
-    ) {
-      break;
-    }
+  const edgeWonEarly = await runCandidatePass(selectedCandidates, 'classifier-primary');
+  if (!edgeWonEarly && !bestResult && rankedBaseCandidates.length) {
+    selectedCandidates = rankedBaseCandidates.slice(0, maxPrimaryCandidates);
+    await runCandidatePass(selectedCandidates, 'classifier-fallback-base');
   }
 
   return {

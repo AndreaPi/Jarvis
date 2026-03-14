@@ -244,33 +244,6 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
       return null;
     }
 
-    let aspect = normalized.width / Math.max(1, normalized.height);
-    if (aspect < minStripAspect) {
-      const targetHeight = Math.max(minCandidateHeight, Math.min(normalized.height, Math.round(normalized.width / minStripAspect)));
-      if (targetHeight < normalized.height) {
-        const { rows } = buildInkProjection(normalized);
-        const startY = findMaxInkWindowStart(rows, targetHeight);
-        normalized = cropCanvas(normalized, {
-          x: 0,
-          y: startY,
-          width: normalized.width,
-          height: targetHeight
-        });
-      }
-    } else if (aspect > maxStripAspect) {
-      const targetWidth = Math.max(minCandidateWidth, Math.min(normalized.width, Math.round(normalized.height * maxStripAspect)));
-      if (targetWidth < normalized.width) {
-        const { columns } = buildInkProjection(normalized);
-        const startX = findMaxInkWindowStart(columns, targetWidth);
-        normalized = cropCanvas(normalized, {
-          x: startX,
-          y: 0,
-          width: targetWidth,
-          height: normalized.height
-        });
-      }
-    }
-
     normalized = resizeCanvasWidth(normalized, normalizeWidth);
     if (normalized && normalized.height > normalized.width) {
       normalized = rotateCanvas(normalized, 90);
@@ -280,7 +253,7 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
       return null;
     }
 
-    aspect = normalized.width / Math.max(1, normalized.height);
+    const aspect = normalized.width / Math.max(1, normalized.height);
     if (aspect < minStripAspect || aspect > maxStripAspect) {
       const hardMinStripAspect = minStripAspect * 0.96;
       const hardMaxStripAspect = maxStripAspect * 1.06;
@@ -423,10 +396,16 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
   const baseOrientation = Number.isFinite(roiNormalized.majorAxisRotation)
     ? normalizeAngle(roiNormalized.majorAxisRotation)
     : 0;
+  const tryOppositeOrientation = roiDeterministic.tryOppositeOrientation === true;
   const orientationVariants = [
-    { orientation: baseOrientation, canvas: roiNormalized.canvas },
-    { orientation: normalizeAngle(baseOrientation + 180), canvas: rotateCanvas(roiNormalized.canvas, 180) }
+    { orientation: baseOrientation, canvas: roiNormalized.canvas }
   ];
+  if (tryOppositeOrientation) {
+    orientationVariants.push({
+      orientation: normalizeAngle(baseOrientation + 180),
+      canvas: rotateCanvas(roiNormalized.canvas, 180)
+    });
+  }
   let best = null;
 
   for (let i = 0; i < orientationVariants.length; i += 1) {

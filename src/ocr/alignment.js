@@ -17,11 +17,15 @@ const buildNeuralRoiCandidates = (source, debugSession, addDebugStageFn = () => 
     ? roiDeterministic.wordPassModes.find((mode) => mode === 'soft' || mode === 'binary' || mode === 'raw') || 'raw'
     : 'raw';
 
-  const angles = source.height > source.width
-    ? [90, 270, 0, 180]
-    : [0, 180, 90, 270];
+  const configuredAngles = Array.isArray(roiDeterministic.primaryAngles) && roiDeterministic.primaryAngles.length
+    ? roiDeterministic.primaryAngles
+    : [90, 270];
+  const angles = configuredAngles
+    .map((angle) => Number.parseInt(angle, 10))
+    .filter((angle, index, values) => Number.isFinite(angle) && values.indexOf(angle) === index);
   const candidates = [];
   let debugStripSource = null;
+  let baseFallbackCandidate = null;
 
   const pushCandidate = (canvas, label) => {
     if (!canvas) {
@@ -48,8 +52,20 @@ const buildNeuralRoiCandidates = (source, debugSession, addDebugStageFn = () => 
       }
     }
 
-    pushCandidate(rotated, `roi-${angle}-base`);
+    if (!baseFallbackCandidate) {
+      const normalized = scaleCanvas(rotated, normalizeWidth);
+      if (normalized && normalized.width >= 24 && normalized.height >= 16) {
+        baseFallbackCandidate = { canvas: normalized, label: `roi-${angle}-base` };
+        if (!debugStripSource) {
+          debugStripSource = rotated;
+        }
+      }
+    }
   });
+
+  if (!candidates.length && baseFallbackCandidate) {
+    candidates.push(baseFallbackCandidate);
+  }
 
   if (!candidates.length) {
     const fallback = scaleCanvas(source, normalizeWidth);
