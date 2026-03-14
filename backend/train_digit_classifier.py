@@ -12,7 +12,7 @@ import numpy as np
 import torch
 from PIL import Image, ImageEnhance
 from torch import nn
-from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
+from torch.utils.data import DataLoader, Dataset
 
 try:
   from .digit_model import (
@@ -123,7 +123,6 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--weight-decay", type=float, default=1.0e-4)
   parser.add_argument("--patience", type=int, default=40)
   parser.add_argument("--image-size", type=int, default=DEFAULT_IMAGE_SIZE)
-  parser.add_argument("--epoch-sample-multiplier", type=int, default=6)
   parser.add_argument("--num-workers", type=int, default=0)
   parser.add_argument(
     "--split-jitter-x",
@@ -169,7 +168,7 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument(
     "--synthetic-selection-strategy",
     choices=("balanced", "proportional"),
-    default="balanced",
+    default="proportional",
     help=(
       "How to select synthetic train samples when a target ratio is requested. "
       "'balanced' prioritizes underrepresented digits; 'proportional' mirrors the real-label distribution."
@@ -358,25 +357,6 @@ def make_class_weights(train_samples: list[Sample], device: torch.device) -> tor
   return class_weights
 
 
-def make_train_sampler(train_samples: list[Sample], multiplier: int) -> WeightedRandomSampler | None:
-  if multiplier <= 1:
-    return None
-
-  label_counts = count_labels(train_samples)
-  sample_weights: list[float] = []
-  for sample in train_samples:
-    count = label_counts[str(sample.label)]
-    sample_weights.append(1.0 / float(max(count, 1)))
-
-  base_count = len(train_samples)
-  sampled_count = max(base_count * multiplier, base_count)
-  return WeightedRandomSampler(
-    weights=torch.tensor(sample_weights, dtype=torch.double),
-    num_samples=sampled_count,
-    replacement=True
-  )
-
-
 def run_epoch(
   model: nn.Module,
   loader: DataLoader,
@@ -517,12 +497,10 @@ def main() -> None:
   val_dataset = DigitCellDataset(val_samples, image_size=args.image_size, augment=False)
   test_dataset = DigitCellDataset(test_samples, image_size=args.image_size, augment=False)
 
-  train_sampler = make_train_sampler(train_samples, args.epoch_sample_multiplier)
   train_loader = DataLoader(
     train_dataset,
     batch_size=args.batch_size,
-    sampler=train_sampler,
-    shuffle=train_sampler is None,
+    shuffle=True,
     num_workers=args.num_workers,
     pin_memory=device.type == "cuda"
   )
