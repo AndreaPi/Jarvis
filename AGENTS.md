@@ -90,12 +90,14 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
 - Backend serves ROI + digit endpoints and reports readiness via `GET /health`.
 - Test-set table includes `Detected`, `Absolute Error`, `Failure Reason`, and `Result`.
 - Frontend OCR branch evaluation is strip-only classifier-first candidate decoding (no Tesseract word-pass/sparse-scan stages).
-- Isolated edge-only winners are rejected unless corroborated by non-edge evidence or strong per-cell confidence (configurable edge safeguard thresholds).
+- Neural-ROI OCR now prefers `90/270` edge candidates first; same-angle base candidates are fallback-only when edge candidates fail.
+- Opposite-orientation retry is disabled by default (`roiDeterministic.tryOppositeOrientation=false`).
+- Final edge acceptance still uses confidence thresholds, but the selector no longer requires non-edge corroboration by default.
 - Edge-derived candidate generation is toggleable via `roiDeterministic.useEdgeCandidates` (default `true`) for controlled A/B experiments.
 - Debug overlay semantics:
   - `6a. OCR input candidate (initial preview)` = first valid ROI candidate before classifier ranking.
   - `6. OCR input candidate` = winning decode input (exact strip variant/angle used by final selection).
-- Current local benchmark set has `15` images.
+- Current local benchmark set has `17` images.
 - Historical checkpoint comparison (March 2, 2026, legacy fallback `OFF`, 14-image snapshot):
   - `roi-rotaug-e30-640.pt` (default pinned): exact-match `0/14`, failure mix `ocr-no-digits` (7), `mismatch` (6), `no-detection` (1).
   - `roi.pt` (challenger): exact-match `0/14`, failure mix `ocr-no-digits` (10), `mismatch` (4), `no-detection` (0).

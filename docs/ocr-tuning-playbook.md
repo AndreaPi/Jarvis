@@ -7,7 +7,7 @@ Current baseline policy:
 - Use the latest UI **Run test set** histogram as source of truth (`window.__jarvisLastTestSetHistogram`).
 - Treat fixed numeric snapshots as historical only; they go stale quickly as thresholds/ranking change.
 - Evaluation uses `MAE` as the primary promotion signal; `Exact Match` and `No-read` are guardrails.
-- The active local test-set CSV has `15` images.
+- The active local test-set CSV has `17` images.
 
 Digit dataset status (current workflow):
 
@@ -152,7 +152,7 @@ Focus:
 
 - Balance strictness (avoid false positives) vs recall (avoid no-read).
 - Validate with histogram movement, not single-image anecdotes.
-- Active guardrails in current pipeline: evidence ranking plus edge-candidate corroboration/cell-strength checks.
+- Active guardrails in current pipeline: evidence ranking, edge-first candidate selection, base-candidate fallback, and final edge-confidence checks.
 
 ### 4) ROI Sanity Gates (usually not primary blocker)
 
