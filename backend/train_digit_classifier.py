@@ -151,6 +151,15 @@ def parse_args() -> argparse.Namespace:
     )
   )
   parser.add_argument(
+    "--extra-train-root",
+    action="append",
+    default=[],
+    help=(
+      "Optional additional dataset root(s) with train/<digit> folders. "
+      "These samples are added to train only; val/test stay from --dataset-root."
+    )
+  )
+  parser.add_argument(
     "--synthetic-target-ratio",
     type=float,
     default=0.0,
@@ -189,6 +198,11 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--project", default="runs")
   parser.add_argument("--name", default="digit-classifier")
   parser.add_argument("--copy-to", default="models/digit_classifier.pt")
+  parser.add_argument(
+    "--init-checkpoint",
+    default="",
+    help="Optional checkpoint to load before training."
+  )
   return parser.parse_args()
 
 
@@ -413,8 +427,14 @@ def main() -> None:
   base_dir = Path(__file__).resolve().parent
   dataset_root = resolve_path(base_dir, args.dataset_root)
   synthetic_root = resolve_path(base_dir, args.synthetic_root) if args.synthetic_root else None
+  extra_train_roots = [
+    resolve_path(base_dir, value)
+    for value in (args.extra_train_root or [])
+    if value
+  ]
   project_root = resolve_path(base_dir, args.project)
   output_path = resolve_path(base_dir, args.copy_to)
+  init_checkpoint = resolve_path(base_dir, args.init_checkpoint) if args.init_checkpoint else None
   run_dir = project_root / args.name
   run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -422,6 +442,9 @@ def main() -> None:
     raise FileNotFoundError(f"Dataset root not found: {dataset_root}")
   if synthetic_root and not synthetic_root.exists():
     raise FileNotFoundError(f"Synthetic root not found: {synthetic_root}")
+  for extra_root in extra_train_roots:
+    if not extra_root.exists():
+      raise FileNotFoundError(f"Extra train root not found: {extra_root}")
   if args.image_size <= 0:
     raise ValueError("--image-size must be positive.")
   if args.batch_size <= 0:
@@ -438,6 +461,8 @@ def main() -> None:
     raise ValueError("--synthetic-target-ratio must be >= 0.")
   if args.label_smoothing < 0 or args.label_smoothing >= 1:
     raise ValueError("--label-smoothing must be in [0, 1).")
+  if init_checkpoint and not init_checkpoint.exists():
+    raise FileNotFoundError(f"Init checkpoint not found: {init_checkpoint}")
 
   set_seed(args.seed)
   device = resolve_device(args.device)
@@ -445,10 +470,14 @@ def main() -> None:
     raise RuntimeError("CUDA device requested but CUDA is not available.")
 
   real_train_samples = collect_split_samples(dataset_root, "train")
+  extra_train_samples = []
+  for extra_root in extra_train_roots:
+    extra_train_samples.extend(collect_split_samples(extra_root, "train"))
   val_samples = collect_split_samples(dataset_root, "val")
   test_samples = collect_split_samples(dataset_root, "test")
   if not real_train_samples:
     raise RuntimeError(f"No train samples found under {dataset_root / 'train'}")
+  base_train_samples = [*real_train_samples, *extra_train_samples]
 
   synthetic_train_all = (
     collect_split_samples(synthetic_root, "train")
@@ -456,26 +485,33 @@ def main() -> None:
     else []
   )
   synthetic_train_selected = select_synthetic_samples(
-    real_samples=real_train_samples,
+    real_samples=base_train_samples,
     synthetic_samples=synthetic_train_all,
     target_ratio=args.synthetic_target_ratio,
     seed=args.synthetic_seed,
     strategy=args.synthetic_selection_strategy
   )
-  train_samples = [*real_train_samples, *synthetic_train_selected]
+  train_samples = [*base_train_samples, *synthetic_train_selected]
 
   train_counts = count_labels(train_samples)
   real_train_counts = count_labels(real_train_samples)
+  extra_train_counts = count_labels(extra_train_samples)
   synthetic_train_counts = count_labels(synthetic_train_selected)
   val_counts = count_labels(val_samples)
   test_counts = count_labels(test_samples)
   print(f"Dataset: {dataset_root}")
   if synthetic_root is not None:
     print(f"Synthetic root: {synthetic_root}")
+  print(
+    f"Train real samples: {len(real_train_samples)} "
+    f"({format_counts(real_train_counts)})"
+  )
+  if extra_train_roots:
     print(
-      f"Train real samples: {len(real_train_samples)} "
-      f"({format_counts(real_train_counts)})"
+      f"Train extra samples: {len(extra_train_samples)} "
+      f"({format_counts(extra_train_counts)})"
     )
+  if synthetic_root is not None:
     print(
       f"Train synthetic selected: {len(synthetic_train_selected)} / {len(synthetic_train_all)} "
       f"(target_ratio={args.synthetic_target_ratio:.2f}, seed={args.synthetic_seed}, "
@@ -520,6 +556,11 @@ def main() -> None:
   ) if len(test_dataset) else None
 
   model = build_digit_cnn(DEFAULT_NUM_CLASSES).to(device)
+  if init_checkpoint is not None:
+    payload = torch.load(str(init_checkpoint), map_location="cpu")
+    if not isinstance(payload, dict) or not isinstance(payload.get("state_dict"), dict):
+      raise RuntimeError(f"Init checkpoint missing state_dict: {init_checkpoint}")
+    model.load_state_dict(payload["state_dict"], strict=True)
   class_weights = make_class_weights(train_samples, device)
   criterion = nn.CrossEntropyLoss(
     weight=class_weights,
@@ -607,6 +648,7 @@ def main() -> None:
     "best_epoch": best_epoch,
     "device": str(device),
     "train_real_counts": real_train_counts,
+    "train_extra_counts": extra_train_counts,
     "train_synthetic_counts": synthetic_train_counts,
     "train_counts": train_counts,
     "val_counts": val_counts,
@@ -630,9 +672,11 @@ def main() -> None:
     "device": str(device),
     "class_names": DEFAULT_CLASS_NAMES,
     "synthetic_root": str(synthetic_root) if synthetic_root is not None else None,
+    "extra_train_roots": [str(path) for path in extra_train_roots],
     "synthetic_target_ratio": args.synthetic_target_ratio,
     "synthetic_seed": args.synthetic_seed,
     "train_real_counts": real_train_counts,
+    "train_extra_counts": extra_train_counts,
     "train_synthetic_counts": synthetic_train_counts,
     "train_counts": train_counts,
     "val_counts": val_counts,
