@@ -1,2 +1,6 @@
 [core]
     analytics = false
+    remote = b2
+['remote "b2"']
+    url = s3://my-jarvis-artifacts/jarvis-dvc
+    endpointurl = https://s3.eu-central-003.backblazeb2.com

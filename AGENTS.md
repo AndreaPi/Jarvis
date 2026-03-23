@@ -100,6 +100,9 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
   - `6a. OCR input candidate (initial preview)` = first valid ROI candidate before classifier ranking.
   - `6. OCR input candidate` = winning decode input (exact strip variant/angle used by final selection).
 - Current local benchmark set has `17` images.
+- Current promoted digit-classifier baseline from runtime failure-crop retraining:
+  - UI test set: `MAE 818.38`, `Exact Match 8/17`, `No-read 1/17`
+  - `npm run test:e2e`: passes (`6/6`)
 - Historical checkpoint comparison (March 2, 2026, legacy fallback `OFF`, 14-image snapshot):
   - `roi-rotaug-e30-640.pt` (default pinned): exact-match `0/14`, failure mix `ocr-no-digits` (7), `mismatch` (6), `no-detection` (1).
   - `roi.pt` (challenger): exact-match `0/14`, failure mix `ocr-no-digits` (10), `mismatch` (4), `no-detection` (0).
@@ -111,12 +114,12 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
 
 ## Next TODOs
 
-1. Keep `roi-rotaug-e30-640.pt` as default until a challenger beats it on end-to-end OCR metrics, not only detection presence.
-2. Re-run `npm run benchmark:roi-diff` after each ROI challenger to track per-image movement (`Detected`, stage `5/6` snapshots, reject reason), then summarize deltas in notes/PR.
-3. Tune strip preprocessing and candidate ranking on the current highest-absolute-error rows from each new test-set run.
-4. Improve classifier-first candidate ranking and acceptance thresholds to reduce `mismatch` while preserving low no-read.
-5. Enforce checkpoint promotion gates from docs: no MAE regression, no exact-match regression, no no-read regression, and no regression in dominant no-read buckets (`classifier-edge-gate-final-drop` / `ocr-no-digits`).
-6. Keep running both `npm run test:e2e` and UI `Run test set` before commits; include histogram deltas in commit/PR notes.
+1. Keep the current digit-classifier baseline (`MAE 818.38`, `Exact Match 8/17`, `No-read 1/17`) as the promotion target for future OCR work.
+2. Instrument the remaining mismatch images in the live browser OCR path and compare the exact winning runtime candidates against the offline runtime-failure exporter outputs before any more classifier retraining.
+3. Fix the remaining neural ROI miss on `meter_20201111.JPEG`; only promote a new ROI checkpoint if it improves end-to-end OCR metrics, not just detection presence.
+4. Continue classifier cleanup only on the residual mismatch subset after the runtime/exporter divergence is resolved; do not promote challengers that regress `MAE`, exact-match, or no-read guardrails.
+5. Keep `roi-rotaug-e30-640.pt` as default until a challenger beats it on end-to-end OCR metrics, and re-run `npm run benchmark:roi-diff` after each ROI challenger to summarize per-image movement (`Detected`, stage `5/6` snapshots, reject reason).
+6. Keep running both `npm run test:e2e` and UI `Run test set` before commits; include histogram deltas and benchmark baselines in commit/PR notes.
 7. Medium-term: evaluate YOLO OBB ROI detection to reduce rotation/edge ambiguity; this requires OBB relabeling, retraining, and backend response/schema changes before frontend adoption.
 
 ### OBB Notes (Re-verify Before Implementation)
