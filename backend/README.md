@@ -46,15 +46,19 @@ Promoted checkpoints in `backend/models/*.pt` are Tier 1 artifacts. Track them w
 
 ```bash
 cd ..
-uv pip install --python backend/.venv/bin/python dvc
+uv pip install --python backend/.venv/bin/python "dvc[s3]"
 dvc add backend/models/*.pt
-dvc push
+scripts/dvc-push-safe.sh backend/models/*.pt
 ```
 
-If your remote is not configured yet, add one once:
+If your remote is not configured yet, add one once. For Backblaze B2, use its S3-compatible endpoint:
 
 ```bash
-dvc remote add -d storage <your-remote-url>
+source backend/.venv/bin/activate
+dvc remote add -d b2 s3://<bucket-name>/jarvis-dvc
+dvc remote modify b2 endpointurl https://s3.<region>.backblazeb2.com
+dvc remote modify --local b2 access_key_id <key-id>
+dvc remote modify --local b2 secret_access_key <application-key>
 ```
 
 ## Build a digit OCR dataset from ROI labels
@@ -120,7 +124,7 @@ python train_digit_classifier.py \
   --name digit-classifier-synth-v1
 ```
 
-After promoting a new ROI or digit checkpoint, run `dvc add` for the changed artifacts, `dvc push`, then package Tier 1 artifacts and publish them as Release assets so the raw photos, labels, manifests, and promoted weights are recoverable off-machine.
+After promoting a new ROI or digit checkpoint, run `dvc add` for the changed artifacts, push with `scripts/dvc-push-safe.sh`, then package Tier 1 artifacts and publish them as Release assets so the raw photos, labels, manifests, and promoted weights are recoverable off-machine.
 
 ## 3) Start the API
 

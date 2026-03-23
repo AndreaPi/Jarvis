@@ -87,7 +87,7 @@ Treat the following as Tier 1 artifacts that must not be lost:
 The repo now uses DVC for the large Tier 1 binaries:
 
 ```bash
-uv pip install --python backend/.venv/bin/python dvc
+uv pip install --python backend/.venv/bin/python "dvc[s3]"
 ```
 
 Currently tracked by DVC:
@@ -99,17 +99,28 @@ Currently tracked by DVC:
 After dataset ingestion or model promotion:
 
 ```bash
+source backend/.venv/bin/activate
 dvc add backend/data/roi_dataset/images
 dvc add backend/models/*.pt
 find assets -maxdepth 1 -type f ! -name 'meter_readings.csv' ! -name '*:Zone.Identifier' -print0 | xargs -0 dvc add
-dvc push
+scripts/dvc-push-safe.sh
 ```
 
-Configure an off-machine DVC remote once before using `dvc push`:
+Do not run raw `dvc push` directly in this repo. `scripts/dvc-push-safe.sh` activates `backend/.venv`, checks that a default DVC remote is configured, and refuses to push if the remote is a plain local path instead of a cloud/object-store URL.
+
+Configure an off-machine DVC remote once before using `dvc push`.
+
+Backblaze B2 is a good default choice for this repo because the current artifact footprint is tiny and fits comfortably within B2's free storage tier. DVC talks to B2 through its S3-compatible endpoint:
 
 ```bash
-dvc remote add -d storage <your-remote-url>
+source backend/.venv/bin/activate
+dvc remote add -d b2 s3://<bucket-name>/jarvis-dvc
+dvc remote modify b2 endpointurl https://s3.<region>.backblazeb2.com
+dvc remote modify --local b2 access_key_id <key-id>
+dvc remote modify --local b2 secret_access_key <application-key>
 ```
+
+`dvc[s3]` must be installed in `backend/.venv` before this works. The access key and secret should stay in `.dvc/config.local`, not in committed repo config.
 
 Then create a backup archive when you want a releaseable snapshot:
 
