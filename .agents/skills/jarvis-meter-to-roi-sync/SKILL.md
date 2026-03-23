@@ -55,7 +55,7 @@ Use `backend/.venv` for any Python step in this workflow. Do not rely on the sys
 10. Refresh DVC-tracked artifacts.
    - Run `dvc add backend/data/roi_dataset/images`
    - Run `dvc add assets/<new-meter-file>` for each newly ingested raw photo
-   - Run `dvc push` if a DVC remote is configured
+   - Run `scripts/dvc-push-safe.sh` if a DVC remote is configured
 
 11. Validate and summarize.
    - Confirm no sidecars remain.

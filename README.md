@@ -108,7 +108,7 @@ scripts/dvc-push-safe.sh
 
 Do not run raw `dvc push` directly in this repo. `scripts/dvc-push-safe.sh` activates `backend/.venv`, checks that a default DVC remote is configured, and refuses to push if the remote is a plain local path instead of a cloud/object-store URL.
 
-Configure an off-machine DVC remote once before using `dvc push`.
+Configure an off-machine DVC remote once before using `scripts/dvc-push-safe.sh`.
 
 Backblaze B2 is a good default choice for this repo because the current artifact footprint is tiny and fits comfortably within B2's free storage tier. DVC talks to B2 through its S3-compatible endpoint:
 
