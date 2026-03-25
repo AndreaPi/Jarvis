@@ -328,7 +328,10 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
     if (setProgress) {
       setProgress('Classifying digit sections...');
     }
-    const classifierProbe = await predictDigitCells(cellCanvases, classifier);
+    let classifierProbe = await predictDigitCells(cellCanvases, classifier);
+    if (!classifierProbe.ok && classifierProbe.reason === 'cooldown') {
+      classifierProbe = await predictDigitCells(cellCanvases, classifier, { ignoreCooldown: true });
+    }
     if (!classifierProbe.ok) {
       const rejectReason = classifierProbe.reason === 'disabled'
         ? 'classifier-disabled'

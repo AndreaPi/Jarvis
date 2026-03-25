@@ -49,14 +49,15 @@ const clearFailureState = () => {
   runtimeState.disabledUntilTs = 0;
 };
 
-const predictDigitCells = async (cellCanvases, classifierConfig) => {
+const predictDigitCells = async (cellCanvases, classifierConfig, requestOptions = {}) => {
   if (!classifierConfig || !classifierConfig.enabled || !classifierConfig.endpoint) {
     return createProbeMiss('disabled');
   }
   if (!Array.isArray(cellCanvases) || !cellCanvases.length) {
     return createProbeMiss('missing-cells');
   }
-  if (Date.now() < runtimeState.disabledUntilTs) {
+  const ignoreCooldown = requestOptions && requestOptions.ignoreCooldown === true;
+  if (!ignoreCooldown && Date.now() < runtimeState.disabledUntilTs) {
     return createProbeMiss('cooldown');
   }
   if (typeof fetch !== 'function' || typeof FormData === 'undefined') {

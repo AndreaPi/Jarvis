@@ -223,6 +223,46 @@ test('asks for manual input when classifier endpoint fails after ROI success', a
   await expect(page.locator('#reading-input')).toHaveValue('');
 });
 
+test('recovers from classifier cooldown once the backend responds again', async ({ page }) => {
+  let classifierMode = 'network-error';
+  let classifierCalls = 0;
+  await page.route('**/digit/predict-cells', async (route) => {
+    classifierCalls += 1;
+    if (classifierMode === 'network-error') {
+      await route.abort('failed');
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: {
+        'access-control-allow-origin': '*'
+      },
+      body: buildDigitClassifierPayload(['2', '3', '1', '1'], 0.98)
+    });
+  });
+  await page.route('**/roi/detect', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: {
+        'access-control-allow-origin': '*'
+      },
+      body: successPayload
+    });
+  });
+  await openAppAndUploadImage(page);
+
+  await page.getByRole('button', { name: 'Read meter' }).click();
+  await expect(page.locator('#ocr-status')).toContainText('No clear reading detected. Enter it manually.');
+
+  classifierMode = 'success';
+  await page.getByRole('button', { name: 'Read meter' }).click();
+  await expect(page.locator('#ocr-status')).toContainText('Reading detected: 2311. Review if needed.');
+  await expect(page.locator('#reading-input')).toHaveValue('2311');
+  expect(classifierCalls).toBeGreaterThanOrEqual(2);
+});
+
 test('keeps ROI debug crop geometry stable for narrow neural ROI boxes', async ({ page }) => {
   await installDigitClassifierMock(page, { digits: ['2', '3', '1', '2'], confidence: 0.97 });
   await page.route('**/roi/detect', async (route) => {
