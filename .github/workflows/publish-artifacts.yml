@@ -47,6 +47,10 @@ jobs:
           fi
 
       - name: Pull DVC data
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.DVC_REMOTE_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.DVC_REMOTE_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.DVC_REMOTE_SESSION_TOKEN }}
         run: dvc pull
 
       - name: Package Tier 1 artifacts

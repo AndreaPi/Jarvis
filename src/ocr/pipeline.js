@@ -673,26 +673,8 @@ const evaluateCandidateBranch = async ({
       : 2.6;
     const minStripAspect = Number.isFinite(roiDeterministic.minStripAspect) ? roiDeterministic.minStripAspect : 1.45;
     const maxStripAspect = Number.isFinite(roiDeterministic.maxStripAspect) ? roiDeterministic.maxStripAspect : 8.2;
-    const strongEdgeAngles = new Set(
-      rawCandidates
-        .filter((candidate) => candidate && candidate.canvas && isEdgeSourceLabel(candidate.label))
-        .map((candidate) => {
-          const angle = extractCandidateAngle(candidate.label);
-          const aspect = candidate.canvas.width / Math.max(1, candidate.canvas.height);
-          const inStripRange = aspect >= minStripAspect && aspect <= maxStripAspect;
-          return Number.isFinite(angle) && inStripRange ? angle : null;
-        })
-        .filter((angle) => Number.isFinite(angle))
-    );
 
     return rawCandidates
-      .filter((candidate) => {
-        if (!candidate || !candidate.canvas || !candidate.label || isEdgeSourceLabel(candidate.label)) {
-          return true;
-        }
-        const angle = extractCandidateAngle(candidate.label);
-        return !Number.isFinite(angle) || !strongEdgeAngles.has(angle);
-      })
       .filter((candidate) => hasValidCandidateGeometry(candidate, 'classifier-primary'))
       .map((candidate) => {
         const width = candidate.canvas.width;

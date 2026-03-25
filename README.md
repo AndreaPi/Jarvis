@@ -128,7 +128,7 @@ Then create a backup archive when you want a releaseable snapshot:
 scripts/package-tier1-artifacts.sh
 ```
 
-For GitHub-hosted retention, set the `DVC_REMOTE_URL` repository secret and use the manual `Publish Artifacts` workflow to `dvc pull`, package, and upload a release snapshot.
+For GitHub-hosted retention, set the `DVC_REMOTE_URL`, `DVC_REMOTE_ACCESS_KEY_ID`, and `DVC_REMOTE_SECRET_ACCESS_KEY` repository secrets (plus optional `DVC_REMOTE_SESSION_TOKEN` if your remote uses temporary credentials), then use the manual `Publish Artifacts` workflow to `dvc pull`, package, and upload a release snapshot.
 
 For dataset expansion/QA before retraining:
 
