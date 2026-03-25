@@ -1,66 +1,49 @@
 # Repository Guidelines
 
+## Scope
+- This file covers repo-wide guidance only.
+- Backend-specific runtime, training, and API instructions live in `backend/AGENTS.md`.
+- OCR-specific behavior, benchmarks, and tuning policy live in `src/ocr/AGENTS.md`.
+
 ## Project Structure & Module Organization
 - `index.html`: Single-page UI layout and content.
 - `styles.css`: Global styles and visual system.
 - `app.js`: Thin module entrypoint that imports `src/main.js`.
 - `src/main.js`: UI orchestration and event wiring.
-- `src/ocr/`: Neural-ROI-first OCR pipeline with strip-first decoding and selection safeguards.
+- `src/ocr/`: OCR pipeline and selection logic. See `src/ocr/AGENTS.md`.
 - `src/email/`: Email draft generation and link helpers.
 - `src/testset/`: Manual test-set runner logic.
 - `src/debug/`: Debug overlay rendering helpers.
-- `backend/`: Optional FastAPI service for neural ROI + digit classifier inference and training scripts.
-- `backend/extract_digit_windows.py`: Export ROI digit windows from ROI labels into split folders.
-- `backend/split_digit_windows.py`: Canonicalize window orientation and split each window into 4 equispaced sections.
-- `backend/label_digit_sections.py`: Auto-assign section labels from the 4-digit reading string.
-- `backend/build_digit_dataset.py`: Legacy strip/cell dataset exporter (kept for backward compatibility tooling).
-- `backend/generate_synthetic_digit_dataset.py`: Build synthetic train-only digit sections (direct cell augmentation + optional composed windows re-split equispaced).
-- `backend/plan_digit_expansion.py`: Generate prioritized capture plan for underrepresented digits.
-- `backend/validate_digit_dataset.py`: Validate legacy strip/cell manifests and QA preview coverage.
-- `backend/train_digit_classifier.py`: Train per-cell digit classifier checkpoint.
+- `backend/`: FastAPI service, training scripts, and model/data tooling. See `backend/AGENTS.md`.
 - `package.json`: Local dev scripts.
 - `README.md`: Project overview and setup notes.
 - `assets/`: Static assets and example uploads.
 
 ## Build, Test, and Development Commands
-- `npm run serve`: Start a simple local web server on port 8000.
+- `npm run serve`: Start the local web server on port `8000`.
 - `npm run dev`: Alias of `npm run serve`.
-- `cd backend && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`: Backend setup.
-- For any Python task that depends on computer-vision packages or image tooling (for example `ultralytics`, `opencv`, or `Pillow`), use `backend/.venv` rather than the system Python.
-- `cd backend && source .venv/bin/activate && python train_roi.py --data data/roi_dataset.yaml --base-model yolov8n.pt --rotation-angles 90,180,270,360 --heavy-augment`: Fine-tune pretrained ROI detector with enforced augmentation policy.
-- `cd backend && source .venv/bin/activate && python extract_digit_windows.py --clean`: Rebuild split-wise digit windows from ROI labels.
-- `cd backend && source .venv/bin/activate && python split_digit_windows.py --clean`: Canonicalize + split windows into 4 equispaced sections.
-- `cd backend && source .venv/bin/activate && python label_digit_sections.py --clean`: Build labeled section dataset (`sections_labeled/train|val|test/<digit>`).
-- `cd backend && source .venv/bin/activate && python validate_digit_dataset.py`: Validate legacy strip/cell manifests (only needed when using `build_digit_dataset.py`).
-- `cd backend && source .venv/bin/activate && python generate_synthetic_digit_dataset.py --clean --direct-per-real 6 --compose-window-count 180`: Generate synthetic train-only digit sections from real train labels.
-- `cd backend && source .venv/bin/activate && python plan_digit_expansion.py --target-train-per-digit 12 --priority-digits 4,5,6,9`: Refresh targeted capture checklist.
-- `cd backend && source .venv/bin/activate && python train_digit_classifier.py --device cpu`: Train per-cell digit classifier model (real-only).
-- `cd backend && source .venv/bin/activate && python train_digit_classifier.py --device cpu --synthetic-root data/digit_dataset/sections_synthetic --synthetic-target-ratio 2.0`: Train on mixed real + synthetic train split while keeping val/test real-only.
-- `cd backend && source .venv/bin/activate && uvicorn app:app --host 127.0.0.1 --port 8001 --reload`: Run neural ROI API.
+- `npm run test:e2e`: Run Playwright end-to-end tests.
+- `npm run benchmark:roi-diff`: Generate ROI checkpoint diff artifacts.
 
-Open `http://localhost:8000` after running a serve command. Backend endpoints default to `http://127.0.0.1:8001/roi/detect` and `http://127.0.0.1:8001/digit/predict-cells`.
+Open `http://localhost:8000` after starting the frontend server.
 
 ## Coding Style & Naming Conventions
 - Use 2-space indentation in HTML/CSS/JS.
 - Keep files ASCII-only unless there is a strong reason for Unicode.
-- Use descriptive, lower-case IDs and class names (e.g., `photo-input`, `module-grid`).
+- Use descriptive, lower-case IDs and class names (for example `photo-input`, `module-grid`).
 - Prefer clear, small functions in `src/` modules and avoid deep nesting.
 
 ## Testing Guidelines
 - Automated browser tests are configured with Playwright.
-- `npm run test:e2e`: Runs `tests/e2e/neural-roi.spec.js` (neural ROI failure handling + ROI geometry + strip-only OCR behavior).
 - CI: `.github/workflows/e2e.yml` runs on each pull request and on pushes to `master`.
-- Frontend manual checks: upload image, run OCR, verify email draft fields, and confirm Gmail draft link.
-- OCR test-set checks: run "Run test set" and inspect `MAE`, `Exact Match`, `No-read`, `Failure Reason`, and debug stages.
-- Backend sanity checks: `GET /health` and confirm `ready: true`, `roi_ready: true`, and expected `model_path`.
-- Prefer running the test set from UI with debug overlay enabled.
-- Before committing OCR changes, run both `npm run test:e2e` and the UI "Run test set".
-- ROI training policy: always use heavy augmentation and rotation expansion (`90,180,270,360`). `train_roi.py` enforces this by default and only allows weaker runs with `--allow-no-augment-policy`.
+- Frontend manual checks: upload an image, run OCR, verify the email draft fields, and confirm the Gmail draft link.
+- Backend sanity checks: `GET /health` and confirm `ready: true`, `roi_ready: true`, and the expected `model_path`.
+- For OCR changes, run both `npm run test:e2e` and the UI `Run test set`. See `src/ocr/AGENTS.md` for the active benchmark baseline and promotion guardrails.
 
 ## Commit & Pull Request Guidelines
 - No commit message convention is established in this repo.
-- Suggested pattern: short, imperative subject (e.g., "Improve OCR preview").
-- PRs should include: summary of changes, screenshots for UI changes, and any manual test notes.
+- Suggested pattern: short, imperative subject (for example `Improve OCR preview`).
+- PRs should include a summary of changes, screenshots for UI changes, and any manual test notes.
 
 ## Security & Configuration Tips
 - The Gmail draft flow opens a client-side draft; no credentials are stored in code.
@@ -78,64 +61,7 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
 - For cloud storage, prefer Backblaze B2. Install `dvc[s3]` in `backend/.venv` and configure the DVC remote through B2's S3-compatible endpoint.
 - Use `scripts/package-tier1-artifacts.sh` plus the manual `Publish Artifacts` workflow for release-style snapshots after the DVC remote is up to date.
 
-## IMPORTANT
+## Important
 - When using Playwright in this environment, global `playwright-cli` may be more reliable than the wrapper if npm network is flaky.
-
-## OCR Working State
-
-- App + backend run locally on `127.0.0.1:8000` and `127.0.0.1:8001`.
-- Neural ROI is mandatory in the frontend OCR flow (heuristic ROI fallback removed).
-- On neural ROI failure, the UI shows an explicit reason and asks for manual measurement input.
-- Backend default ROI model is pinned to `backend/models/roi-rotaug-e30-640.pt` (override with `ROI_MODEL_PATH`).
-- `train_roi.py` enforces augmentation policy by default: heavy online augmentation + rotation expansion `90,180,270,360`.
-- Digit-classifier inference is mandatory in the frontend OCR flow (`OCR_CONFIG.digitClassifier.enabled` defaults to `true`).
-- Backend serves ROI + digit endpoints and reports readiness via `GET /health`.
-- Test-set table includes `Detected`, `Absolute Error`, `Failure Reason`, and `Result`.
-- Frontend OCR branch evaluation is strip-only classifier-first candidate decoding (no Tesseract word-pass/sparse-scan stages).
-- Neural-ROI OCR now evaluates all `90/270` edge candidates first, then opens a narrow fallback pass for `scan-roi` / base candidates when the top edge evidence is still single-source or only supported by agreeing edge variants.
-- Opposite-orientation retry is disabled by default (`roiDeterministic.tryOppositeOrientation=false`).
-- Final edge acceptance still uses confidence thresholds, but the selector no longer requires non-edge corroboration by default.
-- Edge-derived candidate generation is toggleable via `roiDeterministic.useEdgeCandidates` (default `true`) for controlled A/B experiments.
-- Debug overlay semantics:
-  - `6a. OCR input candidate (initial preview)` = first valid ROI candidate before classifier ranking.
-  - `6. OCR input candidate` = winning decode input (exact strip variant/angle used by final selection).
-- Current local benchmark set has `17` images.
-- Current local OCR benchmark after selector fixes:
-  - UI test set: `MAE 236.63`, `Exact Match 10/17`, `No-read 1/17`
-  - `npm run test:e2e`: passes (`6/6`)
-- Historical checkpoint comparison (March 2, 2026, legacy fallback `OFF`, 14-image snapshot):
-  - `roi-rotaug-e30-640.pt` (default pinned): exact-match `0/14`, failure mix `ocr-no-digits` (7), `mismatch` (6), `no-detection` (1).
-  - `roi.pt` (challenger): exact-match `0/14`, failure mix `ocr-no-digits` (10), `mismatch` (4), `no-detection` (0).
-- Recent force-mode A/B (March 4, 2026, 15-image set): forcing the initial preview candidate reduced MAE but sharply increased no-read due to `classifier-edge-gate-final-drop`; keep force mode disabled by default.
-- Automated diff workflow is available via `npm run benchmark:roi-diff`.
-- Diff artifacts now use `*-neural-digit` output folders because digit decoding is always neural-classifier-only.
-- Promotion and rollback decisions should now use `MAE` from `roi-diff-report` as the primary signal, with exact-match and no-read as guardrails.
-- ROI diff reports now include per-image selected metadata columns (`sourceLabel`, `method`, `preprocessMode`) and explicitly export the last stage `6. OCR input candidate` snapshot (winning decode strip variant).
-
-## Next TODOs
-
-1. Keep the current OCR baseline (`MAE 236.63`, `Exact Match 10/17`, `No-read 1/17`) as the promotion target for future OCR work.
-2. Continue classifier cleanup on the residual mismatch subset (`meter_20200701`, `meter_20251009`, `meter_20260214`, `meter_20260216`, `meter_20260219`, `meter_20260220`) now that the main selector/early-stop issue is fixed.
-3. Fix the remaining neural ROI miss on `meter_20201111.JPEG`; only promote a new ROI checkpoint if it improves end-to-end OCR metrics, not just detection presence.
-4. Keep runtime/exporter comparison tooling available for debugging, but do not restart broad retraining/export work unless the live browser candidates again diverge from the offline reproducer.
-5. Keep `roi-rotaug-e30-640.pt` as default until a challenger beats it on end-to-end OCR metrics, and re-run `npm run benchmark:roi-diff` after each ROI challenger to summarize per-image movement (`Detected`, stage `5/6` snapshots, reject reason).
-6. Keep running both `npm run test:e2e` and UI `Run test set` before commits; include histogram deltas and benchmark baselines in commit/PR notes.
-7. Medium-term: evaluate YOLO OBB ROI detection to reduce rotation/edge ambiguity; this requires OBB relabeling, retraining, and backend response/schema changes before frontend adoption.
-
-### OBB Notes (Re-verify Before Implementation)
-
-- OBB inference outputs rotated geometry (`xywhr`) and polygon corners.
-- OBB training labels use corners format: `class x1 y1 x2 y2 x3 y3 x4 y4`.
-- OBB angle handling has constraints (Ultralytics OBB uses angles in the `0-90` exclusive range).
-
-## Dataset Expansion Loop (`4/5/6/9`)
-
-1. Refresh capture planning:
-   - `cd backend && source .venv/bin/activate && python plan_digit_expansion.py --target-train-per-digit 12 --priority-digits 4,5,6,9`
-2. Add labeled captures with QA previews.
-3. Validate manifests after each dataset update:
-   - Confirm `data/digit_dataset/manifests/{windows.csv,canonical_windows.csv,sections.csv,section_labels.csv}` are regenerated and consistent with current splits.
-   - Use `python validate_digit_dataset.py` only for legacy strip/cell exports (`build_digit_dataset.py` path).
-4. Retrain classifier only after class coverage improves:
-   - `cd backend && source .venv/bin/activate && python train_digit_classifier.py --device cpu`
-5. Keep classifier training/dataset refresh loop active; promote new checkpoints only when benchmarked `MAE` improves without exact-match/no-read guardrail regressions.
+- In this Codex environment, long-running local services that must be consumed by the DevTools browser may need to be started with escalated permissions instead of inside the sandbox.
+- If shell `curl` works but the browser still gets `ERR_CONNECTION_REFUSED` or `Failed to fetch`, verify connectivity from the page context and restart the service outside the sandbox.

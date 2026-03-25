@@ -1,6 +1,6 @@
 ---
 name: jarvis-docs-sync
-description: "Audit and update Jarvis project documentation so it matches the current repository state. Use when AGENTS.md, README.md, backend/README.md, or files under docs/ may be stale after code, config, workflow, model, or dataset-process changes."
+description: "Audit and update Jarvis project documentation so it matches the current repository state. Use when root or nested AGENTS.md files, README.md, backend/README.md, or files under docs/ may be stale after code, config, workflow, model, or dataset-process changes."
 ---
 
 # Jarvis Docs Sync
@@ -14,6 +14,7 @@ Use this skill whenever the repo has changed and documentation may now be inaccu
 Check these documentation targets:
 
 - `AGENTS.md`
+- nested `**/AGENTS.md` files that carry active project guidance (currently `backend/AGENTS.md` and `src/ocr/AGENTS.md`)
 - `README.md`
 - `backend/README.md`
 - `docs/**/*.md`
@@ -45,7 +46,7 @@ Also check local skill docs only if they are directly affected by the change bei
 
 4. Keep cross-file consistency.
    - If a command, path, or rule changes in one doc, update all other docs that state the same fact.
-   - Pay special attention to duplicated operational guidance in `AGENTS.md` and `README.md`.
+   - Pay special attention to duplicated operational guidance in root and nested `AGENTS.md` files, `README.md`, and `backend/README.md`.
 
 5. Validate after editing.
    - Re-run `rg` for the old value to make sure stale references are gone where appropriate.
@@ -73,10 +74,12 @@ Always verify these categories when relevant:
   - `find .github/workflows -maxdepth 1 -type f | sort`
 - Markdown inventory:
   - `find docs -type f -name '*.md' | sort`
+- AGENTS inventory:
+  - `find . -type f -name 'AGENTS.md' | sort`
 - Search stale values:
-  - `rg -n "<old-term>|<old-path>|<old-command>" AGENTS.md README.md backend/README.md docs .agents/skills`
+  - `rg -n "<old-term>|<old-path>|<old-command>" AGENTS.md backend/AGENTS.md src/ocr/AGENTS.md README.md backend/README.md docs .agents/skills`
 - Search current values:
-  - `rg -n "<new-term>|<new-path>|<new-command>" AGENTS.md README.md backend/README.md docs .agents/skills`
+  - `rg -n "<new-term>|<new-path>|<new-command>" AGENTS.md backend/AGENTS.md src/ocr/AGENTS.md README.md backend/README.md docs .agents/skills`
 
 ## Notes
 

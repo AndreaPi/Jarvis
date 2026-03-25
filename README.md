@@ -143,6 +143,8 @@ python validate_digit_dataset.py
 uvicorn app:app --host 127.0.0.1 --port 8001 --reload
 ```
 
+In the Codex/DevTools environment, a backend started inside the sandbox may answer shell `curl` but still be unreachable from the browser. If the page still gets `ERR_CONNECTION_REFUSED` or `Failed to fetch` for `127.0.0.1:8001`, restart the backend outside the sandbox with escalated permissions and verify from the page context.
+
 By default, the frontend calls `http://127.0.0.1:8001/roi/detect` and requires neural ROI detection before OCR.
 Digit decoding is neural-classifier-only and calls `http://127.0.0.1:8001/digit/predict-cells`.
 Check backend readiness with:
@@ -178,7 +180,9 @@ CI runs these tests on every pull request and on pushes to `master`.
 - `src/ocr/`: OCR pipeline and neural ROI integration.
 - `src/testset/`: Manual OCR test-set runner.
 - `backend/`: Optional FastAPI service for neural ROI and digit-classifier inference/training.
-- `AGENTS.md`: Contributor guide.
+- `AGENTS.md`: Repo-wide contributor guide.
+- `backend/AGENTS.md`: Backend-specific runtime and training guidance.
+- `src/ocr/AGENTS.md`: OCR-specific behavior, benchmarks, and tuning guidance.
 - `assets/`: Static assets and example uploads.
 
 ## Notes

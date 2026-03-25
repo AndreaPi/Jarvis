@@ -134,6 +134,8 @@ source .venv/bin/activate
 uvicorn app:app --host 127.0.0.1 --port 8001 --reload
 ```
 
+In the Codex/DevTools environment, starting `uvicorn` inside the sandbox may leave the service unreachable from the browser even when shell `curl` works. If browser requests to `127.0.0.1:8001` fail with `ERR_CONNECTION_REFUSED` or `Failed to fetch`, restart the backend outside the sandbox with escalated permissions.
+
 Readiness check:
 
 ```bash

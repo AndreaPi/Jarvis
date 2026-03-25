@@ -12,6 +12,8 @@ source .venv/bin/activate
 uvicorn app:app --host 127.0.0.1 --port 8001 --reload
 ```
 
+In the Codex/DevTools environment, a backend started inside the sandbox may not be reachable from the page even if shell `curl` works. If browser fetches to `127.0.0.1:8001` fail, restart the service outside the sandbox and verify connectivity from the browser context.
+
 Default local base URL: `http://127.0.0.1:8001`
 
 ## Endpoints
