@@ -95,6 +95,12 @@ def parse_args() -> argparse.Namespace:
     type=int,
     default=960
   )
+  parser.add_argument(
+    "--filename",
+    action="append",
+    default=[],
+    help="Optional filename filter. Repeat to export only specific benchmark rows."
+  )
   return parser.parse_args()
 
 
@@ -153,12 +159,15 @@ def rotate_image(image: Image.Image, angle: int) -> Image.Image:
   normalized = normalize_angle(angle)
   if normalized == 0:
     return image
+  # Match the browser canvas rotation convention used by rotateCanvas():
+  # positive angles rotate clockwise on the HTML canvas, while Pillow's
+  # ROTATE_90/270 constants are counter-clockwise.
   if normalized == 90:
-    return image.transpose(Image.Transpose.ROTATE_90)
+    return image.transpose(Image.Transpose.ROTATE_270)
   if normalized == 180:
     return image.transpose(Image.Transpose.ROTATE_180)
   if normalized == 270:
-    return image.transpose(Image.Transpose.ROTATE_270)
+    return image.transpose(Image.Transpose.ROTATE_90)
   return image.rotate(normalized, resample=Image.Resampling.BILINEAR, expand=True, fillcolor=255)
 
 
@@ -355,6 +364,9 @@ def export_runtime_failure_set() -> None:
   digit_model = resolve_path(base_dir, args.digit_model)
 
   rows = load_readings(readings_csv)
+  filename_filter = {value.strip() for value in args.filename if value and value.strip()}
+  if filename_filter:
+    rows = [row for row in rows if row["filename"] in filename_filter]
   detector = RoiDetector(roi_model, device="cpu")
   classifier = DigitClassifier(digit_model, device="cpu")
 

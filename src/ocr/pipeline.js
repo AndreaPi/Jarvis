@@ -234,19 +234,65 @@ const isRepeatedDigitReading = (value) => {
   return new Set(value.split('')).size === 1;
 };
 
-const finalizeSelection = ({ debugLabel, roiUsed, bestResult, evidenceMap, branchUsed, rejectSummary = [] }) => {
+const finalizeSelection = ({
+  debugLabel,
+  roiUsed,
+  bestResult,
+  evidenceMap,
+  branchUsed,
+  rejectSummary = [],
+  candidateTrace = []
+}) => {
   const rankedEvidence = rankSelectionEvidence(evidenceMap);
   const evidenceBest = rankedEvidence[0] || null;
   const classifierConfig = OCR_CONFIG.digitClassifier || {};
   let finalResult = bestResult;
   let finalRejectReason = null;
   let finalRejectDetail = null;
+  const carryMetadataFromTrace = (value) => {
+    if (!value) {
+      return null;
+    }
+    const matches = candidateTrace
+      .filter((entry) => entry && entry.result && entry.result.value === value)
+      .sort((a, b) => (b.result.score ?? 0) - (a.result.score ?? 0));
+    if (!matches.length) {
+      return null;
+    }
+    const bestMatch = matches[0];
+    return {
+      branch: branchUsed,
+      method: bestMatch.result.method || null,
+      sourceLabel: bestMatch.sourceLabel || null,
+      preprocessMode: 'raw',
+      angle: Number.isFinite(bestMatch.result.angle) ? bestMatch.result.angle : null,
+      cellDigits: Array.isArray(bestMatch.result.cellDigits) ? bestMatch.result.cellDigits : null,
+      cellConfidences: bestMatch.result.cellConfidences || null,
+      confidence: Number.isFinite(bestMatch.result.confidence) ? bestMatch.result.confidence : 0
+    };
+  };
 
   if (evidenceBest) {
+    const lowDiversityEdgeResult = !!(
+      finalResult
+      && isEdgeSourceLabel(finalResult.sourceLabel)
+      && typeof finalResult.value === 'string'
+      && finalResult.value.length === OCR_CONFIG.preferredDigits
+      && new Set(finalResult.value.split('')).size <= 2
+    );
+    const shouldPromoteLowDiversityEdgeFallback = !!(
+      finalResult
+      && evidenceBest.value !== finalResult.value
+      && evidenceBest.nonEdgeHits >= 1
+      && lowDiversityEdgeResult
+      && evidenceBest.score >= (finalResult.score ?? -1) - 0.06
+      && evidenceBest.bestConfidence >= 75
+    );
     const shouldPromoteEvidence = (
       !finalResult
       || evidenceBest.score >= (finalResult.score ?? -1) - 0.03
       || evidenceBest.topHits >= 2
+      || shouldPromoteLowDiversityEdgeFallback
     );
 
     if (shouldPromoteEvidence) {
@@ -255,7 +301,7 @@ const finalizeSelection = ({ debugLabel, roiUsed, bestResult, evidenceMap, branc
         : 0;
       const carryMetadata = finalResult && finalResult.value === evidenceBest.value
         ? finalResult
-        : null;
+        : carryMetadataFromTrace(evidenceBest.value);
       finalResult = {
         value: evidenceBest.value,
         confidence: Math.max(evidenceBest.bestConfidence, confidenceFromBest),
@@ -369,7 +415,8 @@ const finalizeSelection = ({ debugLabel, roiUsed, bestResult, evidenceMap, branc
       cellDigits: Array.isArray(finalResult.cellDigits) ? finalResult.cellDigits : null,
       cellConfidences: serializeCellConfidences(finalResult.cellConfidences)
     } : null,
-    topCandidates: buildSelectionSummary(rankedEvidence, 3)
+    topCandidates: buildSelectionSummary(rankedEvidence, 3),
+    candidateTrace: Array.isArray(candidateTrace) ? candidateTrace : []
   });
 
   return finalResult;
@@ -504,6 +551,7 @@ const evaluateCandidateBranch = async ({
   let bestResult = null;
   const valueEvidence = new Map();
   const decodeCanvasBySource = new Map();
+  const candidateTrace = [];
   const roiDeterministic = OCR_CONFIG.roiDeterministic || {};
   const classifierConfig = OCR_CONFIG.digitClassifier || {};
   const branchLabel = 'roi';
@@ -708,7 +756,8 @@ const evaluateCandidateBranch = async ({
       bestResult: null,
       evidenceMap: valueEvidence,
       rejectSummary: summarizeRejectMap(rejectMap),
-      decodeCanvasBySource
+      decodeCanvasBySource,
+      candidateTrace
     };
   }
 
@@ -739,7 +788,8 @@ const evaluateCandidateBranch = async ({
       bestResult: null,
       evidenceMap: valueEvidence,
       rejectSummary: summarizeRejectMap(rejectMap),
-      decodeCanvasBySource
+      decodeCanvasBySource,
+      candidateTrace
     };
   }
 
@@ -774,14 +824,52 @@ const evaluateCandidateBranch = async ({
         });
       }
 
+      const candidateRejects = [];
       const reading = await readDigitsByCells(candidate.canvas, null, {
         roiMode: true,
-        onReject: (detail) => recordDecodeReject(candidate, detail, stageLabel)
+        onReject: (detail) => {
+          candidateRejects.push(detail);
+          recordDecodeReject(candidate, detail, stageLabel);
+        }
       });
       if (!reading) {
+        candidateTrace.push({
+          stage: stageLabel,
+          sourceLabel: candidate.label,
+          width: candidate.canvas.width,
+          height: candidate.canvas.height,
+          fallbackScore: Number.isFinite(candidate.fallbackScore)
+            ? Number(candidate.fallbackScore.toFixed(3))
+            : null,
+          fallbackAspect: Number.isFinite(candidate.fallbackAspect)
+            ? Number(candidate.fallbackAspect.toFixed(3))
+            : null,
+          result: null,
+          rejects: candidateRejects
+        });
         continue;
       }
       if (!isPreferredLengthReading(reading)) {
+        candidateTrace.push({
+          stage: stageLabel,
+          sourceLabel: candidate.label,
+          width: candidate.canvas.width,
+          height: candidate.canvas.height,
+          fallbackScore: Number.isFinite(candidate.fallbackScore)
+            ? Number(candidate.fallbackScore.toFixed(3))
+            : null,
+          fallbackAspect: Number.isFinite(candidate.fallbackAspect)
+            ? Number(candidate.fallbackAspect.toFixed(3))
+            : null,
+          result: {
+            value: reading.value || null,
+            confidence: Number.isFinite(reading.confidence) ? Number(reading.confidence.toFixed(1)) : null,
+            score: Number.isFinite(reading.score) ? Number(reading.score.toFixed(3)) : null,
+            cellDigits: Array.isArray(reading.cellDigits) ? [...reading.cellDigits] : null,
+            cellConfidences: serializeCellConfidences(reading.cellConfidences)
+          },
+          rejects: candidateRejects
+        });
         recordReject('classifier-non4-reading', {
           stage: stageLabel,
           sourceLabel: candidate.label,
@@ -819,6 +907,36 @@ const evaluateCandidateBranch = async ({
       }
       const classifierReadingForSelection = { ...classifierReading };
       delete classifierReadingForSelection.decodedStripCanvas;
+      candidateTrace.push({
+        stage: stageLabel,
+        sourceLabel: candidate.label,
+        width: candidate.canvas.width,
+        height: candidate.canvas.height,
+        fallbackScore: Number.isFinite(candidate.fallbackScore)
+          ? Number(candidate.fallbackScore.toFixed(3))
+          : null,
+        fallbackAspect: Number.isFinite(candidate.fallbackAspect)
+          ? Number(candidate.fallbackAspect.toFixed(3))
+          : null,
+        result: {
+          value: classifierReadingForSelection.value || null,
+          confidence: Number.isFinite(classifierReadingForSelection.confidence)
+            ? Number(classifierReadingForSelection.confidence.toFixed(1))
+            : null,
+          score: Number.isFinite(classifierReadingForSelection.score)
+            ? Number(classifierReadingForSelection.score.toFixed(3))
+            : null,
+          angle: Number.isFinite(classifierReadingForSelection.angle)
+            ? classifierReadingForSelection.angle
+            : null,
+          method: classifierReadingForSelection.method || null,
+          cellDigits: Array.isArray(classifierReadingForSelection.cellDigits)
+            ? [...classifierReadingForSelection.cellDigits]
+            : null,
+          cellConfidences: serializeCellConfidences(classifierReadingForSelection.cellConfidences)
+        },
+        rejects: candidateRejects
+      });
 
       if (
         !bestResult
@@ -832,20 +950,26 @@ const evaluateCandidateBranch = async ({
       }
       recordCandidateReadings(classifierReadingForSelection, `${candidate.label}:classifier`);
 
-      if (
-        bestResult
-        && bestResult.score >= OCR_CONFIG.earlyStopScore
-        && isEdgeSourceLabel(bestResult.sourceLabel)
-      ) {
-        return true;
-      }
     }
     return false;
   };
 
   const edgeWonEarly = await runCandidatePass(selectedCandidates, 'classifier-primary');
-  if (!edgeWonEarly && !bestResult && rankedBaseCandidates.length) {
-    selectedCandidates = rankedBaseCandidates.slice(0, maxPrimaryCandidates);
+  const rankedEvidenceAfterPrimary = rankSelectionEvidence(valueEvidence);
+  const edgeEvidenceIsSingleSource = (
+    rankedEdgeCandidates.length > 0
+    && rankedEvidenceAfterPrimary.length > 0
+    && rankedEvidenceAfterPrimary[0].sourceCount < 2
+  );
+  if (
+    !edgeWonEarly
+    && rankedBaseCandidates.length
+    && (
+      !bestResult
+      || edgeEvidenceIsSingleSource
+    )
+  ) {
+    selectedCandidates = rankedBaseCandidates.slice(0, Math.min(2, maxPrimaryCandidates));
     await runCandidatePass(selectedCandidates, 'classifier-fallback-base');
   }
 
@@ -853,7 +977,8 @@ const evaluateCandidateBranch = async ({
     bestResult,
     evidenceMap: valueEvidence,
     rejectSummary: summarizeRejectMap(rejectMap),
-    decodeCanvasBySource
+    decodeCanvasBySource,
+    candidateTrace
   };
 };
 
@@ -919,7 +1044,8 @@ const runMeterOcr = async (file, setProgress) => {
       bestResult: roiBranch.bestResult,
       evidenceMap: roiBranch.evidenceMap,
       branchUsed: isPreferredLengthReading(roiBranch.bestResult) ? 'roi-accepted' : 'roi-uncertain',
-      rejectSummary: roiBranch.rejectSummary || []
+      rejectSummary: roiBranch.rejectSummary || [],
+      candidateTrace: roiBranch.candidateTrace || []
     });
     addWinningCandidateDebugStage(
       debugSession,

@@ -92,7 +92,7 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
 - Backend serves ROI + digit endpoints and reports readiness via `GET /health`.
 - Test-set table includes `Detected`, `Absolute Error`, `Failure Reason`, and `Result`.
 - Frontend OCR branch evaluation is strip-only classifier-first candidate decoding (no Tesseract word-pass/sparse-scan stages).
-- Neural-ROI OCR now prefers `90/270` edge candidates first; same-angle base candidates are fallback-only when edge candidates fail.
+- Neural-ROI OCR now evaluates all `90/270` edge candidates first, then opens a narrow fallback pass for `scan-roi` / base candidates when edge evidence is still single-source.
 - Opposite-orientation retry is disabled by default (`roiDeterministic.tryOppositeOrientation=false`).
 - Final edge acceptance still uses confidence thresholds, but the selector no longer requires non-edge corroboration by default.
 - Edge-derived candidate generation is toggleable via `roiDeterministic.useEdgeCandidates` (default `true`) for controlled A/B experiments.
@@ -100,8 +100,8 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
   - `6a. OCR input candidate (initial preview)` = first valid ROI candidate before classifier ranking.
   - `6. OCR input candidate` = winning decode input (exact strip variant/angle used by final selection).
 - Current local benchmark set has `17` images.
-- Current promoted digit-classifier baseline from runtime failure-crop retraining:
-  - UI test set: `MAE 818.38`, `Exact Match 8/17`, `No-read 1/17`
+- Current local OCR benchmark after selector fixes:
+  - UI test set: `MAE 236.63`, `Exact Match 10/17`, `No-read 1/17`
   - `npm run test:e2e`: passes (`6/6`)
 - Historical checkpoint comparison (March 2, 2026, legacy fallback `OFF`, 14-image snapshot):
   - `roi-rotaug-e30-640.pt` (default pinned): exact-match `0/14`, failure mix `ocr-no-digits` (7), `mismatch` (6), `no-detection` (1).
@@ -114,10 +114,10 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
 
 ## Next TODOs
 
-1. Keep the current digit-classifier baseline (`MAE 818.38`, `Exact Match 8/17`, `No-read 1/17`) as the promotion target for future OCR work.
-2. Instrument the remaining mismatch images in the live browser OCR path and compare the exact winning runtime candidates against the offline runtime-failure exporter outputs before any more classifier retraining.
+1. Keep the current OCR baseline (`MAE 236.63`, `Exact Match 10/17`, `No-read 1/17`) as the promotion target for future OCR work.
+2. Continue classifier cleanup on the residual mismatch subset (`meter_20200701`, `meter_20251009`, `meter_20260214`, `meter_20260216`, `meter_20260219`, `meter_20260220`) now that the main selector/early-stop issue is fixed.
 3. Fix the remaining neural ROI miss on `meter_20201111.JPEG`; only promote a new ROI checkpoint if it improves end-to-end OCR metrics, not just detection presence.
-4. Continue classifier cleanup only on the residual mismatch subset after the runtime/exporter divergence is resolved; do not promote challengers that regress `MAE`, exact-match, or no-read guardrails.
+4. Keep runtime/exporter comparison tooling available for debugging, but do not restart broad retraining/export work unless the live browser candidates again diverge from the offline reproducer.
 5. Keep `roi-rotaug-e30-640.pt` as default until a challenger beats it on end-to-end OCR metrics, and re-run `npm run benchmark:roi-diff` after each ROI challenger to summarize per-image movement (`Detected`, stage `5/6` snapshots, reject reason).
 6. Keep running both `npm run test:e2e` and UI `Run test set` before commits; include histogram deltas and benchmark baselines in commit/PR notes.
 7. Medium-term: evaluate YOLO OBB ROI detection to reduce rotation/edge ambiguity; this requires OBB relabeling, retraining, and backend response/schema changes before frontend adoption.

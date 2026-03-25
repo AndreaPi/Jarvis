@@ -210,6 +210,7 @@ const createTestSetRunner = ({
       }
 
       const results = [];
+      const debugRows = [];
       let correct = 0;
       let rowErrors = 0;
       let absoluteErrorSum = 0;
@@ -288,6 +289,15 @@ const createTestSetRunner = ({
             absoluteError,
             failureReason
           });
+          debugRows.push({
+            filename: row.filename,
+            expected: row.value,
+            detected,
+            match,
+            absoluteError,
+            failureReason,
+            selectionLog
+          });
         } catch (rowError) {
           rowErrors += 1;
           console.error(`Test row failed for ${row.filename}`, rowError);
@@ -299,6 +309,16 @@ const createTestSetRunner = ({
             match: false,
             absoluteError: null,
             failureReason: `error:${formatError(rowError)}`
+          });
+          debugRows.push({
+            filename: row.filename,
+            expected: row.value,
+            detected: '',
+            match: false,
+            absoluteError: null,
+            failureReason: `error:${formatError(rowError)}`,
+            selectionLog: null,
+            error: formatError(rowError)
           });
           incrementHistogram(failureReasonHistogram, `error:${formatError(rowError)}`);
         }
@@ -326,6 +346,7 @@ const createTestSetRunner = ({
       };
       if (typeof window !== 'undefined') {
         window.__jarvisLastTestSetHistogram = runHistogram;
+        window.__jarvisLastTestSetRows = debugRows;
       }
 
       const maeText = absoluteErrorCount ? (absoluteErrorSum / absoluteErrorCount).toFixed(2) : 'n/a';

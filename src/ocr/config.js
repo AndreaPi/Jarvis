@@ -1,5 +1,5 @@
 const OCR_CONFIG = {
-  maxDimension: 1400,
+  maxDimension: 4096,
   meterCropScale: 0.95,
   digitCrops: [
     { name: 'top-wide', x: 0.04, y: 0.02, width: 0.92, height: 0.32 },
