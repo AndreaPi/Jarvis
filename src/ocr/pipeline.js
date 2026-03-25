@@ -978,13 +978,8 @@ const evaluateCandidateBranch = async ({
   const shouldReopenBaseFallback = !!(
     rankedEdgeCandidates.length > 0
     && primaryTopEvidence
-    && (
-      primaryTopEvidence.sourceCount < 2
-      || (
-        primaryTopEvidence.nonEdgeSourceCount === 0
-        && primaryTopEvidence.edgeSourceCount >= 2
-      )
-    )
+    && primaryTopEvidence.nonEdgeSourceCount === 0
+    && primaryTopEvidence.topHits < 2
   );
   if (
     !edgeWonEarly
