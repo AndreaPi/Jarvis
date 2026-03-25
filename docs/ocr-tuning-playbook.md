@@ -152,7 +152,7 @@ Focus:
 
 - Balance strictness (avoid false positives) vs recall (avoid no-read).
 - Validate with histogram movement, not single-image anecdotes.
-- Active guardrails in current pipeline: evidence ranking, full `90/270` edge evaluation before fallback, narrow `scan-roi` / base fallback on single-source edge evidence, and final edge-confidence checks.
+- Active guardrails in current pipeline: evidence ranking, full `90/270` edge evaluation before fallback, narrow `scan-roi` / base fallback when edge support is still weak or edge-only, and final edge-confidence checks.
 
 ### 4) ROI Sanity Gates (usually not primary blocker)
 

@@ -92,7 +92,7 @@ Open `http://localhost:8000` after running a serve command. Backend endpoints de
 - Backend serves ROI + digit endpoints and reports readiness via `GET /health`.
 - Test-set table includes `Detected`, `Absolute Error`, `Failure Reason`, and `Result`.
 - Frontend OCR branch evaluation is strip-only classifier-first candidate decoding (no Tesseract word-pass/sparse-scan stages).
-- Neural-ROI OCR now evaluates all `90/270` edge candidates first, then opens a narrow fallback pass for `scan-roi` / base candidates when edge evidence is still single-source.
+- Neural-ROI OCR now evaluates all `90/270` edge candidates first, then opens a narrow fallback pass for `scan-roi` / base candidates when the top edge evidence is still single-source or only supported by agreeing edge variants.
 - Opposite-orientation retry is disabled by default (`roiDeterministic.tryOppositeOrientation=false`).
 - Final edge acceptance still uses confidence thresholds, but the selector no longer requires non-edge corroboration by default.
 - Edge-derived candidate generation is toggleable via `roiDeterministic.useEdgeCandidates` (default `true`) for controlled A/B experiments.

@@ -43,7 +43,7 @@ flowchart TD
 3. OCR acceptance gate
    - Candidate strips are decoded directly with the backend digit classifier.
    - `finalizeSelection` ranks evidence across classifier passes before returning a value.
-   - The selector evaluates all `90/270` edge candidates first and only opens a narrow `scan-roi` / base fallback pass when edge evidence is still single-source.
+   - The selector evaluates all `90/270` edge candidates first and only opens a narrow `scan-roi` / base fallback pass when the top edge evidence is still single-source or only supported by agreeing edge variants.
    - Weak edge-only reads can still be rejected by configured per-cell confidence thresholds in `finalizeSelection`.
    - Digit classifier is enabled by default (`digitClassifier.enabled=true`).
 

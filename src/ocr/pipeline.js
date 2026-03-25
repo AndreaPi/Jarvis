@@ -273,6 +273,9 @@ const finalizeSelection = ({
   };
 
   if (evidenceBest) {
+    const currentFinalSupport = finalResult
+      ? rankedEvidence.find((entry) => entry.value === finalResult.value) || null
+      : null;
     const lowDiversityEdgeResult = !!(
       finalResult
       && isEdgeSourceLabel(finalResult.sourceLabel)
@@ -288,10 +291,25 @@ const finalizeSelection = ({
       && evidenceBest.score >= (finalResult.score ?? -1) - 0.06
       && evidenceBest.bestConfidence >= 75
     );
+    const preserveAgreedEdgeConsensus = !!(
+      finalResult
+      && currentFinalSupport
+      && evidenceBest.value !== finalResult.value
+      && isEdgeSourceLabel(finalResult.sourceLabel)
+      && currentFinalSupport.topHits >= 2
+      && currentFinalSupport.edgeTopHits >= 2
+      && currentFinalSupport.nonEdgeHits === 0
+      && evidenceBest.nonEdgeHits >= 1
+      && evidenceBest.topHits === 1
+      && evidenceBest.score <= (finalResult.score ?? 0) + 0.03
+    );
     const shouldPromoteEvidence = (
-      !finalResult
-      || evidenceBest.score >= (finalResult.score ?? -1) - 0.03
-      || evidenceBest.topHits >= 2
+      (
+        !finalResult
+        || evidenceBest.score >= (finalResult.score ?? -1) - 0.03
+        || evidenceBest.topHits >= 2
+      )
+      && !preserveAgreedEdgeConsensus
       || shouldPromoteLowDiversityEdgeFallback
     );
 
@@ -935,12 +953,30 @@ const evaluateCandidateBranch = async ({
             : null,
           cellConfidences: serializeCellConfidences(classifierReadingForSelection.cellConfidences)
         },
-        rejects: candidateRejects
-      });
+          rejects: candidateRejects
+        });
 
+      const rankedEvidenceBeforeCurrentReading = rankSelectionEvidence(valueEvidence);
+      const preserveAgreedEdgeResult = !!(
+        stageLabel === 'classifier-fallback-base'
+        && bestResult
+        && isEdgeSourceLabel(bestResult.sourceLabel)
+        && rankedEvidenceBeforeCurrentReading.some((entry) => (
+          entry.value === bestResult.value
+          && entry.topHits >= 2
+          && entry.edgeTopHits >= 2
+          && entry.nonEdgeHits === 0
+        ))
+      );
       if (
         !bestResult
-        || classifierReadingForSelection.score > bestResult.score
+        || (
+          classifierReadingForSelection.score > bestResult.score
+          && (
+            !preserveAgreedEdgeResult
+            || classifierReadingForSelection.score > (bestResult.score + 0.03)
+          )
+        )
         || (
           classifierReadingForSelection.score === bestResult.score
           && (classifierReadingForSelection.confidence ?? 0) > (bestResult.confidence ?? 0)
@@ -956,17 +992,24 @@ const evaluateCandidateBranch = async ({
 
   const edgeWonEarly = await runCandidatePass(selectedCandidates, 'classifier-primary');
   const rankedEvidenceAfterPrimary = rankSelectionEvidence(valueEvidence);
-  const edgeEvidenceIsSingleSource = (
+  const primaryTopEvidence = rankedEvidenceAfterPrimary[0] || null;
+  const shouldReopenBaseFallback = !!(
     rankedEdgeCandidates.length > 0
-    && rankedEvidenceAfterPrimary.length > 0
-    && rankedEvidenceAfterPrimary[0].sourceCount < 2
+    && primaryTopEvidence
+    && (
+      primaryTopEvidence.sourceCount < 2
+      || (
+        primaryTopEvidence.nonEdgeSourceCount === 0
+        && primaryTopEvidence.edgeSourceCount >= 2
+      )
+    )
   );
   if (
     !edgeWonEarly
     && rankedBaseCandidates.length
     && (
       !bestResult
-      || edgeEvidenceIsSingleSource
+      || shouldReopenBaseFallback
     )
   ) {
     selectedCandidates = rankedBaseCandidates.slice(0, Math.min(2, maxPrimaryCandidates));

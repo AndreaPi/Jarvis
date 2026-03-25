@@ -28,7 +28,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install DVC
-        run: python -m pip install dvc
+        run: python -m pip install "dvc[s3]"
 
       - name: Configure DVC remote
         env:
@@ -38,7 +38,13 @@ jobs:
             echo "DVC_REMOTE_URL secret is required for Publish Artifacts." >&2
             exit 1
           fi
-          dvc remote add -f -d storage "$DVC_REMOTE_URL"
+          REMOTE_NAME="$(dvc config core.remote || true)"
+          if [ -z "$REMOTE_NAME" ]; then
+            REMOTE_NAME="storage"
+            dvc remote add -f -d "$REMOTE_NAME" "$DVC_REMOTE_URL"
+          else
+            dvc remote modify "$REMOTE_NAME" url "$DVC_REMOTE_URL"
+          fi
 
       - name: Pull DVC data
         run: dvc pull

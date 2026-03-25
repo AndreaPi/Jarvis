@@ -25,7 +25,7 @@ const buildNeuralRoiCandidates = (source, debugSession, addDebugStageFn = () => 
     .filter((angle, index, values) => Number.isFinite(angle) && values.indexOf(angle) === index);
   const candidates = [];
   let debugStripSource = null;
-  let baseFallbackCandidate = null;
+  const baseCandidates = [];
 
   const pushCandidate = (canvas, label) => {
     if (!canvas) {
@@ -52,19 +52,17 @@ const buildNeuralRoiCandidates = (source, debugSession, addDebugStageFn = () => 
       }
     }
 
-    if (!baseFallbackCandidate) {
-      const normalized = scaleCanvas(rotated, normalizeWidth);
-      if (normalized && normalized.width >= 24 && normalized.height >= 16) {
-        baseFallbackCandidate = { canvas: normalized, label: `roi-${angle}-base` };
-        if (!debugStripSource) {
-          debugStripSource = rotated;
-        }
+    const normalized = scaleCanvas(rotated, normalizeWidth);
+    if (normalized && normalized.width >= 24 && normalized.height >= 16) {
+      baseCandidates.push({ canvas: normalized, label: `roi-${angle}-base` });
+      if (!debugStripSource) {
+        debugStripSource = rotated;
       }
     }
   });
 
-  if (!candidates.length && baseFallbackCandidate) {
-    candidates.push(baseFallbackCandidate);
+  if (baseCandidates.length) {
+    candidates.push(...baseCandidates);
   }
 
   if (!candidates.length) {

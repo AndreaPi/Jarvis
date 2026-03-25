@@ -150,7 +150,7 @@ curl -s http://127.0.0.1:8001/health
 Frontend integration defaults:
 - ROI detection path is `http://127.0.0.1:8001/roi/detect` and is required for OCR.
 - Digit classifier path is `http://127.0.0.1:8001/digit/predict-cells` and is only used when `OCR_CONFIG.digitClassifier.enabled=true`.
-- Frontend ROI OCR currently evaluates all `90/270` edge candidates first, opens a narrow `scan-roi` / base fallback pass only when edge evidence is still single-source, and applies a final confidence gate to reject weak edge-only reads.
+- Frontend ROI OCR currently evaluates all `90/270` edge candidates first, opens a narrow `scan-roi` / base fallback pass when the top edge evidence is still single-source or only supported by agreeing edge variants, and applies a final confidence gate to reject weak edge-only reads.
 
 ## Environment Variables
 
