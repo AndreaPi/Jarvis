@@ -175,10 +175,8 @@ def main() -> None:
     raise RuntimeError(f"No dataset rows found in CSV: {csv_path}")
 
   roi_map = read_roi_map(roi_json_path)
-  clear_generated_outputs(out_dir, preview_dir)
-  ensure_dataset_dirs(out_dir)
 
-  created = []
+  planned = []
   for index, row in enumerate(rows):
     filename = row["filename"]
     source_image = assets_dir / filename
@@ -188,16 +186,22 @@ def main() -> None:
       raise KeyError(f"Missing ROI entry for {filename} in {roi_json_path}")
 
     split = split_for_index(index, len(rows))
+    xc, yc, width, height = normalize_yolo(roi_map[filename])
+    planned.append((filename, split, source_image, xc, yc, width, height, roi_map[filename]))
+
+  clear_generated_outputs(out_dir, preview_dir)
+  ensure_dataset_dirs(out_dir)
+
+  created = []
+  for filename, split, source_image, xc, yc, width, height, rect_norm in planned:
     target_image = out_dir / "images" / split / filename
     target_label = out_dir / "labels" / split / f"{Path(filename).stem}.txt"
 
     shutil.copy2(source_image, target_image)
-
-    xc, yc, width, height = normalize_yolo(roi_map[filename])
     target_label.write_text(f"0 {xc:.6f} {yc:.6f} {width:.6f} {height:.6f}\n", encoding="utf-8")
 
     preview_path = preview_dir / f"{Path(filename).stem}_bbox.jpg"
-    write_preview(preview_path, source_image, roi_map[filename])
+    write_preview(preview_path, source_image, rect_norm)
     created.append((filename, split, target_image, target_label, preview_path))
 
   manifest_target = out_dir / "roi_boxes.json"
