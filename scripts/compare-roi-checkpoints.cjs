@@ -215,11 +215,14 @@ const waitForBackendReady = async (expectedModelPath, timeoutMs, trackedBackend)
     try {
       const health = await requestJson(BACKEND_HEALTH_URL);
       const modelPath = typeof health.model_path === 'string' ? path.resolve(health.model_path) : null;
-      const ready = !!health.roi_ready;
+      const ready = !!health.roi_ready && !!health.digit_ready;
       if (ready && modelPath === expectedResolved) {
         return health;
       }
-      lastError = new Error(`health not ready for expected model (${modelPath || 'unknown'})`);
+      lastError = new Error(
+        `health not ready for expected model (${modelPath || 'unknown'}): ` +
+        `roi_ready=${!!health.roi_ready} digit_ready=${!!health.digit_ready}`
+      );
     } catch (error) {
       lastError = error;
     }
