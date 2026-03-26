@@ -9,6 +9,7 @@
 - Digit-classifier inference is mandatory in the frontend OCR flow (`OCR_CONFIG.digitClassifier.enabled` defaults to `true`).
 - Frontend OCR evaluation is strip-only, classifier-first candidate decoding. The old Tesseract word-pass and sparse-scan stages are not part of the active path.
 - Edge-derived candidate generation is enabled by default and can be toggled with `OCR_CONFIG.roiDeterministic.useEdgeCandidates`.
+- The primary classifier shortlist now mixes high-ranked edge and base strip candidates so valid full-strip rotations are not starved behind edge-only passes.
 - Opposite-orientation retry is disabled by default (`roiDeterministic.tryOppositeOrientation=false`).
 - The default ROI checkpoint remains `backend/models/roi-rotaug-e30-640.pt` until a challenger wins on end-to-end OCR metrics.
 

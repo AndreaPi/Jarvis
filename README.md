@@ -189,7 +189,7 @@ CI runs these tests on every pull request and on pushes to `master`.
 - OCR now relies on neural ROI detection; if the backend is unavailable or ROI fails, the app asks for manual reading input.
 - Digit decoding uses the backend neural classifier endpoint (`/digit/predict-cells`) and is enabled by default.
 - Edge-derived ROI strip candidates are enabled by default and can be toggled with `OCR_CONFIG.roiDeterministic.useEdgeCandidates`.
-- The selection layer is edge-first: all `90/270` edge candidates are evaluated first, then a narrow `scan-roi` / base fallback pass runs when the top edge evidence is still single-source or only supported by agreeing edge variants; low-confidence edge reads can still be rejected at the final gate.
+- The selection layer prioritizes edge-derived strips, but the primary classifier pass now also includes top base-strip candidates when they are available; a narrow base fallback rerun is still available only when base candidates were not already evaluated and edge support remains weak. Low-confidence edge-only reads can still be rejected at the final gate.
 - Use the UI `Run test set` action plus `npm run test:e2e` for OCR regressions before and after tuning.
 - The Gmail flow opens a draft; you always review and send manually.
 
