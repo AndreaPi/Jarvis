@@ -426,7 +426,7 @@ def export_runtime_failure_set() -> None:
     roi_crop = crop_image(base_image, roi_rect)
 
     candidates: list[Candidate] = [Candidate(label="scan-roi", image=roi_crop)]
-    base_fallback: Candidate | None = None
+    base_candidates: list[Candidate] = []
     for angle in PRIMARY_ANGLES:
       rotated = rotate_image(roi_crop, angle)
       edge_rect = find_digit_window_by_edges(rotated)
@@ -436,12 +436,11 @@ def export_runtime_failure_set() -> None:
         if has_valid_candidate_geometry(edge_scaled):
           candidates.append(Candidate(label=f"roi-{angle}-edge-roi", image=edge_crop))
 
-      if base_fallback is None:
-        base_scaled = scale_up_to_width(rotated, NORMALIZE_WIDTH)
-        if has_valid_candidate_geometry(base_scaled):
-          base_fallback = Candidate(label=f"roi-{angle}-base-roi", image=rotated)
-    if base_fallback is not None:
-      candidates.append(base_fallback)
+      base_scaled = scale_up_to_width(rotated, NORMALIZE_WIDTH)
+      if has_valid_candidate_geometry(base_scaled):
+        base_candidates.append(Candidate(label=f"roi-{angle}-base-roi", image=rotated))
+    if base_candidates:
+      candidates.extend(base_candidates)
 
     for candidate in candidates:
       normalized = normalize_roi_strip(candidate.image)
