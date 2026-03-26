@@ -771,15 +771,48 @@ const evaluateCandidateBranch = async ({
     );
   const rankedEdgeCandidates = rankedCandidates.filter((candidate) => isEdgeSourceLabel(candidate.label));
   const rankedBaseCandidates = rankedCandidates.filter((candidate) => !isEdgeSourceLabel(candidate.label));
-  let selectedCandidates = rankedEdgeCandidates.length
-    ? rankedEdgeCandidates.slice(0, maxPrimaryCandidates)
-    : rankedBaseCandidates.slice(0, maxPrimaryCandidates);
+  let selectedCandidates;
+  if (rankedEdgeCandidates.length && rankedBaseCandidates.length && maxPrimaryCandidates > 1) {
+    const selectedSet = new Set();
+    const reserveBaseSlots = Math.min(
+      rankedBaseCandidates.length,
+      Math.min(2, Math.max(1, maxPrimaryCandidates - 1))
+    );
+    const primaryCandidates = [
+      ...rankedEdgeCandidates.slice(0, Math.max(1, maxPrimaryCandidates - reserveBaseSlots)),
+      ...rankedBaseCandidates.slice(0, reserveBaseSlots)
+    ];
+
+    primaryCandidates.forEach((candidate) => {
+      if (!selectedSet.has(candidate.label)) {
+        selectedSet.add(candidate.label);
+      }
+    });
+    selectedCandidates = [...selectedSet].map((label) => (
+      rankedCandidates.find((candidate) => candidate.label === label)
+    )).filter(Boolean);
+
+    if (selectedCandidates.length < maxPrimaryCandidates) {
+      rankedCandidates.forEach((candidate) => {
+        if (selectedCandidates.length >= maxPrimaryCandidates || selectedSet.has(candidate.label)) {
+          return;
+        }
+        selectedSet.add(candidate.label);
+        selectedCandidates.push(candidate);
+      });
+    }
+  } else {
+    selectedCandidates = rankedEdgeCandidates.length
+      ? rankedEdgeCandidates.slice(0, maxPrimaryCandidates)
+      : rankedBaseCandidates.slice(0, maxPrimaryCandidates);
+  }
   if (classifierConfig.forceInitialPreviewCandidate === true) {
     const initialCandidate = activeCandidates.find((candidate) => (
       hasValidCandidateGeometry(candidate, 'classifier-primary-force-initial')
     ));
     selectedCandidates = initialCandidate ? [initialCandidate] : [];
   }
+  const primaryIncludesBaseCandidates = selectedCandidates.some((candidate) => !isEdgeSourceLabel(candidate.label));
   if (!selectedCandidates.length) {
     recordReject('classifier-no-candidate', {
       stage: 'classifier-primary'
@@ -984,6 +1017,7 @@ const evaluateCandidateBranch = async ({
   if (
     !edgeWonEarly
     && rankedBaseCandidates.length
+    && !primaryIncludesBaseCandidates
     && (
       !bestResult
       || shouldReopenBaseFallback

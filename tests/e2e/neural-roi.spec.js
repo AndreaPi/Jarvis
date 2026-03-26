@@ -200,7 +200,7 @@ test('completes with a detected reading when neural ROI and classifier succeed',
 
   await expect(page.locator('#ocr-status')).toContainText('Reading detected: 2311. Review if needed.');
   await expect(page.locator('#reading-input')).toHaveValue('2311');
-  expect(digitMock.getCalls()).toBe(2);
+  expect(digitMock.getCalls()).toBe(4);
 });
 
 test('asks for manual input when classifier endpoint fails after ROI success', async ({ page }) => {
