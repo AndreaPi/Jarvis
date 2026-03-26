@@ -116,6 +116,25 @@ def ensure_dataset_dirs(root: Path) -> None:
     (root / "labels" / split).mkdir(parents=True, exist_ok=True)
 
 
+def clear_generated_outputs(root: Path, preview_dir: Path) -> None:
+  generated_paths = [
+    root / "images",
+    root / "labels",
+    preview_dir,
+    root / "roi_boxes.json",
+  ]
+  seen: set[Path] = set()
+  for path in generated_paths:
+    resolved = path.resolve()
+    if resolved in seen:
+      continue
+    seen.add(resolved)
+    if path.is_dir():
+      shutil.rmtree(path)
+    elif path.exists():
+      path.unlink()
+
+
 def write_preview(preview_path: Path, image_path: Path, rect_norm: dict) -> None:
   try:
     from PIL import Image, ImageDraw
@@ -156,6 +175,7 @@ def main() -> None:
     raise RuntimeError(f"No dataset rows found in CSV: {csv_path}")
 
   roi_map = read_roi_map(roi_json_path)
+  clear_generated_outputs(out_dir, preview_dir)
   ensure_dataset_dirs(out_dir)
 
   created = []
