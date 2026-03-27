@@ -142,6 +142,14 @@ def scale_up_to_width(image: Image.Image, target_width: int) -> Image.Image:
   return image.resize((new_width, new_height), Image.Resampling.BILINEAR)
 
 
+def resize_to_width(image: Image.Image, target_width: int) -> Image.Image:
+  if image.width == target_width:
+    return image
+  scale = target_width / max(1, image.width)
+  new_height = max(1, int(round(image.height * scale)))
+  return image.resize((target_width, new_height), Image.Resampling.BILINEAR)
+
+
 def crop_image(image: Image.Image, rect: dict[str, float]) -> Image.Image:
   x = clamp(rect["x"], 0, image.width - 1)
   y = clamp(rect["y"], 0, image.height - 1)
@@ -301,7 +309,7 @@ def normalize_roi_strip(image: Image.Image) -> Image.Image | None:
   if not has_valid_candidate_geometry(normalized):
     return None
 
-  normalized = scale_up_to_width(normalized, NORMALIZE_WIDTH)
+  normalized = resize_to_width(normalized, NORMALIZE_WIDTH)
   if normalized.height > normalized.width:
     normalized = rotate_image(normalized, 90)
   if not has_valid_candidate_geometry(normalized):
