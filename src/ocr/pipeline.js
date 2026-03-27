@@ -84,6 +84,12 @@ const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const isEdgeSourceLabel = (sourceLabel) => (
   typeof sourceLabel === 'string' && sourceLabel.includes('-edge')
 );
+const isClassifierAvailabilityReject = (detail) => (
+  !!detail && (
+    detail.reason === 'classifier-unavailable'
+    || detail.reason === 'classifier-disabled'
+  )
+);
 
 const recordSelectionEvidence = (
   evidenceMap,
@@ -880,6 +886,9 @@ const evaluateCandidateBranch = async ({
           result: null,
           rejects: candidateRejects
         });
+        if (candidateRejects.some((detail) => isClassifierAvailabilityReject(detail))) {
+          break;
+        }
         continue;
       }
       if (!isPreferredLengthReading(reading)) {
