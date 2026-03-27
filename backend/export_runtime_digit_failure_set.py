@@ -43,6 +43,7 @@ HARD_STRIP_MAX_FACTOR = 1.06
 class Candidate:
   label: str
   image: Image.Image
+  reverse_expected: bool = False
 
 
 def parse_args() -> argparse.Namespace:
@@ -425,20 +426,30 @@ def export_runtime_failure_set() -> None:
     roi_rect = resolve_roi_rect(base_image, detection)
     roi_crop = crop_image(base_image, roi_rect)
 
+    roi_crop_is_landscape = roi_crop.width > roi_crop.height
     candidates: list[Candidate] = [Candidate(label="scan-roi", image=roi_crop)]
     base_candidates: list[Candidate] = []
     for angle in PRIMARY_ANGLES:
       rotated = rotate_image(roi_crop, angle)
+      reverse_expected = roi_crop_is_landscape and normalize_angle(angle) == 90
       edge_rect = find_digit_window_by_edges(rotated)
       if edge_rect is not None:
         edge_crop = crop_image(rotated, edge_rect)
         edge_scaled = scale_up_to_width(edge_crop, NORMALIZE_WIDTH)
         if has_valid_candidate_geometry(edge_scaled):
-          candidates.append(Candidate(label=f"roi-{angle}-edge-roi", image=edge_crop))
+          candidates.append(Candidate(
+            label=f"roi-{angle}-edge-roi",
+            image=edge_crop,
+            reverse_expected=reverse_expected
+          ))
 
       base_scaled = scale_up_to_width(rotated, NORMALIZE_WIDTH)
       if has_valid_candidate_geometry(base_scaled):
-        base_candidates.append(Candidate(label=f"roi-{angle}-base-roi", image=rotated))
+        base_candidates.append(Candidate(
+          label=f"roi-{angle}-base-roi",
+          image=rotated,
+          reverse_expected=reverse_expected
+        ))
     if base_candidates:
       candidates.extend(base_candidates)
 
@@ -477,8 +488,9 @@ def export_runtime_failure_set() -> None:
         continue
 
       summary["failure_candidates"] += 1
+      cell_labels = expected[::-1] if candidate.reverse_expected else expected
       for index, cell in enumerate(cells):
-        digit = expected[index]
+        digit = cell_labels[index]
         cell_path = failure_root / digit / f"{strip_stem}__c{index}.png"
         cell.convert("L").save(cell_path)
         summary["exported_cells"] += 1
