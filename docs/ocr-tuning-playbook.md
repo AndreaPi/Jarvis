@@ -83,6 +83,11 @@ npm run benchmark:roi-diff
 ```
 
 The benchmark always runs neural-digit-only decode (classifier enabled).
+It requires these local checkpoints before starting:
+
+- `backend/models/roi-rotaug-e30-640.pt`
+- `backend/models/roi.pt`
+- `backend/models/digit_classifier.pt`
 
 Artifacts are saved to:
 

@@ -30,6 +30,7 @@
 - Prefer running the test set with the debug overlay enabled.
 - Test-set review should inspect `Detected`, `Absolute Error`, `Failure Reason`, and the stage `5/6` snapshots.
 - `npm run benchmark:roi-diff` remains the standard checkpoint comparison workflow.
+- The benchmark requires `backend/models/roi-rotaug-e30-640.pt`, `backend/models/roi.pt`, and `backend/models/digit_classifier.pt` to exist locally before it will start.
 - Keep `roi-rotaug-e30-640.pt` as default until a challenger improves end-to-end OCR, not just detection presence.
 
 ## Current Focus

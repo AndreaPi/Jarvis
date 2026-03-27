@@ -167,6 +167,12 @@ Generate a per-image ROI checkpoint comparison report (`roi-rotaug-e30-640.pt` v
 npm run benchmark:roi-diff
 ```
 
+This benchmark requires all three local model files to be present:
+
+- `backend/models/roi-rotaug-e30-640.pt`
+- `backend/models/roi.pt`
+- `backend/models/digit_classifier.pt`
+
 Report artifacts are written under `output/roi-checkpoint-diff/<timestamp>/`.
 Per-image diff tables include selected OCR metadata (`sourceLabel`, `method`, `preprocessMode`) and stage `6` exports use the last `6. OCR input candidate` frame from each debug session (the winning decode strip variant).
 
