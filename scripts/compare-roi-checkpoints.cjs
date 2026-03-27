@@ -47,6 +47,7 @@ const MODEL_RUNS = [
     modelPath: path.join(ROOT_DIR, 'backend', 'models', 'roi.pt')
   }
 ];
+const DIGIT_MODEL_PATH = path.join(ROOT_DIR, 'backend', 'models', 'digit_classifier.pt');
 
 const STAGE_NAMES = {
   strip: '5. detected strip crop',
@@ -804,6 +805,11 @@ const writeJson = async (filePath, value) => {
 
 const ensureModelFilesExist = () => {
   const missing = MODEL_RUNS.filter((run) => !fs.existsSync(run.modelPath));
+  if (!fs.existsSync(DIGIT_MODEL_PATH)) {
+    missing.push({
+      modelPath: DIGIT_MODEL_PATH
+    });
+  }
   if (!missing.length) {
     return;
   }
