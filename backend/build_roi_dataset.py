@@ -116,11 +116,21 @@ def ensure_dataset_dirs(root: Path) -> None:
     (root / "labels" / split).mkdir(parents=True, exist_ok=True)
 
 
+def clear_generated_previews(root: Path, preview_dir: Path) -> None:
+  resolved_root = root.resolve()
+  resolved_preview = preview_dir.resolve()
+  if resolved_preview == resolved_root or not resolved_preview.is_relative_to(resolved_root):
+    return
+  if preview_dir.is_dir():
+    shutil.rmtree(preview_dir)
+  elif preview_dir.exists():
+    preview_dir.unlink()
+
+
 def clear_generated_outputs(root: Path, preview_dir: Path) -> None:
   generated_paths = [
     root / "images",
     root / "labels",
-    preview_dir,
     root / "roi_boxes.json",
   ]
   seen: set[Path] = set()
@@ -133,6 +143,7 @@ def clear_generated_outputs(root: Path, preview_dir: Path) -> None:
       shutil.rmtree(path)
     elif path.exists():
       path.unlink()
+  clear_generated_previews(root, preview_dir)
 
 
 def write_preview(preview_path: Path, image_path: Path, rect_norm: dict) -> None:
