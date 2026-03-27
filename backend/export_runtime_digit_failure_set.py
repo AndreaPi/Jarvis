@@ -61,6 +61,11 @@ def parse_args() -> argparse.Namespace:
     help="CSV with filename,value rows."
   )
   parser.add_argument(
+    "--digit-windows-manifest",
+    default="data/digit_dataset/manifests/windows.csv",
+    help="Digit dataset windows manifest used to restrict exports to existing train split images."
+  )
+  parser.add_argument(
     "--output-root",
     default="data/runtime_failure_dataset",
     help="Output root for exported runtime strips/cells and manifests."
@@ -123,6 +128,18 @@ def load_readings(csv_path: Path) -> list[dict[str, str]]:
         continue
       rows.append({"filename": filename, "value": value})
   return rows
+
+
+def load_train_filenames(windows_manifest_path: Path) -> set[str]:
+  train_filenames: set[str] = set()
+  with windows_manifest_path.open("r", encoding="utf-8", newline="") as handle:
+    reader = csv.DictReader(handle)
+    for row in reader:
+      split = (row.get("split") or "").strip().lower()
+      filename = (row.get("filename") or "").strip()
+      if split == "train" and filename:
+        train_filenames.add(filename)
+  return train_filenames
 
 
 def clamp(value: float, minimum: float, maximum: float) -> float:
@@ -368,11 +385,14 @@ def export_runtime_failure_set() -> None:
   base_dir = Path(__file__).resolve().parent
   assets_root = resolve_path(base_dir, args.assets_root)
   readings_csv = resolve_path(base_dir, args.readings_csv)
+  digit_windows_manifest = resolve_path(base_dir, args.digit_windows_manifest)
   output_root = resolve_path(base_dir, args.output_root)
   roi_model = resolve_path(base_dir, args.roi_model)
   digit_model = resolve_path(base_dir, args.digit_model)
 
   rows = load_readings(readings_csv)
+  train_filenames = load_train_filenames(digit_windows_manifest)
+  rows = [row for row in rows if row["filename"] in train_filenames]
   filename_filter = {value.strip() for value in args.filename if value and value.strip()}
   if filename_filter:
     rows = [row for row in rows if row["filename"] in filename_filter]
