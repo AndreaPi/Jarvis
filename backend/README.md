@@ -85,6 +85,13 @@ This creates:
 - `data/digit_dataset/sections_labeled/{train,val,test}/{0..9}`
 - manifests under `data/digit_dataset/manifests`
 
+Keep `data/digit_dataset/manifests/**` in Git. The bulk image trees above are DVC-managed via:
+
+- `data/digit_dataset/windows.dvc`
+- `data/digit_dataset/windows_canonical.dvc`
+- `data/digit_dataset/sections.dvc`
+- `data/digit_dataset/sections_labeled.dvc`
+
 Legacy flow (kept for backward compatibility tooling):
 
 ```bash
@@ -123,6 +130,8 @@ python train_digit_classifier.py \
   --synthetic-target-ratio 2.0 \
   --name digit-classifier-synth-v1
 ```
+
+Keep `data/digit_dataset/sections_synthetic/manifests/**` in Git and track the synthetic image tree with `data/digit_dataset/sections_synthetic/train.dvc`.
 
 After promoting a new ROI or digit checkpoint, run `dvc add` for the changed artifacts, push with `scripts/dvc-push-safe.sh`, then package Tier 1 artifacts and publish them as Release assets so the raw photos, labels, manifests, and promoted weights are recoverable off-machine.
 

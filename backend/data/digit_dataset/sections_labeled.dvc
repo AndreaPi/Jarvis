@@ -1,0 +1,6 @@
+outs:
+- md5: 5ad4baacab86535437132faf3a6a68be.dir
+  size: 1423501
+  nfiles: 76
+  hash: md5
+  path: sections_labeled

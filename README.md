@@ -82,6 +82,7 @@ Treat the following as Tier 1 artifacts that must not be lost:
 - `backend/data/roi_dataset/images/**`
 - `backend/data/roi_dataset/labels/**`
 - `backend/data/digit_dataset/manifests/**`
+- `backend/data/digit_dataset/sections_synthetic/manifests/**`
 - promoted checkpoints in `backend/models/*.pt`
 
 The repo now uses DVC for the large Tier 1 binaries:
@@ -94,6 +95,11 @@ Currently tracked by DVC:
 
 - each raw meter photo in `assets/` via per-file `*.dvc` pointers
 - `backend/data/roi_dataset/images` via `backend/data/roi_dataset/images.dvc`
+- `backend/data/digit_dataset/windows` via `backend/data/digit_dataset/windows.dvc`
+- `backend/data/digit_dataset/windows_canonical` via `backend/data/digit_dataset/windows_canonical.dvc`
+- `backend/data/digit_dataset/sections` via `backend/data/digit_dataset/sections.dvc`
+- `backend/data/digit_dataset/sections_labeled` via `backend/data/digit_dataset/sections_labeled.dvc`
+- `backend/data/digit_dataset/sections_synthetic/train` via `backend/data/digit_dataset/sections_synthetic/train.dvc`
 - promoted model weights in `backend/models/*.pt` via per-file `*.dvc` pointers
 
 After dataset ingestion or model promotion:
@@ -101,6 +107,11 @@ After dataset ingestion or model promotion:
 ```bash
 source backend/.venv/bin/activate
 dvc add backend/data/roi_dataset/images
+dvc add backend/data/digit_dataset/windows
+dvc add backend/data/digit_dataset/windows_canonical
+dvc add backend/data/digit_dataset/sections
+dvc add backend/data/digit_dataset/sections_labeled
+dvc add backend/data/digit_dataset/sections_synthetic/train
 dvc add backend/models/*.pt
 find assets -maxdepth 1 -type f ! -name 'meter_readings.csv' ! -name '*:Zone.Identifier' -print0 | xargs -0 dvc add
 scripts/dvc-push-safe.sh

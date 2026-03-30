@@ -55,6 +55,11 @@ Open `http://localhost:8000` after starting the frontend server.
 - Use DVC for large Tier 1 binaries:
   - per-file DVC tracking for raw meter photos in `assets/`
   - `backend/data/roi_dataset/images.dvc`
+  - `backend/data/digit_dataset/windows.dvc`
+  - `backend/data/digit_dataset/windows_canonical.dvc`
+  - `backend/data/digit_dataset/sections.dvc`
+  - `backend/data/digit_dataset/sections_labeled.dvc`
+  - `backend/data/digit_dataset/sections_synthetic/train.dvc`
   - per-file DVC tracking for promoted `backend/models/*.pt`
 - After dataset ingestion or model promotion, run the relevant `dvc add ...` commands, then push with `scripts/dvc-push-safe.sh`.
 - Never run raw `dvc push` directly in this repo. Always use `scripts/dvc-push-safe.sh`; it requires a configured non-local DVC remote and refuses to push to plain local paths.
