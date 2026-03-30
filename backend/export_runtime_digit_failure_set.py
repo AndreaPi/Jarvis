@@ -14,9 +14,15 @@ from PIL import Image
 try:
   from .detector import RoiDetector
   from .digit_classifier import DigitClassifier
+  from .runtime_digit_pipeline import CELL_OVERLAP as SHARED_CELL_OVERLAP
+  from .runtime_digit_pipeline import normalize_roi_strip as shared_normalize_roi_strip
+  from .runtime_digit_pipeline import split_into_cells as shared_split_into_cells
 except ImportError:
   from detector import RoiDetector
   from digit_classifier import DigitClassifier
+  from runtime_digit_pipeline import CELL_OVERLAP as SHARED_CELL_OVERLAP
+  from runtime_digit_pipeline import normalize_roi_strip as shared_normalize_roi_strip
+  from runtime_digit_pipeline import split_into_cells as shared_split_into_cells
 
 
 EXPAND_X = 0.26
@@ -25,7 +31,7 @@ NORMALIZE_WIDTH = 520
 PRIMARY_ANGLES = (90, 270)
 EDGE_ROW_MAX_RATIO = 0.65
 CELL_COUNT = 4
-CELL_OVERLAP = 0.03
+CELL_OVERLAP = SHARED_CELL_OVERLAP
 MIN_CANDIDATE_WIDTH = 120
 MIN_CANDIDATE_HEIGHT = 28
 MIN_CANDIDATE_ASPECT = 0.12
@@ -309,51 +315,14 @@ def score_deskew_candidate(image: Image.Image, angle: int) -> tuple[Image.Image,
 
 
 def normalize_roi_strip(image: Image.Image) -> Image.Image | None:
-  best_image, best_score = score_deskew_candidate(image, 0)
-  for delta in range(DESKEW_STEP, DESKEW_MAX_ANGLE + 1, DESKEW_STEP):
-    for angle in (delta, -delta):
-      candidate = score_deskew_candidate(image, angle)
-      if candidate is None:
-        continue
-      candidate_image, candidate_score = candidate
-      if candidate_score > best_score + 0.02:
-        best_image = candidate_image
-        best_score = candidate_score
-
-  normalized = best_image
-  if normalized.height > normalized.width:
-    normalized = rotate_image(normalized, 90)
-  if not has_valid_candidate_geometry(normalized):
+  normalized = shared_normalize_roi_strip(image)
+  if normalized is None:
     return None
-
-  normalized = resize_to_width(normalized, NORMALIZE_WIDTH)
-  if normalized.height > normalized.width:
-    normalized = rotate_image(normalized, 90)
-  if not has_valid_candidate_geometry(normalized):
-    return None
-
-  aspect = normalized.width / max(1, normalized.height)
-  hard_min = MIN_STRIP_ASPECT * HARD_STRIP_MIN_FACTOR
-  hard_max = MAX_STRIP_ASPECT * HARD_STRIP_MAX_FACTOR
-  if aspect < hard_min or aspect > hard_max:
-    return None
-  return normalized
+  return normalized.image
 
 
 def split_into_cells(image: Image.Image, count: int, overlap_ratio: float) -> list[Image.Image]:
-  cells: list[Image.Image] = []
-  cell_width = image.width / count
-  overlap = cell_width * overlap_ratio
-  for index in range(count):
-    x = cell_width * index - overlap
-    width = cell_width + overlap * 2
-    cells.append(crop_image(image, {
-      "x": x,
-      "y": 0,
-      "width": width,
-      "height": image.height
-    }))
-  return cells
+  return shared_split_into_cells(image, count, overlap_ratio)
 
 
 def resolve_roi_rect(image: Image.Image, detection) -> dict[str, float]:

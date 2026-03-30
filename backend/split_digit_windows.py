@@ -8,6 +8,11 @@ from pathlib import Path
 
 from PIL import Image
 
+try:
+  from .runtime_digit_pipeline import build_cell_rects, normalize_roi_strip, rotate_image
+except ImportError:
+  from runtime_digit_pipeline import build_cell_rects, normalize_roi_strip, rotate_image
+
 
 def parse_args() -> argparse.Namespace:
   parser = argparse.ArgumentParser(
@@ -65,44 +70,8 @@ def write_csv(path: Path, rows: list[dict[str, str]], headers: list[str]) -> Non
     writer.writerows(rows)
 
 
-def section_bounds(length: int, count: int, index: int) -> tuple[int, int]:
-  start = int(round(index * length / count))
-  end = int(round((index + 1) * length / count))
-  if end <= start:
-    end = min(length, start + 1)
-  return start, end
-
-
 def major_axis(width: int, height: int) -> str:
   return "x" if width >= height else "y"
-
-
-def rotate_right_angle(image: Image.Image, angle: int) -> Image.Image:
-  normalized = angle % 360
-  if normalized == 0:
-    return image.copy()
-  return image.rotate(normalized, expand=True)
-
-
-def ink_lowerness_score(image: Image.Image) -> float:
-  gray = image.convert("L")
-  width, height = gray.size
-  pixels = gray.load()
-  denom_y = max(1, height - 1)
-  total = 0.0
-  weighted = 0.0
-  for y in range(height):
-    y_weight = y / denom_y
-    for x in range(width):
-      lum = pixels[x, y]
-      ink = max(0, 220 - int(lum))
-      if ink <= 0:
-        continue
-      total += ink
-      weighted += ink * y_weight
-  if total <= 0:
-    return 0.5
-  return weighted / total
 
 
 def parse_bool_token(raw: str) -> bool:
@@ -125,43 +94,6 @@ def load_direction_overrides(path: Path) -> dict[str, bool]:
         flip_raw = row.get("flip")
       mapping[filename] = parse_bool_token(flip_raw or "")
   return mapping
-
-
-def canonicalize_window_orientation(
-  source: Image.Image,
-  filename: str,
-  direction_overrides: dict[str, bool]
-) -> tuple[Image.Image, dict[str, str]]:
-  source_major_axis = major_axis(source.width, source.height)
-  # For vertical windows, rotate clockwise to horizontal first.
-  axis_rotation = 0 if source_major_axis == "x" else 270
-
-  primary = rotate_right_angle(source, axis_rotation)
-  flipped = rotate_right_angle(primary, 180)
-
-  primary_score = ink_lowerness_score(primary)
-  flipped_score = ink_lowerness_score(flipped)
-
-  direction_flip = bool(direction_overrides.get(filename, False))
-  direction_source = "override" if filename in direction_overrides else "default"
-  if direction_flip:
-    canonical = flipped
-    applied_rotation = (axis_rotation + 180) % 360
-  else:
-    canonical = primary
-    applied_rotation = axis_rotation
-
-  metadata = {
-    "source_major_axis": source_major_axis,
-    "canonical_major_axis": major_axis(canonical.width, canonical.height),
-    "axis_rotation": str(axis_rotation),
-    "direction_flip": "1" if direction_flip else "0",
-    "direction_source": direction_source,
-    "applied_rotation": str(applied_rotation),
-    "primary_lowerness": f"{primary_score:.6f}",
-    "flipped_lowerness": f"{flipped_score:.6f}"
-  }
-  return canonical, metadata
 
 
 def main() -> None:
@@ -195,6 +127,7 @@ def main() -> None:
   source_axis_counts = {"x": 0, "y": 0}
   canonical_axis_counts = {"x": 0, "y": 0}
   rotation_counts = {"0": 0, "90": 0, "180": 0, "270": 0}
+  deskewed_count = 0
 
   with manifest_path.open("r", encoding="utf-8") as handle:
     reader = csv.DictReader(handle)
@@ -217,19 +150,26 @@ def main() -> None:
 
       with Image.open(window_path) as image:
         source = image.convert("RGB")
-        canonical, orientation_meta = canonicalize_window_orientation(
-          source,
-          filename,
-          direction_overrides
-        )
+        normalized = normalize_roi_strip(source)
+        if normalized is None:
+          skipped.append({"split": split, "filename": filename, "reason": "normalize-roi-strip-failed"})
+          continue
+        canonical = normalized.image
+        direction_flip = bool(direction_overrides.get(filename, False))
+        direction_source = "override" if filename in direction_overrides else "default"
+        if direction_flip:
+          canonical = rotate_image(canonical, 180)
         width, height = canonical.size
-        source_major_axis = orientation_meta["source_major_axis"]
-        canonical_major_axis = orientation_meta["canonical_major_axis"]
+        source_major_axis = major_axis(source.width, source.height)
+        canonical_major_axis = major_axis(width, height)
         source_axis_counts[source_major_axis] += 1
         canonical_axis_counts[canonical_major_axis] += 1
-        applied_rotation = orientation_meta["applied_rotation"]
+        axis_rotation = normalized.major_axis_rotation
+        applied_rotation = (axis_rotation + (180 if direction_flip else 0)) % 360
         if applied_rotation in rotation_counts:
           rotation_counts[applied_rotation] += 1
+        if normalized.deskew_angle != 0:
+          deskewed_count += 1
 
         canonical_path = dataset_dir / "windows_canonical" / split / f"{Path(window_path).stem}.png"
         canonical.save(canonical_path)
@@ -247,19 +187,19 @@ def main() -> None:
           "canonical_height": str(height),
           "source_major_axis": source_major_axis,
           "canonical_major_axis": canonical_major_axis,
-          "axis_rotation": orientation_meta["axis_rotation"],
-          "direction_flip": orientation_meta["direction_flip"],
-          "direction_source": orientation_meta["direction_source"],
-          "applied_rotation": applied_rotation,
-          "primary_lowerness": orientation_meta["primary_lowerness"],
-          "flipped_lowerness": orientation_meta["flipped_lowerness"]
+          "axis_rotation": str(axis_rotation),
+          "direction_flip": "1" if direction_flip else "0",
+          "direction_source": direction_source,
+          "applied_rotation": str(applied_rotation),
+          "primary_lowerness": "",
+          "flipped_lowerness": "",
+          "deskew_angle": str(normalized.deskew_angle),
+          "normalization_mode": "runtime-parity"
         })
 
-        for section_index in range(args.section_count):
-          x0, x1 = section_bounds(width, args.section_count, section_index)
-          y0, y1 = 0, height
-
-          section = canonical.crop((x0, y0, x1, y1))
+        rects = build_cell_rects(canonical, args.section_count)
+        for section_index, rect in enumerate(rects):
+          section = canonical.crop((rect.left, rect.top, rect.right, rect.bottom))
           section_name = f"{Path(window_path).stem}_s{section_index}.png"
           section_path = dataset_dir / "sections" / split / section_name
           section.save(section_path)
@@ -272,11 +212,11 @@ def main() -> None:
             "canonical_window_path": canonical_rel,
             "section_index": str(section_index),
             "major_axis": canonical_major_axis,
-            "applied_rotation": applied_rotation,
-            "x0": str(x0),
-            "y0": str(y0),
-            "x1": str(x1),
-            "y1": str(y1),
+            "applied_rotation": str(applied_rotation),
+            "x0": str(rect.left),
+            "y0": str(rect.top),
+            "x1": str(rect.right),
+            "y1": str(rect.bottom),
             "section_path": str(section_path.relative_to(dataset_dir))
           })
 
@@ -302,7 +242,9 @@ def main() -> None:
       "direction_source",
       "applied_rotation",
       "primary_lowerness",
-      "flipped_lowerness"
+      "flipped_lowerness",
+      "deskew_angle",
+      "normalization_mode"
     ]
   )
   write_csv(
@@ -339,6 +281,7 @@ def main() -> None:
     "source_axis_counts": source_axis_counts,
     "canonical_axis_counts": canonical_axis_counts,
     "applied_rotation_counts": rotation_counts,
+    "deskewed_count": deskewed_count,
     "dataset_dir": str(dataset_dir),
     "windows_manifest": str(manifest_path),
     "direction_overrides": str(direction_overrides_path),
@@ -358,6 +301,7 @@ def main() -> None:
   )
   print(f"Source major axis counts: x={source_axis_counts['x']} y={source_axis_counts['y']}")
   print(f"Canonical major axis counts: x={canonical_axis_counts['x']} y={canonical_axis_counts['y']}")
+  print(f"Deskewed windows: {deskewed_count}")
   print(
     "Applied rotations: "
     f"0={rotation_counts['0']} 90={rotation_counts['90']} "

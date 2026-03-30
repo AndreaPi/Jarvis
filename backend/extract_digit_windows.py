@@ -31,13 +31,13 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument(
     "--expand-x",
     type=float,
-    default=0.0,
+    default=0.26,
     help="Expand ROI horizontally by this ratio of ROI width on each side."
   )
   parser.add_argument(
     "--expand-y",
     type=float,
-    default=0.0,
+    default=0.16,
     help="Expand ROI vertically by this ratio of ROI height on each side."
   )
   parser.add_argument(

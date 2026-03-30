@@ -1,14 +1,14 @@
 {
-  "rows_exported": 17,
+  "rows_exported": 19,
   "rows_skipped": 0,
   "splits": {
-    "train": 14,
-    "val": 2,
+    "train": 17,
+    "val": 1,
     "test": 1
   },
   "missing_reading_count": 0,
-  "expand_x": 0.0,
-  "expand_y": 0.0,
+  "expand_x": 0.26,
+  "expand_y": 0.16,
   "csv": "/home/andrea/GitHubRepositories/Jarvis/assets/meter_readings.csv",
   "roi_dataset_dir": "/home/andrea/GitHubRepositories/Jarvis/backend/data/roi_dataset",
   "out_dir": "/home/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset"
