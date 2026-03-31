@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import filecmp
 import json
 import shutil
 from pathlib import Path
@@ -150,7 +151,26 @@ def write_split_map(split_json_path: Path, split_map: dict[str, str]) -> None:
     "version": 1,
     "assignments": {filename: split_map[filename] for filename in sorted(split_map)},
   }
-  split_json_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+  write_text_if_changed(
+    split_json_path,
+    json.dumps(payload, indent=2) + "\n",
+  )
+
+
+def write_text_if_changed(path: Path, content: str) -> bool:
+  if path.exists() and path.read_text(encoding="utf-8") == content:
+    return False
+  path.parent.mkdir(parents=True, exist_ok=True)
+  path.write_text(content, encoding="utf-8")
+  return True
+
+
+def copy_file_if_changed(source_path: Path, target_path: Path) -> bool:
+  if target_path.exists() and filecmp.cmp(source_path, target_path, shallow=False):
+    return False
+  target_path.parent.mkdir(parents=True, exist_ok=True)
+  shutil.copy2(source_path, target_path)
+  return True
 
 
 def bootstrap_split_map(rows: list[dict[str, str]], out_dir: Path) -> dict[str, str]:
@@ -320,15 +340,19 @@ def main() -> None:
     target_image = out_dir / "images" / split / filename
     target_label = out_dir / "labels" / split / f"{Path(filename).stem}.txt"
 
-    shutil.copy2(source_image, target_image)
-    target_label.write_text(f"0 {xc:.6f} {yc:.6f} {width:.6f} {height:.6f}\n", encoding="utf-8")
+    image_changed = copy_file_if_changed(source_image, target_image)
+    label_changed = write_text_if_changed(
+      target_label,
+      f"0 {xc:.6f} {yc:.6f} {width:.6f} {height:.6f}\n",
+    )
 
     preview_path = preview_dir / f"{Path(filename).stem}_bbox.jpg"
-    write_preview(preview_path, source_image, rect_norm)
+    if image_changed or label_changed or not preview_path.exists():
+      write_preview(preview_path, source_image, rect_norm)
     created.append((filename, split, target_image, target_label, preview_path))
 
   manifest_target = out_dir / "roi_boxes.json"
-  shutil.copy2(roi_json_path, manifest_target)
+  copy_file_if_changed(roi_json_path, manifest_target)
   write_split_map(split_json_path, split_map)
 
   split_counts = {"train": 0, "val": 0, "test": 0}
