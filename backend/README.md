@@ -23,6 +23,10 @@ Prepare a YOLO dataset and YAML file. A template is available at `data/roi_datas
 
 Expected labels: one class (`digit_window`) with normalized YOLO boxes.
 
+`build_roi_dataset.py` now keeps a persistent split manifest at `data/roi_dataset/splits.json`.
+Existing samples keep their assigned split on rebuild, and newly ingested images default to `train`
+unless you explicitly edit `splits.json`.
+
 ```bash
 cd backend
 source .venv/bin/activate

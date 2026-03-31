@@ -45,15 +45,18 @@ Use `backend/.venv` for any Python step in this workflow. Do not rely on the sys
    - `cd /home/andrea/GitHubRepositories/Jarvis/backend`
    - `source .venv/bin/activate`
    - `python build_roi_dataset.py --roi-json <path-to-roi-json>`
-   - This rebuilds `backend/data/roi_dataset` from the full CSV + manifest, not an incremental sync of only new files.
+   - The builder persists split assignments in `backend/data/roi_dataset/splits.json`.
+   - Existing images keep their assigned split; new images default to `train` unless you edit `splits.json`.
+   - The builder updates the ROI dataset to match the CSV + manifest without recomputing old splits from CSV order.
 
 8. Review generated ROI previews.
    - Check `backend/data/roi_dataset/previews/*_bbox.jpg` for quick bounding-box QA.
 
 9. Correct labels when needed.
-   - Edit `backend/data/roi_dataset/labels/<split>/<name>.txt`.
-   - Keep YOLO format: `0 x_center y_center width height` (normalized).
+   - Edit the source-of-truth entry in `backend/data/roi_boxes_manifest.json`, not the generated label file.
+   - Keep rect format: `{"x": ..., "y": ..., "width": ..., "height": ...}` normalized to the full image.
    - Target only the 4-digit black register window.
+   - Re-run `build_roi_dataset.py` after any manifest correction so the generated labels stay aligned.
 
 10. Re-render full ROI QA overlays.
    - `cd backend && source .venv/bin/activate && python visualize_roi_labels.py`

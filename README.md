@@ -81,6 +81,7 @@ Treat the following as Tier 1 artifacts that must not be lost:
 - `assets/meter_readings.csv`
 - `backend/data/roi_dataset/images/**`
 - `backend/data/roi_dataset/labels/**`
+- `backend/data/roi_dataset/splits.json`
 - `backend/data/digit_dataset/manifests/**`
 - `backend/data/digit_dataset/sections_synthetic/manifests/**`
 - promoted checkpoints in `backend/models/*.pt`
