@@ -64,6 +64,7 @@ Use `backend/.venv` for any Python step in this workflow. Do not rely on the sys
    - Preferred correction path: use Make Sense (or another manual labeling tool), export the corrected box, then sync that correction back into `backend/data/roi_boxes_manifest.json`.
    - Re-run `build_roi_dataset.py` after any manifest correction so the generated labels stay aligned.
    - Re-run `visualize_roi_labels.py` after any correction and ask the user to confirm the updated overlay.
+   - After the user approves the corrected overlay, scan for stray `:Zone.Identifier` files under `backend/data/roi_dataset/` and delete them before continuing.
 
 10. Refresh DVC-tracked artifacts.
    - Run `dvc add backend/data/roi_dataset/images`
@@ -87,6 +88,8 @@ Use `backend/.venv` for any Python step in this workflow. Do not rely on the sys
 
 - Sidecars left:
   - `find assets -type f -name '*:Zone.Identifier' -print`
+- ROI sidecars left:
+  - `find backend/data/roi_dataset -type f -name '*:Zone.Identifier' -print`
 - CSV to file consistency:
   - `awk -F, 'NR>1 {print $1}' assets/meter_readings.csv | while read -r f; do [ -f "assets/$f" ] || echo "missing: $f"; done`
 - Rebuild ROI dataset:
