@@ -48,26 +48,30 @@ Use `backend/.venv` for any Python step in this workflow. Do not rely on the sys
    - The builder persists split assignments in `backend/data/roi_dataset/splits.json`.
    - Existing images keep their assigned split; new images default to `train` unless you edit `splits.json`.
    - The builder updates the ROI dataset to match the CSV + manifest without recomputing old splits from CSV order.
+   - Treat any new or auto-estimated ROI boxes as tentative until the user reviews the generated previews.
 
 8. Review generated ROI previews.
    - Check `backend/data/roi_dataset/previews/*_bbox.jpg` for quick bounding-box QA.
+   - Re-render full QA overlays with `cd backend && source .venv/bin/activate && python visualize_roi_labels.py`.
+   - Review outputs under `backend/data/roi_dataset/qa_previews/`.
+   - Explicitly prompt the user to inspect the new image overlays before treating the labels as training-ready.
+   - Do not continue to DVC push, final summary, commit, or promotion language until the user either approves the labels or asks for corrections.
 
 9. Correct labels when needed.
    - Edit the source-of-truth entry in `backend/data/roi_boxes_manifest.json`, not the generated label file.
    - Keep rect format: `{"x": ..., "y": ..., "width": ..., "height": ...}` normalized to the full image.
    - Target only the 4-digit black register window.
+   - Preferred correction path: use Make Sense (or another manual labeling tool), export the corrected box, then sync that correction back into `backend/data/roi_boxes_manifest.json`.
    - Re-run `build_roi_dataset.py` after any manifest correction so the generated labels stay aligned.
+   - Re-run `visualize_roi_labels.py` after any correction and ask the user to confirm the updated overlay.
 
-10. Re-render full ROI QA overlays.
-   - `cd backend && source .venv/bin/activate && python visualize_roi_labels.py`
-   - Review outputs under `backend/data/roi_dataset/qa_previews/`.
-
-11. Refresh DVC-tracked artifacts.
+10. Refresh DVC-tracked artifacts.
    - Run `dvc add backend/data/roi_dataset/images`
    - Run `dvc add assets/<new-meter-file>` for each newly ingested raw photo
    - Run `scripts/dvc-push-safe.sh` if a DVC remote is configured
+   - Only do this after the user has approved the ROI overlays for the new image(s).
 
-12. Validate and summarize.
+11. Validate and summarize.
    - Confirm no sidecars remain.
    - Confirm every CSV filename exists in `assets/`.
    - Confirm every newly ingested filename has a ROI manifest entry before rebuilding.
@@ -77,6 +81,7 @@ Use `backend/.venv` for any Python step in this workflow. Do not rely on the sys
      - ROI dataset rows/images rebuilt
      - preview images regenerated
      - final label files updated
+     - whether the user explicitly approved the new ROI labels or whether further Make Sense correction is still pending
 
 ## Command Snippets
 
@@ -93,4 +98,5 @@ Use `backend/.venv` for any Python step in this workflow. Do not rely on the sys
 
 - The old external sync helper path is obsolete for this repo; use a browser-extracted ROI manifest plus `backend/build_roi_dataset.py`.
 - The browser-assisted OCR path is not authoritative for CSV updates. Always confirm readings manually before writing `assets/meter_readings.csv`.
+- New ROI labels are not training-ready until the user has reviewed the generated overlays and either approved them or corrected them in Make Sense.
 - Raw meter photos and ROI image binaries are retained with DVC; do not leave new ingested files outside DVC tracking.

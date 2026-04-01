@@ -19,6 +19,7 @@
     "meter_20260307.JPEG": "train",
     "meter_20260310.JPEG": "train",
     "meter_20260323.JPEG": "val",
-    "meter_20260327.JPEG": "test"
+    "meter_20260327.JPEG": "test",
+    "meter_20260401.JPEG": "train"
   }
 }

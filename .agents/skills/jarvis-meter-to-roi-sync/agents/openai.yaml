@@ -1,4 +1,4 @@
 interface:
   display_name: "Jarvis Meter To ROI Sync"
   short_description: "Ingest meter photos and sync ROI labels in one run."
-  default_prompt: "Process new meter photos end-to-end: remove sidecars, rename from EXIF, read and confirm register values, upsert meter_readings.csv, then rebuild backend/data/roi_dataset from a browser-extracted ROI manifest and review QA overlays."
+  default_prompt: "Process new meter photos end-to-end: remove sidecars, rename from EXIF, read and confirm register values, upsert meter_readings.csv, then rebuild backend/data/roi_dataset from a browser-extracted ROI manifest. Treat any new ROI labels as tentative, render QA overlays, and explicitly stop for user review before DVC push or any claim that the labels are training-ready."
