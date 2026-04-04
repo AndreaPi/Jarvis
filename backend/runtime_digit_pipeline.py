@@ -14,7 +14,7 @@ MIN_STRIP_ASPECT = 1.45
 MAX_STRIP_ASPECT = 8.2
 DESKEW_MAX_ANGLE = 8
 DESKEW_STEP = 2
-TIGHTEN_INK_RATIO = 0.08
+TIGHTEN_INK_RATIO = 0.18
 NORMALIZE_WIDTH = 520
 HARD_STRIP_MIN_FACTOR = 0.96
 HARD_STRIP_MAX_FACTOR = 1.06
@@ -106,7 +106,36 @@ def has_valid_candidate_geometry(image: Image.Image) -> bool:
   )
 
 
-def tighten_crop_by_ink(image: Image.Image, min_area_ratio: float = 0.15) -> Image.Image:
+def expand_interval_to_min_length(
+  start: int,
+  end: int,
+  min_length: int,
+  limit: int
+) -> tuple[int, int]:
+  current = end - start
+  if current >= min_length:
+    return start, end
+  min_length = min(min_length, limit)
+  deficit = min_length - current
+  grow_before = deficit // 2
+  grow_after = deficit - grow_before
+  start = max(0, start - grow_before)
+  end = min(limit, end + grow_after)
+  current = end - start
+  if current >= min_length:
+    return start, end
+  if start == 0:
+    end = min(limit, min_length)
+  elif end == limit:
+    start = max(0, limit - min_length)
+  return start, end
+
+
+def tighten_crop_by_ink(
+  image: Image.Image,
+  min_area_ratio: float = 0.15,
+  min_minor_axis_ratio: float = 0.70
+) -> Image.Image:
   gray = to_grayscale_array(image)
   dark = 255.0 - gray
   cols = dark.sum(axis=0)
@@ -138,6 +167,13 @@ def tighten_crop_by_ink(image: Image.Image, min_area_ratio: float = 0.15) -> Ima
   bottom = int(clamp(bottom + padding_y, 1, image.height))
   crop_width = right - left
   crop_height = bottom - top
+  min_target = int(round(min(image.width, image.height) * min_minor_axis_ratio))
+  if crop_width <= crop_height and crop_width < min_target:
+    left, right = expand_interval_to_min_length(left, right, min_target, image.width)
+    crop_width = right - left
+  elif crop_height < min_target:
+    top, bottom = expand_interval_to_min_length(top, bottom, min_target, image.height)
+    crop_height = bottom - top
   area_ratio = (crop_width * crop_height) / max(1, image.width * image.height)
   if area_ratio < min_area_ratio or area_ratio > 0.95:
     return image
@@ -148,9 +184,16 @@ def tighten_crop_by_ink(image: Image.Image, min_area_ratio: float = 0.15) -> Ima
 def score_deskew_candidate(image: Image.Image, angle: int) -> tuple[Image.Image, float]:
   rotated = image if angle == 0 else rotate_image(image, angle)
   tightened = tighten_crop_by_ink(rotated, TIGHTEN_INK_RATIO)
-  aspect = tightened.width / max(1, tightened.height)
+  scoring_image = tightened
+  if scoring_image.height > scoring_image.width:
+    scoring_image = rotate_image(scoring_image, 90)
+  rotated_scoring = rotated
+  if rotated_scoring.height > rotated_scoring.width:
+    rotated_scoring = rotate_image(rotated_scoring, 90)
+  aspect = scoring_image.width / max(1, scoring_image.height)
   area_ratio = (tightened.width * tightened.height) / max(1, rotated.width * rotated.height)
-  score = aspect - max(0.0, 0.14 - area_ratio) * 3.5
+  height_ratio = scoring_image.height / max(1, rotated_scoring.height)
+  score = aspect - max(0.0, 0.32 - area_ratio) * 6.0 - max(0.0, 0.58 - height_ratio) * 9.0
   return tightened, score
 
 
@@ -179,11 +222,20 @@ def find_max_ink_window_start(values: np.ndarray, window_size: int) -> int:
 
 
 def normalize_roi_strip(image: Image.Image) -> NormalizedStrip | None:
-  best_image, best_score = score_deskew_candidate(image, 0)
+  candidate_bases = (
+    [(rotate_image(image, 90), 90)]
+    if image.height > image.width
+    else [(image, 0)]
+  )
+
+  base_image, base_rotation = candidate_bases[0]
+  best_image, best_score = score_deskew_candidate(base_image, 0)
   best_angle = 0
+  best_base_rotation = base_rotation
   best_valid_image: Image.Image | None = None
   best_valid_score: float | None = None
   best_valid_angle = 0
+  best_valid_base_rotation = base_rotation
 
   def has_valid_post_rotation_geometry(candidate_image: Image.Image) -> bool:
     candidate = candidate_image
@@ -195,26 +247,35 @@ def normalize_roi_strip(image: Image.Image) -> NormalizedStrip | None:
     best_valid_image = best_image
     best_valid_score = best_score
     best_valid_angle = best_angle
+    best_valid_base_rotation = best_base_rotation
 
-  for delta in range(DESKEW_STEP, DESKEW_MAX_ANGLE + 1, DESKEW_STEP):
-    for angle in (delta, -delta):
-      candidate_image, candidate_score = score_deskew_candidate(image, angle)
-      if candidate_score > best_score + 0.02:
+  for base_image, base_rotation in candidate_bases:
+    base_angles = [0]
+    for delta in range(DESKEW_STEP, DESKEW_MAX_ANGLE + 1, DESKEW_STEP):
+      base_angles.extend((delta, -delta))
+    for angle in base_angles:
+      if base_rotation == best_base_rotation and angle == 0:
+        continue
+      candidate_image, candidate_score = score_deskew_candidate(base_image, angle)
+      if candidate_score > best_score:
         best_image = candidate_image
         best_score = candidate_score
         best_angle = angle
+        best_base_rotation = base_rotation
       if has_valid_post_rotation_geometry(candidate_image):
-        if best_valid_score is None or candidate_score > best_valid_score + 0.02:
+        if best_valid_score is None or candidate_score > best_valid_score:
           best_valid_image = candidate_image
           best_valid_score = candidate_score
           best_valid_angle = angle
+          best_valid_base_rotation = base_rotation
 
   normalized = best_valid_image if best_valid_image is not None else best_image
   best_angle = best_valid_angle if best_valid_image is not None else best_angle
-  major_axis_rotation = 0
+  base_rotation = best_valid_base_rotation if best_valid_image is not None else best_base_rotation
+  major_axis_rotation = base_rotation
   if normalized.height > normalized.width:
     normalized = rotate_image(normalized, 90)
-    major_axis_rotation = 90
+    major_axis_rotation = normalize_angle(major_axis_rotation + 90)
   if not has_valid_candidate_geometry(normalized):
     return None
 

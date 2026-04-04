@@ -8,6 +8,8 @@ from pathlib import Path
 
 from PIL import Image
 
+AUTO_DIRECTION_MIN_DELTA = 0.015
+
 try:
   from .runtime_digit_pipeline import build_cell_rects, normalize_roi_strip, rotate_image
 except ImportError:
@@ -72,6 +74,27 @@ def write_csv(path: Path, rows: list[dict[str, str]], headers: list[str]) -> Non
 
 def major_axis(width: int, height: int) -> str:
   return "x" if width >= height else "y"
+
+
+def ink_lowerness_score(image: Image.Image) -> float:
+  gray = image.convert("L")
+  width, height = gray.size
+  pixels = gray.load()
+  denom_y = max(1, height - 1)
+  total = 0.0
+  weighted = 0.0
+  for y in range(height):
+    y_weight = y / denom_y
+    for x in range(width):
+      lum = pixels[x, y]
+      ink = max(0, 220 - int(lum))
+      if ink <= 0:
+        continue
+      total += ink
+      weighted += ink * y_weight
+  if total <= 0:
+    return 0.5
+  return weighted / total
 
 
 def parse_bool_token(raw: str) -> bool:
@@ -155,8 +178,17 @@ def main() -> None:
           skipped.append({"split": split, "filename": filename, "reason": "normalize-roi-strip-failed"})
           continue
         canonical = normalized.image
-        direction_flip = bool(direction_overrides.get(filename, False))
-        direction_source = "override" if filename in direction_overrides else "default"
+        primary_lowerness = ink_lowerness_score(canonical)
+        flipped_lowerness = ink_lowerness_score(rotate_image(canonical, 180))
+        if filename in direction_overrides:
+          direction_flip = bool(direction_overrides.get(filename, False))
+          direction_source = "override"
+        elif flipped_lowerness + AUTO_DIRECTION_MIN_DELTA < primary_lowerness:
+          direction_flip = True
+          direction_source = "heuristic"
+        else:
+          direction_flip = False
+          direction_source = "default"
         if direction_flip:
           canonical = rotate_image(canonical, 180)
         width, height = canonical.size
@@ -191,8 +223,8 @@ def main() -> None:
           "direction_flip": "1" if direction_flip else "0",
           "direction_source": direction_source,
           "applied_rotation": str(applied_rotation),
-          "primary_lowerness": "",
-          "flipped_lowerness": "",
+          "primary_lowerness": f"{primary_lowerness:.6f}",
+          "flipped_lowerness": f"{flipped_lowerness:.6f}",
           "deskew_angle": str(normalized.deskew_angle),
           "normalization_mode": "runtime-parity"
         })
