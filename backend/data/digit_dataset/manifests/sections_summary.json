@@ -26,5 +26,7 @@
   "dataset_dir": "/home/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset",
   "windows_manifest": "/home/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset/manifests/windows.csv",
   "direction_overrides": "/home/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset/manifests/direction_overrides.csv",
-  "direction_override_count": 0
+  "direction_override_count": 0,
+  "section_overrides": "/home/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset/manifests/section_overrides.csv",
+  "section_override_count": 3
 }

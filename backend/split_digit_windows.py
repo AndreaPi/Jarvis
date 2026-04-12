@@ -42,6 +42,11 @@ def parse_args() -> argparse.Namespace:
     help="Optional CSV with filename,flip180 (0/1) to override reading-direction flips."
   )
   parser.add_argument(
+    "--section-overrides",
+    default="manifests/section_overrides.csv",
+    help="Optional CSV with filename,x_offset_px to shift cell extraction horizontally."
+  )
+  parser.add_argument(
     "--clean",
     action="store_true",
     help="Delete existing sections and canonical windows output before writing."
@@ -119,6 +124,43 @@ def load_direction_overrides(path: Path) -> dict[str, bool]:
   return mapping
 
 
+def load_section_overrides(path: Path, section_count: int) -> dict[str, list[float]]:
+  if not path.exists():
+    return {}
+  mapping: dict[str, list[float]] = {}
+  with path.open("r", encoding="utf-8") as handle:
+    reader = csv.DictReader(handle)
+    for row in reader:
+      filename = (row.get("filename") or "").strip()
+      if not filename:
+        continue
+      raw = (row.get("x_offset_px") or "").strip()
+      base_offset = 0.0
+      if raw:
+        try:
+          base_offset = float(raw)
+        except ValueError:
+          base_offset = 0.0
+      offsets = [base_offset] * section_count
+      has_override = bool(raw)
+      for index in range(section_count):
+        token = (row.get(f"s{index}_x_offset_px") or "").strip()
+        if not token:
+          continue
+        has_override = True
+        try:
+          offsets[index] = float(token)
+        except ValueError:
+          continue
+      if not has_override:
+        continue
+      try:
+        mapping[filename] = offsets
+      except ValueError:
+        continue
+  return mapping
+
+
 def main() -> None:
   args = parse_args()
   base_dir = Path(__file__).resolve().parent
@@ -126,6 +168,7 @@ def main() -> None:
   dataset_dir = resolve(base_dir, args.dataset_dir)
   manifest_path = resolve(dataset_dir, args.windows_manifest)
   direction_overrides_path = resolve(dataset_dir, args.direction_overrides)
+  section_overrides_path = resolve(dataset_dir, args.section_overrides)
 
   if args.section_count <= 0:
     raise ValueError("--section-count must be positive.")
@@ -142,6 +185,7 @@ def main() -> None:
     shutil.rmtree(canonical_dir)
   ensure_dirs(dataset_dir)
   direction_overrides = load_direction_overrides(direction_overrides_path)
+  section_overrides = load_section_overrides(section_overrides_path, args.section_count)
 
   canonical_rows: list[dict[str, str]] = []
   rows: list[dict[str, str]] = []
@@ -229,7 +273,12 @@ def main() -> None:
           "normalization_mode": "runtime-parity"
         })
 
-        rects = build_cell_rects(canonical, args.section_count)
+        section_offsets = section_overrides.get(filename, [0.0] * args.section_count)
+        rects = build_cell_rects(
+          canonical,
+          args.section_count,
+          per_section_x_offsets=section_offsets
+        )
         for section_index, rect in enumerate(rects):
           section = canonical.crop((rect.left, rect.top, rect.right, rect.bottom))
           section_name = f"{Path(window_path).stem}_s{section_index}.png"
@@ -245,6 +294,7 @@ def main() -> None:
             "section_index": str(section_index),
             "major_axis": canonical_major_axis,
             "applied_rotation": str(applied_rotation),
+            "x_offset_px": f"{section_offsets[section_index]:.3f}",
             "x0": str(rect.left),
             "y0": str(rect.top),
             "x1": str(rect.right),
@@ -291,6 +341,7 @@ def main() -> None:
       "section_index",
       "major_axis",
       "applied_rotation",
+      "x_offset_px",
       "x0",
       "y0",
       "x1",
@@ -317,7 +368,9 @@ def main() -> None:
     "dataset_dir": str(dataset_dir),
     "windows_manifest": str(manifest_path),
     "direction_overrides": str(direction_overrides_path),
-    "direction_override_count": len(direction_overrides)
+    "direction_override_count": len(direction_overrides),
+    "section_overrides": str(section_overrides_path),
+    "section_override_count": len(section_overrides)
   }
   (dataset_dir / "manifests" / "sections_summary.json").write_text(
     json.dumps(summary, indent=2),

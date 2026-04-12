@@ -329,13 +329,22 @@ def normalize_roi_strip(image: Image.Image) -> NormalizedStrip | None:
   )
 
 
-def build_cell_rects(image: Image.Image, count: int, overlap_ratio: float = CELL_OVERLAP) -> list[CropRect]:
+def build_cell_rects(
+  image: Image.Image,
+  count: int,
+  overlap_ratio: float = CELL_OVERLAP,
+  x_offset_px: float = 0.0,
+  per_section_x_offsets: list[float] | None = None
+) -> list[CropRect]:
   rects: list[CropRect] = []
   cell_width = image.width / count
   overlap = cell_width * overlap_ratio
   for index in range(count):
+    offset = x_offset_px
+    if per_section_x_offsets is not None and index < len(per_section_x_offsets):
+      offset = per_section_x_offsets[index]
     rects.append(resolve_crop_rect(image, {
-      "x": cell_width * index - overlap,
+      "x": cell_width * index - overlap + offset,
       "y": 0,
       "width": cell_width + overlap * 2,
       "height": image.height
@@ -343,8 +352,14 @@ def build_cell_rects(image: Image.Image, count: int, overlap_ratio: float = CELL
   return rects
 
 
-def split_into_cells(image: Image.Image, count: int, overlap_ratio: float = CELL_OVERLAP) -> list[Image.Image]:
+def split_into_cells(
+  image: Image.Image,
+  count: int,
+  overlap_ratio: float = CELL_OVERLAP,
+  x_offset_px: float = 0.0,
+  per_section_x_offsets: list[float] | None = None
+) -> list[Image.Image]:
   return [
     image.crop((rect.left, rect.top, rect.right, rect.bottom))
-    for rect in build_cell_rects(image, count, overlap_ratio)
+    for rect in build_cell_rects(image, count, overlap_ratio, x_offset_px, per_section_x_offsets)
   ]
