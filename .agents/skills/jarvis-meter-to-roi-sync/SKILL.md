@@ -1,6 +1,6 @@
 ---
 name: jarvis-meter-to-roi-sync
-description: "Run a full Jarvis meter-image ingestion flow: clean assets sidecars, rename new photos from EXIF, read and confirm meter values, update assets/meter_readings.csv, then rebuild backend/data/roi_dataset from a browser-extracted ROI manifest with QA previews. Use when new water-meter photos are added to assets/ and should immediately be reflected in both CSV readings and ROI training data."
+description: "Run a full Jarvis meter-image ingestion flow: clean assets sidecars, normalize JPEG/PNG/HEIC photos from capture metadata, read and confirm meter values, update assets/meter_readings.csv, then rebuild backend/data/roi_dataset from a browser-extracted ROI manifest with QA previews. Use when new water-meter photos are added to assets/ and should immediately be reflected in both CSV readings and ROI training data."
 ---
 
 # Jarvis Meter To ROI Sync
@@ -15,13 +15,18 @@ Use `backend/.venv` for any Python step in this workflow. Do not rely on the sys
    - `find assets -type f -name '*:Zone.Identifier' -delete`
 
 2. Ingest new photos in `assets/`.
-   - Treat `jpg|jpeg|png` (any case) files not already named `meter_*` as candidates.
+   - Treat `jpg|jpeg|png|heic|heif` (any case) files not already named `meter_*` as candidates.
    - Exclude names already listed in `assets/meter_readings.csv`.
+   - HEIC/HEIF is a Mac/iCloud import format only for this repo; do not keep HEIC/HEIF as canonical assets.
 
-3. Rename each candidate from EXIF date.
-   - Read EXIF: `identify -format '%[EXIF:DateTimeOriginal]\n' assets/<file>`
-   - Rename to `meter_yyyymmdd` while preserving extension/case.
+3. Normalize each candidate from capture metadata.
+   - For JPEG/PNG, read EXIF when available: `identify -format '%[EXIF:DateTimeOriginal]\n' assets/<file>`.
+   - If `identify` is unavailable on macOS, use `sips -g creation assets/<file>` as a fallback capture timestamp.
+   - Rename JPEG/PNG to `meter_yyyymmdd` while preserving extension/case.
+   - Convert HEIC/HEIF to a canonical JPEG named `meter_yyyymmdd.JPEG`. Use `backend/.venv` plus `pillow-heif` for conversion if macOS tooling cannot produce a normal JPEG that Pillow can reopen.
    - If target exists, append `_1`, `_2`, `_3`, ...
+   - After HEIC/HEIF conversion, verify the target JPEG exists and can be opened by `backend/.venv` Pillow, then delete the original HEIC/HEIF file from `assets/`.
+   - Never write HEIC/HEIF filenames to `assets/meter_readings.csv`, `backend/data/roi_boxes_manifest.json`, or DVC metadata; use the converted JPEG filename everywhere downstream.
 
 4. Read and record the meter value.
    - Read the 4-digit black register only.
@@ -68,12 +73,14 @@ Use `backend/.venv` for any Python step in this workflow. Do not rely on the sys
 
 10. Refresh DVC-tracked artifacts.
    - Run `dvc add backend/data/roi_dataset/images`
-   - Run `dvc add assets/<new-meter-file>` for each newly ingested raw photo
+   - Run `dvc add assets/<new-meter-file>` for each newly ingested canonical photo.
+   - For Mac/iCloud imports, DVC-track the converted `meter_YYYYMMDD.JPEG`, not the original `IMG_*.HEIC`/`IMG_*.HEIF`.
    - Run `scripts/dvc-push-safe.sh` if a DVC remote is configured
    - Only do this after the user has approved the ROI overlays for the new image(s).
 
 11. Validate and summarize.
    - Confirm no sidecars remain.
+   - Confirm no HEIC/HEIF files remain in `assets/` after conversion.
    - Confirm every CSV filename exists in `assets/`.
    - Confirm every newly ingested filename has a ROI manifest entry before rebuilding.
    - Report:
@@ -88,6 +95,8 @@ Use `backend/.venv` for any Python step in this workflow. Do not rely on the sys
 
 - Sidecars left:
   - `find assets -type f -name '*:Zone.Identifier' -print`
+- HEIC/HEIF imports left after conversion:
+  - `find assets -type f \( -iname '*.heic' -o -iname '*.heif' \) -print`
 - ROI sidecars left:
   - `find backend/data/roi_dataset -type f -name '*:Zone.Identifier' -print`
 - CSV to file consistency:
@@ -100,6 +109,7 @@ Use `backend/.venv` for any Python step in this workflow. Do not rely on the sys
 ## Notes
 
 - The old external sync helper path is obsolete for this repo; use a browser-extracted ROI manifest plus `backend/build_roi_dataset.py`.
+- Mac/iCloud HEIC/HEIF images should be treated as temporary import sources. Convert them to canonical JPEG assets, verify the JPEGs, then delete the HEIC/HEIF originals.
 - The browser-assisted OCR path is not authoritative for CSV updates. Always confirm readings manually before writing `assets/meter_readings.csv`.
 - New ROI labels are not training-ready until the user has reviewed the generated overlays and either approved them or corrected them in Make Sense.
-- Raw meter photos and ROI image binaries are retained with DVC; do not leave new ingested files outside DVC tracking.
+- Canonical meter photos and ROI image binaries are retained with DVC; do not leave new ingested JPEG/PNG files outside DVC tracking.
