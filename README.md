@@ -32,6 +32,22 @@ If you also want to run Playwright checks, install JS dependencies once:
 npm install
 ```
 
+### GitHub Push Setup
+
+This repository should push through SSH as `AndreaPi`. Configure the repo-local
+remote and SSH key before pushing from a machine with multiple GitHub identities:
+
+```bash
+git remote set-url origin git@github.com:AndreaPi/Jarvis.git
+git config core.sshCommand "ssh -i ~/.ssh/id_ed25519_andreapi -o IdentitiesOnly=yes"
+git config user.name "AndreaPi"
+git config user.email "8233615+AndreaPi@users.noreply.github.com"
+```
+
+The `core.sshCommand` setting is intentionally local to this checkout so Git uses
+the AndreaPi key for this repo without changing other repositories on the same
+machine.
+
 ### Optional Neural ROI Backend (recommended)
 You can run a Python backend that detects the meter digit window using a fine-tuned pretrained model.
 
