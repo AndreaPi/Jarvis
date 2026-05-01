@@ -11,11 +11,13 @@
 
 ## API and Runtime Expectations
 - Frontend/backend default ports are `127.0.0.1:8000` and `127.0.0.1:8001`.
-- Health check: `GET /health` should report `ready: true`, `roi_ready: true`, `digit_ready: true`, and the expected `model_path`.
+- Health check: `GET /health` should report `ready: true`, `roi_ready: true`, `digit_ready: true`, `strip_digit_ready: true`, and the expected model paths when all checkpoints are present.
 - Default ROI endpoint: `http://127.0.0.1:8001/roi/detect`
 - Default digit endpoint: `http://127.0.0.1:8001/digit/predict-cells`
+- Default strip-reader shadow endpoint: `http://127.0.0.1:8001/digit/predict-strip`
 - Backend default ROI model is pinned to `backend/models/roi-rotaug-e30-640.pt` (override with `ROI_MODEL_PATH`).
 - Digit classifier path is `backend/models/digit_classifier.pt`.
+- Strip digit reader path is `backend/models/digit_strip_reader.pt`.
 
 ## Dataset and Training Commands
 - `cd backend && source .venv/bin/activate && python train_roi.py --data data/roi_dataset.yaml --base-model yolov8n.pt --rotation-angles 90,180,270,360 --heavy-augment`: Fine-tune the ROI detector.
@@ -27,6 +29,7 @@
 - `cd backend && source .venv/bin/activate && python plan_digit_expansion.py --target-train-per-digit 12 --priority-digits 4,5,6,9`: Refresh the targeted capture checklist.
 - `cd backend && source .venv/bin/activate && python train_digit_classifier.py --device cpu`: Train the real-only digit classifier.
 - `cd backend && source .venv/bin/activate && python train_digit_classifier.py --device cpu --synthetic-root data/digit_dataset/sections_synthetic --synthetic-target-ratio 2.0`: Train on mixed real + synthetic data while keeping val/test real-only.
+- `cd backend && source .venv/bin/activate && python train_strip_digit_reader.py --device cpu`: Train the fixed four-head whole-strip reader from `data/digit_dataset/windows_canonical`.
 
 ## Backend Policy
 - `train_roi.py` should keep heavy augmentation and rotation expansion `90,180,270,360`; weaker runs require explicit override with `--allow-no-augment-policy`.
@@ -37,5 +40,6 @@
 1. Refresh capture planning with `python plan_digit_expansion.py --target-train-per-digit 12 --priority-digits 4,5,6,9`.
 2. Add labeled captures with QA previews.
 3. Confirm `data/digit_dataset/manifests/{windows.csv,canonical_windows.csv,sections.csv,section_labels.csv}` are regenerated and consistent with current splits.
-4. Retrain the classifier only after class coverage improves.
-5. Promote new checkpoints only when benchmarked OCR `MAE` improves without exact-match or no-read regressions.
+4. Retrain the per-cell classifier only after class coverage improves.
+5. Retrain the strip reader after canonical windows change; keep it shadow-only until UI benchmark exact-match and `MAE` beat the current primary path.
+6. Promote new checkpoints only when benchmarked OCR `MAE` improves without exact-match or no-read regressions.

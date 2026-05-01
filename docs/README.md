@@ -6,4 +6,4 @@ This folder holds focused documentation that would make the top-level `README.md
 
 - [App Logic](./app-logic.md): End-to-end OCR flow, decision points, and failure paths.
 - [Backend API](./backend-api.md): Local FastAPI endpoints, request/response contract, and runtime configuration.
-- [OCR Tuning Playbook](./ocr-tuning-playbook.md): Iteration workflow for improving OCR quality and checkpoint diffing in neural-digit-only mode.
+- [OCR Tuning Playbook](./ocr-tuning-playbook.md): Iteration workflow for improving OCR quality, including per-cell classifier selection and whole-strip shadow-reader evaluation.

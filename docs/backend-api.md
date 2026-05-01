@@ -1,6 +1,6 @@
 # Backend API
 
-Jarvis includes an optional local FastAPI backend for ROI detection and digit classification.
+Jarvis includes an optional local FastAPI backend for ROI detection, per-cell digit classification, and whole-strip shadow-reader classification.
 
 ## Run
 
@@ -32,10 +32,13 @@ Key fields:
 
 - `ready` / `roi_ready`: ROI detector is loadable.
 - `digit_ready`: digit classifier is loadable.
+- `strip_digit_ready`: whole-strip reader is loadable.
 - `model_path`, `model_source`, `device`: ROI model/runtime selection.
 - `digit_model_path`, `digit_device`: digit model/runtime selection.
+- `strip_digit_model_path`, `strip_digit_device`: strip-reader model/runtime selection.
 - `default_confidence`, `default_iou`, `default_imgsz`: ROI inference defaults.
 - `digit_min_confidence`, `digit_top_k`: classifier acceptance defaults.
+- `strip_digit_min_confidence`, `strip_digit_top_k`: strip-reader acceptance defaults.
 
 ### `POST /roi/detect`
 
@@ -115,6 +118,29 @@ Response includes:
 - `predictions[]` with `predicted_digit`, `confidence`, `accepted`
 - Per-item `error: "empty-upload"` when a file item is empty
 
+### `POST /digit/predict-strip`
+
+Classifies one canonical/register strip as exactly four digits. This endpoint is used by the frontend in shadow mode and does not replace `/digit/predict-cells` until benchmark promotion.
+
+Request:
+
+- Form-data field: `image` (required)
+
+Example:
+
+```bash
+curl -s -X POST http://127.0.0.1:8001/digit/predict-strip \
+  -F "image=@backend/data/digit_dataset/windows_canonical/train/meter_20260214.png"
+```
+
+Response includes:
+
+- `value` / `predicted_value`: 4-digit string
+- `confidence`: average confidence across the four positions
+- `digits`, `digit_confidences`
+- `top_k_by_position`: per-position alternatives
+- `accepted` / `ok` based on `STRIP_DIGIT_MIN_CONFIDENCE`
+
 ## Error Semantics
 
 - `400`: bad input (empty upload, unsupported image, too many images, etc.)
@@ -139,8 +165,17 @@ Digit classifier:
 - `DIGIT_TOP_K` (default `3`)
 - `DIGIT_DEVICE` (`cpu`, `cuda`, `auto`)
 
+Strip digit reader:
+
+- `STRIP_DIGIT_MODEL_PATH`
+- `STRIP_DIGIT_MIN_CONFIDENCE` (default `0.0`)
+- `STRIP_DIGIT_TOP_K` (default `3`)
+- `STRIP_DIGIT_DEVICE` (`cpu`, `cuda`, `auto`)
+
 ## Source
 
 - API entrypoint: `backend/app.py`
 - ROI detector wrapper: `backend/detector.py`
 - Digit classifier wrapper: `backend/digit_classifier.py`
+- Strip reader wrapper: `backend/strip_digit_reader.py`
+- Strip reader model/trainer: `backend/strip_digit_model.py`, `backend/train_strip_digit_reader.py`

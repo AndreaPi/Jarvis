@@ -1,6 +1,6 @@
 # App Logic
 
-This document describes the current Jarvis OCR execution path, with neural ROI gating and neural digit-classifier-only decoding.
+This document describes the current Jarvis OCR execution path, with neural ROI gating, per-cell neural digit-classifier selection, and whole-strip shadow-reader logging.
 
 ## End-to-End OCR Flow
 
@@ -18,8 +18,9 @@ flowchart TD
   H --> I["Build ROI candidates<br/>(rotations + optional edge crops)"]
   I --> J{"Candidates available?"}
   J -- "No" --> K["Ask manual entry"]
-  J -- "Yes" --> L["Classifier-first OCR per candidate<br/>(4 cells, orientation-aware)"]
-  L --> O["finalizeSelection()<br/>evidence ranking + edge safeguard"]
+  J -- "Yes" --> L["Per candidate:<br/>run strip reader shadow + classifier cells"]
+  L --> M["Cell classifier result remains primary"]
+  M --> O["finalizeSelection()<br/>evidence ranking + edge safeguard"]
 
   O --> P{"Final selection exists?"}
   P -- "Yes" --> Q["Return reading + fill UI input"]
@@ -41,17 +42,20 @@ flowchart TD
    - If ROI crop cannot produce valid OCR candidates, the app falls back to manual input.
 
 3. OCR acceptance gate
-   - Candidate strips are decoded directly with the backend digit classifier.
+   - Candidate strips are decoded by splitting into four cells and calling the backend digit classifier.
+   - The whole-strip reader also runs for candidates in shadow mode and records direct 4-digit predictions without affecting selection.
    - `finalizeSelection` ranks evidence across classifier passes before returning a value.
    - The selector prioritizes `90/270` edge candidates, but the primary pass also evaluates top base-strip candidates when they are available.
    - A narrow `scan-roi` / base fallback rerun is only used when base candidates were not already evaluated and the top edge evidence is still weak or edge-only.
    - Weak edge-only reads can still be rejected by configured per-cell confidence thresholds in `finalizeSelection`.
    - Digit classifier is enabled by default (`digitClassifier.enabled=true`).
+   - Strip reader shadow logging is enabled by default (`digitStripReader.enabled=true`, `digitStripReader.shadowOnly=true`).
 
 ## What Gets Logged
 
 - Per-image selection logs are appended to `window.__jarvisOcrSelectionLogs`.
 - `selected` metadata includes `sourceLabel`, `method`, and `preprocessMode` for each accepted reading.
+- `stripReader` metadata contains the best shadow whole-strip prediction, confidence, source label, and per-position confidence summary.
 - The test-set runner reads those logs to build:
   - `Failure Reason` values (`mismatch`, `classifier-edge-gate-final-drop`, `ocr-no-digits`, etc.)
   - Reject histograms from OCR branch reject reasons.

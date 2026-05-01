@@ -7,21 +7,23 @@ Current baseline policy:
 - Use the latest UI **Run test set** histogram as source of truth (`window.__jarvisLastTestSetHistogram`).
 - Treat fixed numeric snapshots as historical only; they go stale quickly as thresholds/ranking change.
 - Evaluation uses `MAE` as the primary promotion signal; `Exact Match` and `No-read` are guardrails.
-- The active local test-set CSV has `17` images.
+- The active local test-set CSV has `26` images.
+- Current primary-path baseline: `MAE 64.36`, `Exact Match 11/26`, `No-read 1/26`.
 
 Digit dataset status (current workflow):
 
 - Dataset generation now uses `extract_digit_windows.py` -> `split_digit_windows.py` -> `label_digit_sections.py`.
 - `split_digit_windows.py` canonicalizes orientation (major axis + optional reading-direction `flip180` overrides) before equispaced 4-way split.
 - Classifier training consumes `data/digit_dataset/sections_labeled/{train,val,test}`.
+- Whole-strip shadow-reader training consumes `data/digit_dataset/windows_canonical/{train,val,test}` and `canonical_windows.csv` readings.
 - Synthetic generation remains train-only (`sections_synthetic/train`) and is mixed into training with `--synthetic-target-ratio`.
 
-## Immediate Next Steps (March 4, 2026)
+## Immediate Next Steps (May 1, 2026)
 
-1. Keep `digitClassifier.forceInitialPreviewCandidate=false` by default (force mode increased no-read materially).
-2. Reduce `classifier-edge-gate-final-drop` with targeted edge-gate tuning and explicit A/B runs.
-3. Verify each edge-gate tweak on full test set with `MAE` + guardrails (`Exact Match`, `No-read`) before keeping it.
-4. Prioritize fixes on current top-absolute-error images after each run, not a fixed historical list.
+1. Keep the whole-strip reader shadow-only until its exact-match rate and `MAE` beat the current per-cell primary path.
+2. Inspect strip-reader shadow predictions for `meter_20260327.JPEG` and the April captures; these are the current high-value mismatch probes.
+3. Fix the remaining neural ROI miss on `meter_20201111.JPEG`.
+4. Verify each OCR tuning change on the full test set with `MAE` + guardrails (`Exact Match`, `No-read`) before keeping it.
 
 ## Goals
 
@@ -49,7 +51,10 @@ npm run test:e2e
   - `5. detected strip crop`
   - `6a. OCR input candidate (initial preview)`
   - `6. OCR input candidate` (winning decode input)
+  - `7. classifier cell crops`
+  - `8. strip reader input`
 - Inspect selection logs in `window.__jarvisOcrSelectionLogs`.
+- Compare `selectionLog.selected` against `selectionLog.stripReader` before considering any strip-reader promotion.
 
 3. Apply one narrow change
 
@@ -82,12 +87,13 @@ Use the scripted checkpoint comparison to produce a per-image report between the
 npm run benchmark:roi-diff
 ```
 
-The benchmark always runs neural-digit-only decode (classifier enabled).
+The benchmark always runs neural-digit-only decode with the per-cell classifier enabled; the strip reader may run in shadow when its checkpoint/backend endpoint are available.
 It requires these local checkpoints before starting:
 
 - `backend/models/roi-rotaug-e30-640.pt`
 - `backend/models/roi.pt`
 - `backend/models/digit_classifier.pt`
+- `backend/models/digit_strip_reader.pt`
 
 Artifacts are saved to:
 
@@ -102,6 +108,8 @@ The report includes:
 - Side-by-side stage `5. detected strip crop` and `6. OCR input candidate`.
 - Stage `6` now shows the exact strip variant used by the winning decode (after normalization/orientation selection).
 - Stage `6` export uses the last `6. OCR input candidate` frame from each debug session.
+- Stage `7` shows the four cell crops used by the current primary classifier.
+- Stage `8` shows the best whole-strip shadow-reader input and prediction/confidence summary.
 - Summary deltas for `MAE`, guardrail rates (`Exact Match`, `No-read`), and dominant failure buckets (`mismatch`, `classifier-edge-gate-final-drop`, `ocr-no-digits`, `no-detection`).
 
 ## Checkpoint Promotion Gates
@@ -119,6 +127,11 @@ If any gate fails, keep `roi-rotaug-e30-640.pt` as default and continue tuning e
 Classifier-default rule:
 
 - Keep `digitClassifier.enabled=true` by default and tune ranking/acceptance using `MAE` + guardrails.
+
+Strip-reader shadow rule:
+
+- Keep `digitStripReader.shadowOnly=true` until the same UI run shows whole-strip shadow exact match and `MAE` outperform the primary selected values.
+- Do not promote based on canonical-window train/val/test metrics alone; the browser candidate crops are the promotion surface.
 
 ## High-Impact Tuning Areas
 
@@ -146,7 +159,22 @@ Files:
 
 Use temporary ranking/threshold experiments first, then codify only if net-positive.
 
-### 3) Acceptance/Support Guardrails
+### 3) Whole-Strip Shadow Reader
+
+Files:
+
+- `backend/train_strip_digit_reader.py`
+- `backend/strip_digit_reader.py`
+- `src/ocr/digit-classifier.js`
+- `src/ocr/pipeline.js`
+
+Focus:
+
+- Compare `selectionLog.stripReader.value` to expected readings and selected classifier readings.
+- Watch whether stage `8` receives a visually plausible full strip before blaming the model.
+- Retrain after canonical windows change, then judge promotion only with the UI test set.
+
+### 4) Acceptance/Support Guardrails
 
 Files:
 
@@ -159,7 +187,7 @@ Focus:
 - Validate with histogram movement, not single-image anecdotes.
 - Active guardrails in current pipeline: evidence ranking, mixed primary evaluation of top edge and base strip candidates, narrow `scan-roi` / base fallback only when base candidates were not already evaluated and edge support is still weak or edge-only, and final edge-confidence checks.
 
-### 4) ROI Sanity Gates (usually not primary blocker)
+### 5) ROI Sanity Gates (usually not primary blocker)
 
 Files:
 

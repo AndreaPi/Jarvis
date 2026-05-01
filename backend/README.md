@@ -1,6 +1,6 @@
 # ROI Backend
 
-Python service for neural ROI detection (digit window) plus optional per-cell digit-classifier inference.
+Python service for neural ROI detection (digit window), per-cell digit-classifier inference, and whole-strip shadow-reader inference.
 
 ## 1) Install
 
@@ -121,6 +121,21 @@ source .venv/bin/activate
 python train_digit_classifier.py --device cpu
 ```
 
+## Train the whole-strip shadow reader
+
+This trains a fixed four-head CNN on canonical ROI windows (`data/digit_dataset/windows_canonical`) and writes:
+
+- weights: `backend/models/digit_strip_reader.pt`
+- training summary: `backend/runs/strip-digit-reader/strip_digit_reader_summary.json`
+
+```bash
+cd backend
+source .venv/bin/activate
+python train_strip_digit_reader.py --device cpu
+```
+
+The trainer letterboxes canonical windows to `520x160` so horizontal digit geometry is preserved. When validation has too few samples for reliable checkpoint selection, the default `--selection-split auto` falls back to train-set selection and leaves the UI test set as the promotion gate.
+
 Optional: generate synthetic **train-only** sections from real train patches, then mix real + synthetic in training.
 Val/test remain strictly real-only.
 
@@ -157,14 +172,16 @@ curl -s http://127.0.0.1:8001/health
 
 ## 4) Endpoints
 
-- `GET /health`: model readiness (`ready`, `roi_ready`, `digit_ready`) + effective model/device config.
+- `GET /health`: model readiness (`ready`, `roi_ready`, `digit_ready`, `strip_digit_ready`) + effective model/device config.
 - `POST /roi/detect`: multipart upload (`image`) and returns normalized bbox + confidence.
 - `POST /digit/predict`: multipart upload (`image`) and returns the predicted digit + confidence.
 - `POST /digit/predict-cells`: multipart upload (`images`, repeated field) for batch cell decoding.
+- `POST /digit/predict-strip`: multipart upload (`image`) for direct fixed-length 4-digit strip decoding.
 
 Frontend integration defaults:
 - ROI detection path is `http://127.0.0.1:8001/roi/detect` and is required for OCR.
 - Digit classifier path is `http://127.0.0.1:8001/digit/predict-cells` and is only used when `OCR_CONFIG.digitClassifier.enabled=true`.
+- Strip reader path is `http://127.0.0.1:8001/digit/predict-strip`; frontend OCR runs it shadow-only via `OCR_CONFIG.digitStripReader.shadowOnly=true` and logs results without changing final selection.
 - Frontend ROI OCR prioritizes `90/270` edge candidates, but the primary pass also evaluates top base-strip rotations when present. A narrow `scan-roi` / base fallback rerun is only used when base candidates were not already evaluated and the edge evidence remains weak. Final confidence gates can still reject weak edge-only reads.
 
 ## Environment Variables
@@ -182,6 +199,10 @@ Frontend integration defaults:
 - `DIGIT_DEVICE`: inference device for digit classifier (default follows `ROI_DEVICE`)
 - `DIGIT_MIN_CONFIDENCE`: minimum accepted confidence for digit predictions (default: `0.0`)
 - `DIGIT_TOP_K`: number of top classes returned by digit endpoints (default: `3`)
+- `STRIP_DIGIT_MODEL_PATH`: path to strip reader checkpoint (default: `backend/models/digit_strip_reader.pt`)
+- `STRIP_DIGIT_DEVICE`: inference device for strip reader (default follows `DIGIT_DEVICE`)
+- `STRIP_DIGIT_MIN_CONFIDENCE`: minimum accepted average confidence for strip predictions (default: `0.0`)
+- `STRIP_DIGIT_TOP_K`: number of top classes returned per strip position (default: `3`)
 
 ## CPU-only vs GPU
 

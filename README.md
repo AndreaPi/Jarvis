@@ -12,6 +12,7 @@ Jarvis is a lightweight personal assistant web app. The first module helps you r
 ## Features
 - Upload a meter photo and preview it.
 - OCR from a neural-ROI crop with conservative acceptance (unsupported OCR guesses are rejected to manual input).
+- Shadow whole-strip digit reader logging for comparing direct 4-digit predictions against the current per-cell classifier.
 - Auto-fill an email draft with the current date in Italian format.
 - Open a Gmail draft or use a mailto fallback.
 - Run a built-in OCR test set table with `Detected`, `Absolute Error`, and `Failure Reason` columns plus MAE/exact-match/no-read summary stats.
@@ -87,6 +88,12 @@ Optional: train the per-cell digit classifier checkpoint:
 
 ```bash
 python train_digit_classifier.py --device cpu
+```
+
+Optional: train the whole-strip shadow reader checkpoint:
+
+```bash
+python train_strip_digit_reader.py --device cpu
 ```
 
 ## Artifact Retention
@@ -174,7 +181,8 @@ uvicorn app:app --host 127.0.0.1 --port 8001 --reload
 In the Codex/DevTools environment, a backend started inside the sandbox may answer shell `curl` but still be unreachable from the browser. If the page still gets `ERR_CONNECTION_REFUSED` or `Failed to fetch` for `127.0.0.1:8001`, restart the backend outside the sandbox with escalated permissions and verify from the page context.
 
 By default, the frontend calls `http://127.0.0.1:8001/roi/detect` and requires neural ROI detection before OCR.
-Digit decoding is neural-classifier-only and calls `http://127.0.0.1:8001/digit/predict-cells`.
+Digit decoding is still selected by the per-cell neural classifier at `http://127.0.0.1:8001/digit/predict-cells`.
+The whole-strip reader at `http://127.0.0.1:8001/digit/predict-strip` runs shadow-only and is logged under `selectionLog.stripReader`.
 Check backend readiness with:
 
 ```bash
@@ -200,6 +208,7 @@ This benchmark requires all three local model files to be present:
 - `backend/models/roi-rotaug-e30-640.pt`
 - `backend/models/roi.pt`
 - `backend/models/digit_classifier.pt`
+- `backend/models/digit_strip_reader.pt`
 
 Report artifacts are written under `output/roi-checkpoint-diff/<timestamp>/`.
 Per-image diff tables include selected OCR metadata (`sourceLabel`, `method`, `preprocessMode`) and stage `6` exports use the last `6. OCR input candidate` frame from each debug session (the winning decode strip variant).
@@ -222,6 +231,7 @@ CI runs these tests on every pull request and on pushes to `master`.
 ## Notes
 - OCR now relies on neural ROI detection; if the backend is unavailable or ROI fails, the app asks for manual reading input.
 - Digit decoding uses the backend neural classifier endpoint (`/digit/predict-cells`) and is enabled by default.
+- The whole-strip digit reader endpoint (`/digit/predict-strip`) is enabled in shadow mode by default; it logs predictions/debug stage `8` but does not affect the selected reading.
 - Edge-derived ROI strip candidates are enabled by default and can be toggled with `OCR_CONFIG.roiDeterministic.useEdgeCandidates`.
 - The selection layer prioritizes edge-derived strips, but the primary classifier pass now also includes top base-strip candidates when they are available; a narrow base fallback rerun is still available only when base candidates were not already evaluated and edge support remains weak. Low-confidence edge-only reads can still be rejected at the final gate.
 - Use the UI `Run test set` action plus `npm run test:e2e` for OCR regressions before and after tuning.

@@ -37,7 +37,7 @@ Open `http://localhost:8000` after starting the frontend server.
 - Automated browser tests are configured with Playwright.
 - CI: `.github/workflows/e2e.yml` runs on each pull request and on pushes to `master`.
 - Frontend manual checks: upload an image, run OCR, verify the email draft fields, and confirm the Gmail draft link.
-- Backend sanity checks: `GET /health` and confirm `ready: true`, `roi_ready: true`, and the expected `model_path`.
+- Backend sanity checks: `GET /health` and confirm `ready: true`, `roi_ready: true`, `digit_ready: true`, `strip_digit_ready: true`, and the expected model paths when all checkpoints are present.
 - For OCR changes, run both `npm run test:e2e` and the UI `Run test set`. See `src/ocr/AGENTS.md` for the active benchmark baseline and promotion guardrails.
 
 ## Commit & Pull Request Guidelines
