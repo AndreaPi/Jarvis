@@ -12,6 +12,7 @@ import {
 import { buildDigitCandidates } from './alignment.js';
 import { readDigitsByCells } from './recognition.js';
 import { detectNeuralRoi } from './neural-roi.js';
+import { predictDigitStrip } from './digit-classifier.js';
 
 const resolveNeuralRoiRect = (canvas, roiDetection, roiConfig) => {
   const rawRect = normalizeRectToCanvas(canvas, {
@@ -233,11 +234,170 @@ const serializeCellConfidences = (confidences) => {
   });
 };
 
+const serializeStripConfidence = (value) => {
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  const percent = value <= 1 ? value * 100 : value;
+  return Number(clamp(percent, 0, 100).toFixed(1));
+};
+
+const serializeStripConfidences = (confidences) => {
+  if (!Array.isArray(confidences)) {
+    return null;
+  }
+  return confidences.map((value) => serializeStripConfidence(value));
+};
+
 const isRepeatedDigitReading = (value) => {
   if (typeof value !== 'string' || value.length !== OCR_CONFIG.preferredDigits) {
     return false;
   }
   return new Set(value.split('')).size === 1;
+};
+
+const compareStripReaderConfidence = (a, b) => {
+  const confidenceA = a && Number.isFinite(a.rawConfidence) ? a.rawConfidence : -1;
+  const confidenceB = b && Number.isFinite(b.rawConfidence) ? b.rawConfidence : -1;
+  return confidenceB - confidenceA;
+};
+
+const cloneStripReaderProbe = (probe) => {
+  if (!probe || typeof probe !== 'object') {
+    return null;
+  }
+  return {
+    ...probe,
+    digits: Array.isArray(probe.digits) ? [...probe.digits] : probe.digits,
+    digitConfidences: Array.isArray(probe.digitConfidences)
+      ? [...probe.digitConfidences]
+      : probe.digitConfidences,
+    topKByPosition: Array.isArray(probe.topKByPosition)
+      ? probe.topKByPosition.map((entries) => (
+        Array.isArray(entries)
+          ? entries.map((entry) => ({ ...entry }))
+          : entries
+      ))
+      : probe.topKByPosition
+  };
+};
+
+const summarizeStripReaderBySource = (candidates, selectedSourceLabel = null) => {
+  const sourceMap = new Map();
+  candidates.forEach((candidate) => {
+    if (!candidate) {
+      return;
+    }
+    const sourceLabel = candidate.sourceLabel || 'unknown';
+    const existing = sourceMap.get(sourceLabel) || {
+      sourceLabel,
+      attempts: 0,
+      okCount: 0,
+      matchesSelectedSource: !!selectedSourceLabel && sourceLabel === selectedSourceLabel,
+      best: null,
+      values: []
+    };
+    existing.attempts += 1;
+    if (candidate.ok) {
+      existing.okCount += 1;
+      existing.values.push({
+        value: candidate.value || null,
+        confidence: Number.isFinite(candidate.confidence) ? candidate.confidence : null,
+        rawConfidence: Number.isFinite(candidate.rawConfidence) ? candidate.rawConfidence : null,
+        stage: candidate.stage || null
+      });
+      if (!existing.best || compareStripReaderConfidence(existing.best, candidate) > 0) {
+        existing.best = candidate;
+      }
+    }
+    sourceMap.set(sourceLabel, existing);
+  });
+
+  return [...sourceMap.values()]
+    .map((entry) => ({
+      sourceLabel: entry.sourceLabel,
+      attempts: entry.attempts,
+      okCount: entry.okCount,
+      matchesSelectedSource: entry.matchesSelectedSource,
+      bestValue: entry.best && entry.best.value ? entry.best.value : null,
+      bestConfidence: entry.best && Number.isFinite(entry.best.confidence) ? entry.best.confidence : null,
+      bestRawConfidence: entry.best && Number.isFinite(entry.best.rawConfidence) ? entry.best.rawConfidence : null,
+      values: entry.values
+    }))
+    .sort((a, b) => (
+      (b.matchesSelectedSource ? 1 : 0) - (a.matchesSelectedSource ? 1 : 0)
+      || b.okCount - a.okCount
+      || (b.bestRawConfidence ?? -1) - (a.bestRawConfidence ?? -1)
+      || String(a.sourceLabel).localeCompare(String(b.sourceLabel))
+    ));
+};
+
+const buildStripReaderSummary = (stripReaderTrace, finalResult) => {
+  const rawCandidates = stripReaderTrace && Array.isArray(stripReaderTrace.candidates)
+    ? stripReaderTrace.candidates
+    : [];
+  const candidates = rawCandidates
+    .map((candidate) => cloneStripReaderProbe(candidate))
+    .filter(Boolean);
+  if (!candidates.length) {
+    return null;
+  }
+
+  const selectedSourceLabel = finalResult && finalResult.sourceLabel ? finalResult.sourceLabel : null;
+  const okCandidates = candidates.filter((candidate) => candidate.ok);
+  const confidenceBest = okCandidates.length
+    ? cloneStripReaderProbe([...okCandidates].sort(compareStripReaderConfidence)[0])
+    : null;
+  const selectedSourceCandidate = selectedSourceLabel
+    ? cloneStripReaderProbe(
+      okCandidates
+        .filter((candidate) => candidate.sourceLabel === selectedSourceLabel)
+        .sort(compareStripReaderConfidence)[0] || null
+    )
+    : null;
+  const headline = selectedSourceCandidate || confidenceBest;
+  if (!headline) {
+    return {
+      ok: false,
+      reason: 'strip-reader-no-successful-candidate',
+      preferredSourceLabel: selectedSourceLabel,
+      selectionRule: 'selected-source-first-then-confidence',
+      headlineReason: 'no-successful-candidate',
+      confidenceBest: null,
+      selectedSourceCandidate: null,
+      bySource: summarizeStripReaderBySource(candidates, selectedSourceLabel),
+      candidates
+    };
+  }
+
+  return {
+    ...headline,
+    preferredSourceLabel: selectedSourceLabel,
+    selectionRule: 'selected-source-first-then-confidence',
+    headlineReason: selectedSourceCandidate ? 'selected-source' : 'highest-confidence',
+    confidenceBest,
+    selectedSourceCandidate,
+    bySource: summarizeStripReaderBySource(candidates, selectedSourceLabel),
+    candidates
+  };
+};
+
+const resolveStripReaderDebug = (stripReaderTrace, finalResult) => {
+  if (!stripReaderTrace) {
+    return null;
+  }
+  const selectedSourceLabel = finalResult && finalResult.sourceLabel ? finalResult.sourceLabel : null;
+  if (
+    selectedSourceLabel
+    && stripReaderTrace.debugBySource
+    && typeof stripReaderTrace.debugBySource.get === 'function'
+  ) {
+    const selectedSourceDebug = stripReaderTrace.debugBySource.get(selectedSourceLabel);
+    if (selectedSourceDebug && selectedSourceDebug.canvas) {
+      return selectedSourceDebug;
+    }
+  }
+  return stripReaderTrace.confidenceBestDebug || null;
 };
 
 const finalizeSelection = ({
@@ -247,7 +407,8 @@ const finalizeSelection = ({
   evidenceMap,
   branchUsed,
   rejectSummary = [],
-  candidateTrace = []
+  candidateTrace = [],
+  stripReaderTrace = null
 }) => {
   const rankedEvidence = rankSelectionEvidence(evidenceMap);
   const evidenceBest = rankedEvidence[0] || null;
@@ -420,6 +581,8 @@ const finalizeSelection = ({
     prependRejectSummary(rejectSummary, finalRejectReason, finalRejectDetail || {});
   }
 
+  const stripReader = buildStripReaderSummary(stripReaderTrace, finalResult);
+
   pushSelectionLog({
     image: debugLabel,
     roiUsed,
@@ -439,6 +602,7 @@ const finalizeSelection = ({
       cellDigits: Array.isArray(finalResult.cellDigits) ? finalResult.cellDigits : null,
       cellConfidences: serializeCellConfidences(finalResult.cellConfidences)
     } : null,
+    stripReader,
     topCandidates: buildSelectionSummary(rankedEvidence, 3),
     candidateTrace: Array.isArray(candidateTrace) ? candidateTrace : []
   });
@@ -491,13 +655,119 @@ const resolveWinningDecodeCanvas = (decodeCanvasBySource, finalSelection) => {
   return entries[0].canvas || null;
 };
 
-const addWinningCandidateDebugStage = (debugSession, candidates, finalSelection, decodeCanvasBySource = null) => {
+const resolveWinningDecodeCells = (decodeCanvasBySource, finalSelection) => {
+  if (
+    !(decodeCanvasBySource instanceof Map)
+    || !finalSelection
+    || typeof finalSelection.sourceLabel !== 'string'
+  ) {
+    return null;
+  }
+  const entries = decodeCanvasBySource.get(finalSelection.sourceLabel);
+  if (!Array.isArray(entries) || !entries.length) {
+    return null;
+  }
+  const targetAngle = Number.isFinite(finalSelection.angle) ? normalizeAngle(finalSelection.angle) : null;
+  const exactMatch = entries.find((entry) => entry && entry.angle === targetAngle && Array.isArray(entry.cells));
+  if (exactMatch) {
+    return exactMatch.cells;
+  }
+  const neutralMatch = entries.find((entry) => entry && entry.angle === null && Array.isArray(entry.cells));
+  if (neutralMatch) {
+    return neutralMatch.cells;
+  }
+  const fallback = entries.find((entry) => entry && Array.isArray(entry.cells));
+  return fallback ? fallback.cells : null;
+};
+
+const buildCellDebugCanvas = (cellCanvases) => {
+  if (!Array.isArray(cellCanvases) || !cellCanvases.length) {
+    return null;
+  }
+  const validCells = cellCanvases.filter((cell) => !!(cell && cell.width > 0 && cell.height > 0));
+  if (!validCells.length) {
+    return null;
+  }
+  const gap = 8;
+  const pad = 8;
+  const labelHeight = 18;
+  const width = validCells.reduce((sum, cell) => sum + cell.width, 0) + gap * (validCells.length - 1) + pad * 2;
+  const height = Math.max(...validCells.map((cell) => cell.height)) + pad * 2 + labelHeight;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#111827';
+  ctx.fillRect(0, 0, width, height);
+  ctx.font = '12px sans-serif';
+  ctx.textBaseline = 'top';
+  let x = pad;
+  validCells.forEach((cell, index) => {
+    ctx.fillStyle = '#e5e7eb';
+    ctx.fillText(`cell ${index + 1}`, x, pad);
+    ctx.drawImage(cell, x, pad + labelHeight);
+    ctx.strokeStyle = '#f97316';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, pad + labelHeight, cell.width, cell.height);
+    x += cell.width + gap;
+  });
+  return canvas;
+};
+
+const buildStripReaderDebugCanvas = (stripCanvas, stripReaderResult) => {
+  if (!stripCanvas || stripCanvas.width <= 0 || stripCanvas.height <= 0) {
+    return null;
+  }
+  const headerHeight = 42;
+  const width = Math.max(stripCanvas.width, 360);
+  const height = stripCanvas.height + headerHeight;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#111827';
+  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = '#e5e7eb';
+  ctx.font = '13px sans-serif';
+  ctx.textBaseline = 'top';
+  const value = stripReaderResult && stripReaderResult.value ? stripReaderResult.value : 'n/a';
+  const confidence = stripReaderResult && Number.isFinite(stripReaderResult.confidence)
+    ? `${stripReaderResult.confidence.toFixed(1)}%`
+    : 'n/a';
+  const source = stripReaderResult && stripReaderResult.sourceLabel ? stripReaderResult.sourceLabel : 'unknown';
+  ctx.fillText(`strip reader: ${value} (${confidence})`, 8, 6);
+  ctx.fillText(`source: ${source}`, 8, 23);
+  const x = Math.round((width - stripCanvas.width) / 2);
+  ctx.drawImage(stripCanvas, x, headerHeight);
+  return canvas;
+};
+
+const addWinningCandidateDebugStage = (
+  debugSession,
+  candidates,
+  finalSelection,
+  decodeCanvasBySource = null,
+  stripReaderDebug = null
+) => {
   if (!debugSession || !Array.isArray(candidates) || !finalSelection || !finalSelection.sourceLabel) {
     return;
   }
   const winningDecodeCanvas = resolveWinningDecodeCanvas(decodeCanvasBySource, finalSelection);
   if (winningDecodeCanvas) {
     addDebugStage(debugSession, '6. OCR input candidate', winningDecodeCanvas);
+  }
+  const winningDecodeCells = resolveWinningDecodeCells(decodeCanvasBySource, finalSelection);
+  const cellDebugCanvas = buildCellDebugCanvas(winningDecodeCells);
+  if (cellDebugCanvas) {
+    addDebugStage(debugSession, '7. classifier cell crops', cellDebugCanvas);
+  }
+  if (stripReaderDebug && stripReaderDebug.canvas) {
+    const stripReaderCanvas = buildStripReaderDebugCanvas(stripReaderDebug.canvas, stripReaderDebug.result);
+    if (stripReaderCanvas) {
+      addDebugStage(debugSession, '8. strip reader input', stripReaderCanvas);
+    }
+  }
+  if (winningDecodeCanvas) {
     return;
   }
   const selectedCandidate = candidates.find((candidate) => (
@@ -578,6 +848,7 @@ const evaluateCandidateBranch = async ({
   const candidateTrace = [];
   const roiDeterministic = OCR_CONFIG.roiDeterministic || {};
   const classifierConfig = OCR_CONFIG.digitClassifier || {};
+  const stripReaderConfig = OCR_CONFIG.digitStripReader || {};
   const branchLabel = 'roi';
   const geometryConfig = OCR_CONFIG.geometry || {};
   const minCandidateWidth = Number.isFinite(geometryConfig.minCandidateWidth) ? geometryConfig.minCandidateWidth : 120;
@@ -585,6 +856,10 @@ const evaluateCandidateBranch = async ({
   const minCandidateAspect = Number.isFinite(geometryConfig.minCandidateAspect) ? geometryConfig.minCandidateAspect : 0.12;
   const maxCandidateAspect = Number.isFinite(geometryConfig.maxCandidateAspect) ? geometryConfig.maxCandidateAspect : 18;
   const rejectMap = new Map();
+  let bestStripReaderRawConfidence = -1;
+  let stripReaderConfidenceBestDebug = null;
+  const stripReaderCandidates = [];
+  const stripReaderDebugBySource = new Map();
 
   const recordReject = (reason, detail = {}) => {
     const key = reason || 'unknown';
@@ -735,7 +1010,7 @@ const evaluateCandidateBranch = async ({
     recordReject(reason, payload);
   };
 
-  const recordDecodeCanvas = (sourceLabel, angle, canvas) => {
+  const recordDecodeCanvas = (sourceLabel, angle, canvas, cells = null) => {
     if (!sourceLabel || !canvas) {
       return;
     }
@@ -744,7 +1019,8 @@ const evaluateCandidateBranch = async ({
     const existingIndex = entries.findIndex((entry) => entry && entry.angle === normalizedAngle);
     const nextEntry = {
       angle: normalizedAngle,
-      canvas
+      canvas,
+      cells: Array.isArray(cells) ? cells : null
     };
     if (existingIndex >= 0) {
       entries[existingIndex] = nextEntry;
@@ -753,6 +1029,71 @@ const evaluateCandidateBranch = async ({
     }
     decodeCanvasBySource.set(sourceLabel, entries);
   };
+
+  const serializeStripReaderProbe = (probe, candidate, stage) => {
+    const sourceLabel = candidate && candidate.label ? candidate.label : null;
+    const width = candidate && candidate.canvas ? candidate.canvas.width : null;
+    const height = candidate && candidate.canvas ? candidate.canvas.height : null;
+    if (!probe || !probe.ok) {
+      return {
+        ok: false,
+        reason: probe && probe.reason ? probe.reason : 'strip-reader-miss',
+        stage,
+        sourceLabel,
+        width,
+        height
+      };
+    }
+    const rawConfidence = Number.isFinite(probe.confidence) ? probe.confidence : 0;
+    return {
+      ok: true,
+      stage,
+      sourceLabel,
+      width,
+      height,
+      method: 'digit-strip-reader-shadow',
+      value: probe.value || null,
+      confidence: serializeStripConfidence(rawConfidence),
+      rawConfidence: Number(rawConfidence.toFixed(4)),
+      digits: Array.isArray(probe.digits) ? [...probe.digits] : null,
+      digitConfidences: serializeStripConfidences(probe.digitConfidences),
+      topKByPosition: Array.isArray(probe.topKByPosition) ? probe.topKByPosition : [],
+      model: probe.model || null,
+      device: probe.device || null
+    };
+  };
+
+  const runStripReaderShadow = async (candidate, stage) => {
+    if (!stripReaderConfig.enabled || !stripReaderConfig.endpoint || !candidate || !candidate.canvas) {
+      return null;
+    }
+    const probe = await predictDigitStrip(candidate.canvas, stripReaderConfig);
+    const serialized = serializeStripReaderProbe(probe, candidate, stage);
+    if (serialized) {
+      stripReaderCandidates.push(serialized);
+    }
+    if (serialized && serialized.ok) {
+      const rawConfidence = Number.isFinite(serialized.rawConfidence) ? serialized.rawConfidence : 0;
+      const debugEntry = {
+        canvas: candidate.canvas,
+        result: serialized
+      };
+      if (serialized.sourceLabel && !stripReaderDebugBySource.has(serialized.sourceLabel)) {
+        stripReaderDebugBySource.set(serialized.sourceLabel, debugEntry);
+      }
+      if (rawConfidence > bestStripReaderRawConfidence) {
+        bestStripReaderRawConfidence = rawConfidence;
+        stripReaderConfidenceBestDebug = debugEntry;
+      }
+    }
+    return serialized;
+  };
+
+  const buildStripReaderTrace = () => ({
+    candidates: stripReaderCandidates,
+    debugBySource: stripReaderDebugBySource,
+    confidenceBestDebug: stripReaderConfidenceBestDebug
+  });
 
   if (!classifierConfig.enabled || !classifierConfig.endpoint) {
     recordReject('classifier-disabled', {
@@ -763,7 +1104,8 @@ const evaluateCandidateBranch = async ({
       evidenceMap: valueEvidence,
       rejectSummary: summarizeRejectMap(rejectMap),
       decodeCanvasBySource,
-      candidateTrace
+      candidateTrace,
+      stripReaderTrace: buildStripReaderTrace()
     };
   }
 
@@ -828,7 +1170,8 @@ const evaluateCandidateBranch = async ({
       evidenceMap: valueEvidence,
       rejectSummary: summarizeRejectMap(rejectMap),
       decodeCanvasBySource,
-      candidateTrace
+      candidateTrace,
+      stripReaderTrace: buildStripReaderTrace()
     };
   }
 
@@ -842,6 +1185,8 @@ const evaluateCandidateBranch = async ({
       if (setProgress) {
         setProgress(`Classifying digits (${pass}/${expectedPasses})`);
       }
+
+      const stripReaderProbe = await runStripReaderShadow(candidate, stageLabel);
 
       if (isEdgeSourceLabel(candidate.label)) {
         const fallbackScore = Number.isFinite(candidate.fallbackScore)
@@ -883,6 +1228,7 @@ const evaluateCandidateBranch = async ({
           fallbackAspect: Number.isFinite(candidate.fallbackAspect)
             ? Number(candidate.fallbackAspect.toFixed(3))
             : null,
+          stripReader: stripReaderProbe,
           result: null,
           rejects: candidateRejects
         });
@@ -903,6 +1249,7 @@ const evaluateCandidateBranch = async ({
           fallbackAspect: Number.isFinite(candidate.fallbackAspect)
             ? Number(candidate.fallbackAspect.toFixed(3))
             : null,
+          stripReader: stripReaderProbe,
           result: {
             value: reading.value || null,
             confidence: Number.isFinite(reading.confidence) ? Number(reading.confidence.toFixed(1)) : null,
@@ -944,11 +1291,13 @@ const evaluateCandidateBranch = async ({
         recordDecodeCanvas(
           classifierReading.sourceLabel,
           classifierReading.angle,
-          classifierReading.decodedStripCanvas
+          classifierReading.decodedStripCanvas,
+          classifierReading.decodedCellCanvases
         );
       }
       const classifierReadingForSelection = { ...classifierReading };
       delete classifierReadingForSelection.decodedStripCanvas;
+      delete classifierReadingForSelection.decodedCellCanvases;
       candidateTrace.push({
         stage: stageLabel,
         sourceLabel: candidate.label,
@@ -977,8 +1326,9 @@ const evaluateCandidateBranch = async ({
             : null,
           cellConfidences: serializeCellConfidences(classifierReadingForSelection.cellConfidences)
         },
-          rejects: candidateRejects
-        });
+        stripReader: stripReaderProbe,
+        rejects: candidateRejects
+      });
 
       const rankedEvidenceBeforeCurrentReading = rankSelectionEvidence(valueEvidence);
       const preserveAgreedEdgeResult = !!(
@@ -1041,7 +1391,8 @@ const evaluateCandidateBranch = async ({
     evidenceMap: valueEvidence,
     rejectSummary: summarizeRejectMap(rejectMap),
     decodeCanvasBySource,
-    candidateTrace
+    candidateTrace,
+    stripReaderTrace: buildStripReaderTrace()
   };
 };
 
@@ -1108,13 +1459,16 @@ const runMeterOcr = async (file, setProgress) => {
       evidenceMap: roiBranch.evidenceMap,
       branchUsed: isPreferredLengthReading(roiBranch.bestResult) ? 'roi-accepted' : 'roi-uncertain',
       rejectSummary: roiBranch.rejectSummary || [],
-      candidateTrace: roiBranch.candidateTrace || []
+      candidateTrace: roiBranch.candidateTrace || [],
+      stripReaderTrace: roiBranch.stripReaderTrace || null
     });
+    const stripReaderDebug = resolveStripReaderDebug(roiBranch.stripReaderTrace || null, finalSelection);
     addWinningCandidateDebugStage(
       debugSession,
       roiCandidates,
       finalSelection,
-      roiBranch.decodeCanvasBySource
+      roiBranch.decodeCanvasBySource,
+      stripReaderDebug
     );
 
     if (setProgress) {

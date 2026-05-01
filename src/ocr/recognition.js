@@ -467,7 +467,8 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
     }
     const finalizedWithDecodeCanvas = {
       ...finalized,
-      decodedStripCanvas: variant.canvas
+      decodedStripCanvas: variant.canvas,
+      decodedCellCanvases: cellCanvases
     };
     if (
       !best

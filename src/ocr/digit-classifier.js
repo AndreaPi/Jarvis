@@ -14,6 +14,11 @@ const runtimeState = {
   disabledUntilTs: 0
 };
 
+const stripRuntimeState = {
+  consecutiveFailures: 0,
+  disabledUntilTs: 0
+};
+
 const canvasToBlob = (canvas) => {
   return new Promise((resolve, reject) => {
     if (!canvas || typeof canvas.toBlob !== 'function') {
@@ -35,18 +40,24 @@ const normalizeDigit = (value) => {
   return /^\d$/.test(raw) ? raw : '';
 };
 
-const setFailureCooldown = (config) => {
+const normalizeDigitString = (value, length = 4) => {
+  const raw = value === undefined || value === null ? '' : String(value);
+  const pattern = new RegExp(`^\\d{${length}}$`);
+  return pattern.test(raw) ? raw : '';
+};
+
+const setFailureCooldown = (state, config) => {
   const maxFailures = Number.isFinite(config.disableAfterFailures) ? config.disableAfterFailures : 2;
   const cooldownMs = Number.isFinite(config.cooldownMs) ? config.cooldownMs : 8000;
-  runtimeState.consecutiveFailures += 1;
-  if (runtimeState.consecutiveFailures >= maxFailures) {
-    runtimeState.disabledUntilTs = Date.now() + cooldownMs;
+  state.consecutiveFailures += 1;
+  if (state.consecutiveFailures >= maxFailures) {
+    state.disabledUntilTs = Date.now() + cooldownMs;
   }
 };
 
-const clearFailureState = () => {
-  runtimeState.consecutiveFailures = 0;
-  runtimeState.disabledUntilTs = 0;
+const clearFailureState = (state) => {
+  state.consecutiveFailures = 0;
+  state.disabledUntilTs = 0;
 };
 
 const predictDigitCells = async (cellCanvases, classifierConfig, requestOptions = {}) => {
@@ -84,7 +95,7 @@ const predictDigitCells = async (cellCanvases, classifierConfig, requestOptions 
       signal: abortController ? abortController.signal : undefined
     });
     if (!response.ok) {
-      setFailureCooldown(classifierConfig);
+      setFailureCooldown(runtimeState, classifierConfig);
       return createProbeMiss('http-error', { status: response.status });
     }
 
@@ -92,12 +103,12 @@ const predictDigitCells = async (cellCanvases, classifierConfig, requestOptions 
     try {
       payload = await response.json();
     } catch (error) {
-      setFailureCooldown(classifierConfig);
+      setFailureCooldown(runtimeState, classifierConfig);
       return createProbeMiss('invalid-json');
     }
 
     if (!payload || !payload.ok || !Array.isArray(payload.predictions)) {
-      setFailureCooldown(classifierConfig);
+      setFailureCooldown(runtimeState, classifierConfig);
       return createProbeMiss('invalid-payload');
     }
 
@@ -123,11 +134,11 @@ const predictDigitCells = async (cellCanvases, classifierConfig, requestOptions 
     }
 
     if (!predictions.length) {
-      setFailureCooldown(classifierConfig);
+      setFailureCooldown(runtimeState, classifierConfig);
       return createProbeMiss('empty-predictions');
     }
 
-    clearFailureState();
+    clearFailureState(runtimeState);
     return {
       ok: true,
       model: payload.model || null,
@@ -138,10 +149,10 @@ const predictDigitCells = async (cellCanvases, classifierConfig, requestOptions 
     };
   } catch (error) {
     if (error && error.name === 'AbortError') {
-      setFailureCooldown(classifierConfig);
+      setFailureCooldown(runtimeState, classifierConfig);
       return createProbeMiss('timeout');
     }
-    setFailureCooldown(classifierConfig);
+    setFailureCooldown(runtimeState, classifierConfig);
     return createProbeMiss('network-error');
   } finally {
     if (timeoutId) {
@@ -150,4 +161,103 @@ const predictDigitCells = async (cellCanvases, classifierConfig, requestOptions 
   }
 };
 
-export { predictDigitCells };
+const predictDigitStrip = async (stripCanvas, stripReaderConfig, requestOptions = {}) => {
+  if (!stripReaderConfig || !stripReaderConfig.enabled || !stripReaderConfig.endpoint) {
+    return createProbeMiss('disabled');
+  }
+  if (!stripCanvas) {
+    return createProbeMiss('missing-strip');
+  }
+  const ignoreCooldown = requestOptions && requestOptions.ignoreCooldown === true;
+  if (!ignoreCooldown && Date.now() < stripRuntimeState.disabledUntilTs) {
+    return createProbeMiss('cooldown');
+  }
+  if (typeof fetch !== 'function' || typeof FormData === 'undefined') {
+    return createProbeMiss('unsupported-environment');
+  }
+
+  const timeoutMs = Number.isFinite(stripReaderConfig.timeoutMs) ? stripReaderConfig.timeoutMs : 1800;
+  const minConfidence = Number.isFinite(stripReaderConfig.minConfidence)
+    ? stripReaderConfig.minConfidence
+    : 0;
+  const abortController = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timeoutId = abortController ? setTimeout(() => abortController.abort(), timeoutMs) : null;
+
+  try {
+    const formData = new FormData();
+    const blob = await canvasToBlob(stripCanvas);
+    formData.append('image', blob, 'strip.png');
+
+    const response = await fetch(stripReaderConfig.endpoint, {
+      method: 'POST',
+      body: formData,
+      signal: abortController ? abortController.signal : undefined
+    });
+    if (!response.ok) {
+      setFailureCooldown(stripRuntimeState, stripReaderConfig);
+      return createProbeMiss('http-error', { status: response.status });
+    }
+
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch (error) {
+      setFailureCooldown(stripRuntimeState, stripReaderConfig);
+      return createProbeMiss('invalid-json');
+    }
+
+    if (!payload) {
+      setFailureCooldown(stripRuntimeState, stripReaderConfig);
+      return createProbeMiss('invalid-payload');
+    }
+
+    const predictedValue = normalizeDigitString(payload.value || payload.predicted_value);
+    const confidence = toFiniteNumber(payload.confidence) ?? 0;
+    if (!predictedValue) {
+      setFailureCooldown(stripRuntimeState, stripReaderConfig);
+      return createProbeMiss('invalid-payload');
+    }
+    const accepted = (
+      payload.ok !== false
+      && payload.accepted !== false
+      && confidence >= minConfidence
+    );
+    if (!accepted) {
+      return createProbeMiss('low-confidence', {
+        value: predictedValue,
+        confidence,
+        minConfidence
+      });
+    }
+
+    clearFailureState(stripRuntimeState);
+    return {
+      ok: true,
+      model: payload.model || null,
+      device: payload.device || null,
+      value: predictedValue,
+      confidence,
+      digits: Array.isArray(payload.digits)
+        ? payload.digits.map((digit) => normalizeDigit(digit))
+        : predictedValue.split(''),
+      digitConfidences: Array.isArray(payload.digit_confidences)
+        ? payload.digit_confidences.map((value) => toFiniteNumber(value) ?? 0)
+        : [],
+      topKByPosition: Array.isArray(payload.top_k_by_position) ? payload.top_k_by_position : [],
+      minConfidence
+    };
+  } catch (error) {
+    if (error && error.name === 'AbortError') {
+      setFailureCooldown(stripRuntimeState, stripReaderConfig);
+      return createProbeMiss('timeout');
+    }
+    setFailureCooldown(stripRuntimeState, stripReaderConfig);
+    return createProbeMiss('network-error');
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+};
+
+export { predictDigitCells, predictDigitStrip };

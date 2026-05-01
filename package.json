@@ -8,7 +8,8 @@
     "dev": "python3 -m http.server 8000",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
-    "benchmark:roi-diff": "node scripts/compare-roi-checkpoints.cjs"
+    "benchmark:roi-diff": "node scripts/compare-roi-checkpoints.cjs",
+    "qa:strip-runtime": "node scripts/export-strip-runtime-qa.cjs"
   },
   "devDependencies": {
     "@playwright/test": "1.58.1"

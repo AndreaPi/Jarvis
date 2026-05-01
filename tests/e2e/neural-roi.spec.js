@@ -58,6 +58,27 @@ const buildDigitClassifierPayload = (digits, confidence = 0.96) => {
   });
 };
 
+const buildDigitStripReaderPayload = (value = '2311', confidence = 0.97) => {
+  const digits = String(value).split('');
+  return JSON.stringify({
+    ok: true,
+    accepted: true,
+    model: 'mock-strip-digit',
+    device: 'cpu',
+    value,
+    predicted_value: value,
+    confidence,
+    min_confidence: 0,
+    digits,
+    predicted_digits: digits,
+    digit_confidences: digits.map(() => confidence),
+    top_k_by_position: digits.map((digit) => ([
+      { digit, confidence },
+      { digit: digit === '9' ? '8' : '9', confidence: 1 - confidence }
+    ]))
+  });
+};
+
 const installDigitClassifierMock = async (page, options = {}) => {
   const {
     digits = ['0', '0', '0', '0'],
@@ -91,6 +112,53 @@ const installDigitClassifierMock = async (page, options = {}) => {
         'access-control-allow-origin': '*'
       },
       body: buildDigitClassifierPayload(digits, confidence)
+    });
+  });
+
+  return {
+    getCalls: () => calls
+  };
+};
+
+const installDigitStripReaderMock = async (page, options = {}) => {
+  const {
+    value = '2311',
+    confidence = 0.97,
+    mode = 'success',
+    responses = null
+  } = options;
+
+  let calls = 0;
+  await page.route('**/digit/predict-strip', async (route) => {
+    calls += 1;
+    if (mode === 'network-error') {
+      await route.abort('failed');
+      return;
+    }
+    if (mode === 'http-error') {
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        headers: {
+          'access-control-allow-origin': '*'
+        },
+        body: JSON.stringify({ ok: false, error: 'mock strip failure' })
+      });
+      return;
+    }
+
+    const response = Array.isArray(responses) && responses.length
+      ? responses[Math.min(calls - 1, responses.length - 1)]
+      : {};
+    const responseValue = response.value || value;
+    const responseConfidence = Number.isFinite(response.confidence) ? response.confidence : confidence;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: {
+        'access-control-allow-origin': '*'
+      },
+      body: buildDigitStripReaderPayload(responseValue, responseConfidence)
     });
   });
 
@@ -138,6 +206,7 @@ const fulfillNoDetection = async (route) => {
 
 test('asks for manual input when neural ROI returns no detection', async ({ page }) => {
   const digitMock = await installDigitClassifierMock(page, { digits: ['9', '9', '9', '9'] });
+  const stripMock = await installDigitStripReaderMock(page, { value: '9999' });
   await page.route('**/roi/detect', fulfillNoDetection);
   await openAppAndUploadImage(page);
 
@@ -147,10 +216,12 @@ test('asks for manual input when neural ROI returns no detection', async ({ page
   await expect(status).toContainText('Neural ROI failed (no-detection). Enter the measurement manually.');
   await expect(page.locator('#reading-input')).toHaveValue('');
   expect(digitMock.getCalls()).toBe(0);
+  expect(stripMock.getCalls()).toBe(0);
 });
 
 test('does not timeout on a 4.5s neural ROI response', async ({ page }) => {
   const digitMock = await installDigitClassifierMock(page, { digits: ['9', '9', '9', '9'] });
+  const stripMock = await installDigitStripReaderMock(page, { value: '9999' });
   await page.route('**/roi/detect', async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 4500));
     await fulfillNoDetection(route);
@@ -165,10 +236,12 @@ test('does not timeout on a 4.5s neural ROI response', async ({ page }) => {
   });
   await expect(status).not.toContainText('timeout');
   expect(digitMock.getCalls()).toBe(0);
+  expect(stripMock.getCalls()).toBe(0);
 });
 
 test('asks for manual input when neural ROI endpoint is unreachable', async ({ page }) => {
   const digitMock = await installDigitClassifierMock(page, { digits: ['9', '9', '9', '9'] });
+  const stripMock = await installDigitStripReaderMock(page, { value: '9999' });
   await page.route('**/roi/detect', async (route) => {
     await route.abort('failed');
   });
@@ -180,10 +253,12 @@ test('asks for manual input when neural ROI endpoint is unreachable', async ({ p
     'Neural ROI failed (network-error). Enter the measurement manually.'
   );
   expect(digitMock.getCalls()).toBe(0);
+  expect(stripMock.getCalls()).toBe(0);
 });
 
 test('completes with a detected reading when neural ROI and classifier succeed', async ({ page }) => {
   const digitMock = await installDigitClassifierMock(page, { digits: ['2', '3', '1', '1'], confidence: 0.98 });
+  const stripMock = await installDigitStripReaderMock(page, { value: '9999', confidence: 0.99 });
   await page.route('**/roi/detect', async (route) => {
     await route.fulfill({
       status: 200,
@@ -201,10 +276,33 @@ test('completes with a detected reading when neural ROI and classifier succeed',
   await expect(page.locator('#ocr-status')).toContainText('Reading detected: 2311. Review if needed.');
   await expect(page.locator('#reading-input')).toHaveValue('2311');
   expect(digitMock.getCalls()).toBe(4);
+  expect(stripMock.getCalls()).toBeGreaterThan(0);
+
+  const selectionLog = await page.evaluate(() => {
+    const logs = window.__jarvisOcrSelectionLogs || [];
+    return logs[logs.length - 1] || null;
+  });
+  expect(selectionLog).not.toBeNull();
+  expect(selectionLog.selected.value).toBe('2311');
+  expect(selectionLog.stripReader.value).toBe('9999');
+  expect(selectionLog.stripReader.headlineReason).toBe('selected-source');
+  expect(selectionLog.stripReader.selectionRule).toBe('selected-source-first-then-confidence');
+  expect(selectionLog.stripReader.selectedSourceCandidate.sourceLabel).toBe(selectionLog.selected.sourceLabel);
+  expect(selectionLog.stripReader.confidenceBest.value).toBe('9999');
+  expect(selectionLog.stripReader.candidates).toHaveLength(stripMock.getCalls());
+  expect(selectionLog.stripReader.bySource.some((entry) => (
+    entry.sourceLabel === selectionLog.selected.sourceLabel
+    && entry.matchesSelectedSource === true
+    && entry.okCount >= 1
+  ))).toBe(true);
+  expect(selectionLog.candidateTrace.some((entry) => (
+    entry.stripReader && entry.stripReader.value === '9999'
+  ))).toBe(true);
 });
 
 test('asks for manual input when classifier endpoint fails after ROI success', async ({ page }) => {
   await installDigitClassifierMock(page, { mode: 'network-error' });
+  const stripMock = await installDigitStripReaderMock(page, { value: '2311', confidence: 0.99 });
   await page.route('**/roi/detect', async (route) => {
     await route.fulfill({
       status: 200,
@@ -221,9 +319,22 @@ test('asks for manual input when classifier endpoint fails after ROI success', a
 
   await expect(page.locator('#ocr-status')).toContainText('No clear reading detected. Enter it manually.');
   await expect(page.locator('#reading-input')).toHaveValue('');
+  expect(stripMock.getCalls()).toBeGreaterThan(0);
+
+  const selectionLog = await page.evaluate(() => {
+    const logs = window.__jarvisOcrSelectionLogs || [];
+    return logs[logs.length - 1] || null;
+  });
+  expect(selectionLog).not.toBeNull();
+  expect(selectionLog.selected).toBeNull();
+  expect(selectionLog.stripReader.value).toBe('2311');
+  expect(selectionLog.stripReader.headlineReason).toBe('highest-confidence');
+  expect(selectionLog.stripReader.candidates).toHaveLength(stripMock.getCalls());
+  expect(selectionLog.stripReader.bySource.length).toBeGreaterThan(0);
 });
 
 test('recovers from classifier cooldown once the backend responds again', async ({ page }) => {
+  await installDigitStripReaderMock(page, { value: '2311', confidence: 0.99 });
   let classifierMode = 'network-error';
   let classifierCalls = 0;
   await page.route('**/digit/predict-cells', async (route) => {
@@ -265,6 +376,7 @@ test('recovers from classifier cooldown once the backend responds again', async 
 
 test('keeps ROI debug crop geometry stable for narrow neural ROI boxes', async ({ page }) => {
   await installDigitClassifierMock(page, { digits: ['2', '3', '1', '2'], confidence: 0.97 });
+  await installDigitStripReaderMock(page, { value: '2312', confidence: 0.99 });
   await page.route('**/roi/detect', async (route) => {
     await route.fulfill({
       status: 200,
@@ -283,7 +395,13 @@ test('keeps ROI debug crop geometry stable for narrow neural ROI boxes', async (
     /Reading detected|No clear reading detected|Enter it manually|Enter the measurement manually/,
     { timeout: 20_000 }
   );
-  await waitForDebugStages(page, ['0b. neural roi crop', '5. detected strip crop', '6. OCR input candidate']);
+  await waitForDebugStages(page, [
+    '0b. neural roi crop',
+    '5. detected strip crop',
+    '6. OCR input candidate',
+    '7. classifier cell crops',
+    '8. strip reader input'
+  ]);
 
   const dimensions = await page.evaluate(() => {
     const session = document.querySelector('.debug-session');
@@ -311,7 +429,9 @@ test('keeps ROI debug crop geometry stable for narrow neural ROI boxes', async (
     return {
       roi: findStage('0b. neural roi crop'),
       strip: findStage('5. detected strip crop'),
-      ocr: findStage('6. OCR input candidate')
+      ocr: findStage('6. OCR input candidate'),
+      cells: findStage('7. classifier cell crops'),
+      stripReader: findStage('8. strip reader input')
     };
   });
 
@@ -319,6 +439,8 @@ test('keeps ROI debug crop geometry stable for narrow neural ROI boxes', async (
   expect(dimensions.roi).not.toBeNull();
   expect(dimensions.strip).not.toBeNull();
   expect(dimensions.ocr).not.toBeNull();
+  expect(dimensions.cells).not.toBeNull();
+  expect(dimensions.stripReader).not.toBeNull();
 
   const roiArea = dimensions.roi.width * dimensions.roi.height;
   const stripArea = dimensions.strip.width * dimensions.strip.height;
@@ -330,4 +452,8 @@ test('keeps ROI debug crop geometry stable for narrow neural ROI boxes', async (
   expect(stripMaxDim).toBeGreaterThanOrEqual(Math.floor(roiMaxDim * 0.55));
   expect(Math.min(dimensions.strip.width, dimensions.strip.height)).toBeGreaterThanOrEqual(24);
   expect(dimensions.ocr.width).toBeGreaterThanOrEqual(dimensions.strip.width);
+  expect(dimensions.cells.width).toBeGreaterThan(0);
+  expect(dimensions.cells.height).toBeGreaterThan(0);
+  expect(dimensions.stripReader.width).toBeGreaterThan(0);
+  expect(dimensions.stripReader.height).toBeGreaterThan(0);
 });
