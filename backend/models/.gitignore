@@ -1,2 +1,3 @@
 /digit_classifier.pt
 /roi-rotaug-e30-640.pt
+/digit_strip_reader.pt
