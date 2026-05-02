@@ -1,4 +1,6 @@
 *:Zone.Identifier
+.DS_Store
+**/.DS_Store
 node_modules/
 output/
 .venv/
