@@ -111,7 +111,7 @@ def yolo_to_pixel_rect(
 
 def write_csv(path: Path, rows: list[dict[str, str]], headers: list[str]) -> None:
   with path.open("w", encoding="utf-8", newline="") as handle:
-    writer = csv.DictWriter(handle, fieldnames=headers)
+    writer = csv.DictWriter(handle, fieldnames=headers, lineterminator="\n")
     writer.writeheader()
     writer.writerows(rows)
 

@@ -9,6 +9,12 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
+DEPRECATION_NOTICE = (
+  "Deprecated: build_digit_dataset.py writes the retired strips/cells digit dataset. "
+  "Use extract_digit_windows.py --clean, split_digit_windows.py --clean, and "
+  "label_digit_sections.py --clean for the current windows/canonical/sections workflow."
+)
+
 
 @dataclass
 class ExportRow:
@@ -25,7 +31,7 @@ class ExportRow:
 
 def parse_args() -> argparse.Namespace:
   parser = argparse.ArgumentParser(
-    description="Build digit OCR datasets (strip-level + per-cell) from ROI labels and readings CSV."
+    description=DEPRECATION_NOTICE
   )
   parser.add_argument(
     "--csv",
@@ -182,13 +188,14 @@ def write_qa_preview(
 
 def write_csv(path: Path, rows: list[dict[str, str]], headers: list[str]) -> None:
   with path.open("w", encoding="utf-8", newline="") as handle:
-    writer = csv.DictWriter(handle, fieldnames=headers)
+    writer = csv.DictWriter(handle, fieldnames=headers, lineterminator="\n")
     writer.writeheader()
     writer.writerows(rows)
 
 
 def main() -> None:
   args = parse_args()
+  print(DEPRECATION_NOTICE)
   base_dir = Path(__file__).resolve().parent
 
   csv_path = resolve(base_dir, args.csv)

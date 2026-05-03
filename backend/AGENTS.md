@@ -24,12 +24,17 @@
 - `cd backend && source .venv/bin/activate && python extract_digit_windows.py --clean`: Rebuild split-wise digit windows from ROI labels.
 - `cd backend && source .venv/bin/activate && python split_digit_windows.py --clean`: Canonicalize and split digit windows into 4 equispaced sections.
 - `cd backend && source .venv/bin/activate && python label_digit_sections.py --clean`: Build labeled section datasets.
-- `cd backend && source .venv/bin/activate && python validate_digit_dataset.py`: Validate legacy strip/cell manifests when using `build_digit_dataset.py`.
+- `cd backend && source .venv/bin/activate && python validate_digit_dataset.py`: Validate the current windows/canonical/sections digit dataset.
 - `cd backend && source .venv/bin/activate && python generate_synthetic_digit_dataset.py --clean --direct-per-real 6 --compose-window-count 180`: Generate synthetic train-only digit sections.
 - `cd backend && source .venv/bin/activate && python plan_digit_expansion.py --target-train-per-digit 12 --priority-digits 4,5,6,9`: Refresh the targeted capture checklist.
 - `cd backend && source .venv/bin/activate && python train_digit_classifier.py --device cpu`: Train the real-only digit classifier.
 - `cd backend && source .venv/bin/activate && python train_digit_classifier.py --device cpu --synthetic-root data/digit_dataset/sections_synthetic --synthetic-target-ratio 2.0`: Train on mixed real + synthetic data while keeping val/test real-only.
 - `cd backend && source .venv/bin/activate && python train_strip_digit_reader.py --device cpu`: Train the fixed four-head whole-strip reader from `data/digit_dataset/windows_canonical`.
+
+## House-Specific Strip Reader Shortcut
+- A future constrained strip-reader experiment may hard-code the first two reading digits as `23` and train only two suffix heads.
+- This is valid only while the local water meter is expected to remain in the `2300`-`2399` range; review the assumption at least yearly and whenever readings approach `2390`.
+- Store the fixed prefix in config/checkpoint metadata if implemented, and keep benchmark comparison against the unconstrained four-head reader and current primary OCR path.
 
 ## Backend Policy
 - `train_roi.py` should keep heavy augmentation and rotation expansion `90,180,270,360`; weaker runs require explicit override with `--allow-no-augment-policy`.

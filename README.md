@@ -172,6 +172,8 @@ python plan_digit_expansion.py --target-train-per-digit 12 --priority-digits 4,5
 python validate_digit_dataset.py
 ```
 
+`validate_digit_dataset.py` validates the current windows/canonical/sections workflow.
+
 3. Start the API:
 
 ```bash
@@ -183,6 +185,7 @@ In the Codex/DevTools environment, a backend started inside the sandbox may answ
 By default, the frontend calls `http://127.0.0.1:8001/roi/detect` and requires neural ROI detection before OCR.
 Digit decoding is still selected by the per-cell neural classifier at `http://127.0.0.1:8001/digit/predict-cells`.
 The whole-strip reader at `http://127.0.0.1:8001/digit/predict-strip` runs shadow-only and is logged under `selectionLog.stripReader`.
+A future house-specific strip-reader variant may hard-code the prefix `23` and predict only the final two digits; this shortcut must be reviewed yearly or when readings approach `2390`.
 Check backend readiness with:
 
 ```bash

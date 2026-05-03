@@ -27,9 +27,9 @@ def parse_args() -> argparse.Namespace:
     description="Plan targeted dataset expansion for underrepresented digit classes."
   )
   parser.add_argument(
-    "--cells-manifest",
-    default="data/digit_dataset/manifests/cells.csv",
-    help="Path to exported cells manifest."
+    "--labels-manifest",
+    default="data/digit_dataset/manifests/section_labels.csv",
+    help="Path to current section labels manifest."
   )
   parser.add_argument(
     "--readings-csv",
@@ -91,9 +91,9 @@ def parse_priority_digits(raw: str) -> list[str]:
   return result
 
 
-def load_digit_counts(cells_manifest_path: Path) -> dict[str, DigitCounts]:
+def load_digit_counts(labels_manifest_path: Path) -> dict[str, DigitCounts]:
   counts = {str(digit): DigitCounts() for digit in range(DEFAULT_DIGIT_COUNT)}
-  with cells_manifest_path.open("r", encoding="utf-8") as handle:
+  with labels_manifest_path.open("r", encoding="utf-8") as handle:
     reader = csv.DictReader(handle)
     for row in reader:
       digit = (row.get("digit") or "").strip()
@@ -163,7 +163,7 @@ def build_plan_payload(
   priority_digits: list[str],
   seed_label: str,
   max_suggestions_per_digit: int,
-  cells_manifest_path: Path,
+  labels_manifest_path: Path,
   readings_csv_path: Path
 ) -> dict:
   digits_summary = []
@@ -195,7 +195,7 @@ def build_plan_payload(
   return {
     "generated_at": datetime.now(timezone.utc).isoformat(),
     "inputs": {
-      "cells_manifest": str(cells_manifest_path),
+      "labels_manifest": str(labels_manifest_path),
       "readings_csv": str(readings_csv_path),
       "target_train_per_digit": target_train_per_digit,
       "priority_digits": priority_digits,
@@ -258,13 +258,13 @@ def render_markdown(plan: dict) -> str:
 def main() -> None:
   args = parse_args()
   base_dir = Path(__file__).resolve().parent
-  cells_manifest_path = resolve(base_dir, args.cells_manifest)
+  labels_manifest_path = resolve(base_dir, args.labels_manifest)
   readings_csv_path = resolve(base_dir, args.readings_csv)
   out_json_path = resolve(base_dir, args.out_json)
   out_md_path = resolve(base_dir, args.out_md)
 
-  if not cells_manifest_path.exists():
-    raise FileNotFoundError(f"Cells manifest not found: {cells_manifest_path}")
+  if not labels_manifest_path.exists():
+    raise FileNotFoundError(f"Section labels manifest not found: {labels_manifest_path}")
   if not readings_csv_path.exists():
     raise FileNotFoundError(f"Readings CSV not found: {readings_csv_path}")
   if args.target_train_per_digit <= 0:
@@ -273,7 +273,7 @@ def main() -> None:
     raise ValueError("--max-suggestions-per-digit must be positive.")
 
   priority_digits = parse_priority_digits(args.priority_digits)
-  counts = load_digit_counts(cells_manifest_path)
+  counts = load_digit_counts(labels_manifest_path)
   seed_label = load_seed_reading(readings_csv_path)
   plan = build_plan_payload(
     counts=counts,
@@ -281,7 +281,7 @@ def main() -> None:
     priority_digits=priority_digits,
     seed_label=seed_label,
     max_suggestions_per_digit=args.max_suggestions_per_digit,
-    cells_manifest_path=cells_manifest_path,
+    labels_manifest_path=labels_manifest_path,
     readings_csv_path=readings_csv_path
   )
 

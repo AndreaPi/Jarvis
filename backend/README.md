@@ -96,12 +96,13 @@ Keep `data/digit_dataset/manifests/**` in Git. The bulk image trees above are DV
 - `data/digit_dataset/sections.dvc`
 - `data/digit_dataset/sections_labeled.dvc`
 
-Legacy flow (kept for backward compatibility tooling):
+Validate the current windows/canonical/sections dataset:
 
 ```bash
-python build_digit_dataset.py --clean
 python validate_digit_dataset.py
 ```
+
+`build_digit_dataset.py` is deprecated and writes the retired strips/cells dataset shape.
 
 Generate a prioritized capture checklist for underrepresented digits:
 
@@ -135,6 +136,8 @@ python train_strip_digit_reader.py --device cpu
 ```
 
 The trainer letterboxes canonical windows to `520x160` so horizontal digit geometry is preserved. When validation has too few samples for reliable checkpoint selection, the default `--selection-split auto` falls back to train-set selection and leaves the UI test set as the promotion gate.
+
+House-specific constrained-reader assumption: for this local water meter, a future strip-reader variant may hard-code the prefix `23` and train only two suffix digit heads. This is an intentional shortcut based on the expectation that the meter will remain below `2400` cubic meters while this project is used in this home. If implemented, store the fixed prefix in config/checkpoint metadata, keep the unconstrained four-head reader available for comparison, and review the assumption at least yearly or whenever readings approach `2390`.
 
 Optional: generate synthetic **train-only** sections from real train patches, then mix real + synthetic in training.
 Val/test remain strictly real-only.
