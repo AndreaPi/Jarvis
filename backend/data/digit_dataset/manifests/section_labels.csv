@@ -39,10 +39,6 @@ train,meter_20260216.JPEG,2312,0,2,sections/train/meter_20260216_s0.png,sections
 train,meter_20260216.JPEG,2312,1,3,sections/train/meter_20260216_s1.png,sections_labeled/train/3/meter_20260216_s1_d3.png,windows/train/meter_20260216.png,windows_canonical/train/meter_20260216.png
 train,meter_20260216.JPEG,2312,2,1,sections/train/meter_20260216_s2.png,sections_labeled/train/1/meter_20260216_s2_d1.png,windows/train/meter_20260216.png,windows_canonical/train/meter_20260216.png
 train,meter_20260216.JPEG,2312,3,2,sections/train/meter_20260216_s3.png,sections_labeled/train/2/meter_20260216_s3_d2.png,windows/train/meter_20260216.png,windows_canonical/train/meter_20260216.png
-train,meter_20260219.JPEG,2312,0,2,sections/train/meter_20260219_s0.png,sections_labeled/train/2/meter_20260219_s0_d2.png,windows/train/meter_20260219.png,windows_canonical/train/meter_20260219.png
-train,meter_20260219.JPEG,2312,1,3,sections/train/meter_20260219_s1.png,sections_labeled/train/3/meter_20260219_s1_d3.png,windows/train/meter_20260219.png,windows_canonical/train/meter_20260219.png
-train,meter_20260219.JPEG,2312,2,1,sections/train/meter_20260219_s2.png,sections_labeled/train/1/meter_20260219_s2_d1.png,windows/train/meter_20260219.png,windows_canonical/train/meter_20260219.png
-train,meter_20260219.JPEG,2312,3,2,sections/train/meter_20260219_s3.png,sections_labeled/train/2/meter_20260219_s3_d2.png,windows/train/meter_20260219.png,windows_canonical/train/meter_20260219.png
 train,meter_20260220.JPEG,2313,0,2,sections/train/meter_20260220_s0.png,sections_labeled/train/2/meter_20260220_s0_d2.png,windows/train/meter_20260220.png,windows_canonical/train/meter_20260220.png
 train,meter_20260220.JPEG,2313,1,3,sections/train/meter_20260220_s1.png,sections_labeled/train/3/meter_20260220_s1_d3.png,windows/train/meter_20260220.png,windows_canonical/train/meter_20260220.png
 train,meter_20260220.JPEG,2313,2,1,sections/train/meter_20260220_s2.png,sections_labeled/train/1/meter_20260220_s2_d1.png,windows/train/meter_20260220.png,windows_canonical/train/meter_20260220.png

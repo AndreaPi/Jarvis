@@ -9,7 +9,6 @@ train,meter_20260202.JPEG,2308,windows/train/meter_20260202.png,windows_canonica
 train,meter_20260210.JPEG,2310,windows/train/meter_20260210.png,windows_canonical/train/meter_20260210.png,151,385,520,219,y,x,90,0,default,90,0.462271,0.537729,2,runtime-parity
 train,meter_20260214.JPEG,2311,windows/train/meter_20260214.png,windows_canonical/train/meter_20260214.png,147,319,520,254,y,x,90,0,default,90,0.460847,0.539153,2,runtime-parity
 train,meter_20260216.JPEG,2312,windows/train/meter_20260216.png,windows_canonical/train/meter_20260216.png,408,135,520,120,x,x,0,1,heuristic,180,0.528619,0.471381,0,runtime-parity
-train,meter_20260219.JPEG,2312,windows/train/meter_20260219.png,windows_canonical/train/meter_20260219.png,169,373,520,251,y,x,90,0,default,90,0.467243,0.532757,2,runtime-parity
 train,meter_20260220.JPEG,2313,windows/train/meter_20260220.png,windows_canonical/train/meter_20260220.png,113,252,520,163,y,x,90,0,default,90,0.465766,0.534234,0,runtime-parity
 train,meter_20260224.JPEG,2314,windows/train/meter_20260224.png,windows_canonical/train/meter_20260224.png,175,381,520,254,y,x,90,0,default,90,0.454899,0.545101,2,runtime-parity
 train,meter_20260227.JPEG,2315,windows/train/meter_20260227.png,windows_canonical/train/meter_20260227.png,180,412,520,243,y,x,90,0,default,90,0.463203,0.536797,2,runtime-parity
