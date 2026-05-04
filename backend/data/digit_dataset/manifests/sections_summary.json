@@ -17,12 +17,12 @@
     "y": 0
   },
   "applied_rotation_counts": {
-    "0": 0,
-    "90": 0,
-    "180": 0,
+    "0": 1,
+    "90": 20,
+    "180": 2,
     "270": 0
   },
-  "deskewed_count": 19,
+  "deskewed_count": 1,
   "dataset_dir": "/Users/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset",
   "windows_manifest": "/Users/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset/manifests/windows.csv",
   "direction_overrides": "/Users/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset/manifests/direction_overrides.csv",

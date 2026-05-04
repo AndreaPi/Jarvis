@@ -15,6 +15,7 @@ MAX_STRIP_ASPECT = 8.2
 DESKEW_MAX_ANGLE = 8
 DESKEW_STEP = 2
 TIGHTEN_INK_RATIO = 0.18
+DATASET_TIGHTEN_INK_RATIO = 0.28
 NORMALIZE_WIDTH = 520
 HARD_STRIP_MIN_FACTOR = 0.96
 HARD_STRIP_MAX_FACTOR = 1.06
@@ -80,7 +81,8 @@ def rotate_image(image: Image.Image, angle: int) -> Image.Image:
     return image.transpose(Image.Transpose.ROTATE_180)
   if normalized == 270:
     return image.transpose(Image.Transpose.ROTATE_90)
-  return image.rotate(normalized, resample=Image.Resampling.BILINEAR, expand=True, fillcolor=255)
+  fillcolor = (255, 255, 255) if image.mode in {"RGB", "RGBA"} else 255
+  return image.rotate(normalized, resample=Image.Resampling.BILINEAR, expand=True, fillcolor=fillcolor)
 
 
 def resize_to_width(image: Image.Image, target_width: int) -> Image.Image:
@@ -181,9 +183,13 @@ def tighten_crop_by_ink(
   return image.crop((left, top, right, bottom))
 
 
-def score_deskew_candidate(image: Image.Image, angle: int) -> tuple[Image.Image, float]:
+def score_deskew_candidate(
+  image: Image.Image,
+  angle: int,
+  min_area_ratio: float = TIGHTEN_INK_RATIO
+) -> tuple[Image.Image, float]:
   rotated = image if angle == 0 else rotate_image(image, angle)
-  tightened = tighten_crop_by_ink(rotated, TIGHTEN_INK_RATIO)
+  tightened = tighten_crop_by_ink(rotated, min_area_ratio)
   scoring_image = tightened
   if scoring_image.height > scoring_image.width:
     scoring_image = rotate_image(scoring_image, 90)
@@ -221,7 +227,10 @@ def find_max_ink_window_start(values: np.ndarray, window_size: int) -> int:
   return best_start
 
 
-def normalize_roi_strip(image: Image.Image) -> NormalizedStrip | None:
+def normalize_roi_strip(
+  image: Image.Image,
+  tighten_min_area_ratio: float = TIGHTEN_INK_RATIO
+) -> NormalizedStrip | None:
   candidate_bases = (
     [(rotate_image(image, 90), 90)]
     if image.height > image.width
@@ -229,7 +238,7 @@ def normalize_roi_strip(image: Image.Image) -> NormalizedStrip | None:
   )
 
   base_image, base_rotation = candidate_bases[0]
-  best_image, best_score = score_deskew_candidate(base_image, 0)
+  best_image, best_score = score_deskew_candidate(base_image, 0, tighten_min_area_ratio)
   best_angle = 0
   best_base_rotation = base_rotation
   best_valid_image: Image.Image | None = None
@@ -256,7 +265,11 @@ def normalize_roi_strip(image: Image.Image) -> NormalizedStrip | None:
     for angle in base_angles:
       if base_rotation == best_base_rotation and angle == 0:
         continue
-      candidate_image, candidate_score = score_deskew_candidate(base_image, angle)
+      candidate_image, candidate_score = score_deskew_candidate(
+        base_image,
+        angle,
+        tighten_min_area_ratio
+      )
       if candidate_score > best_score:
         best_image = candidate_image
         best_score = candidate_score

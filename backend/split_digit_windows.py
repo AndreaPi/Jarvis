@@ -11,9 +11,19 @@ from PIL import Image
 AUTO_DIRECTION_MIN_DELTA = 0.015
 
 try:
-  from .runtime_digit_pipeline import build_cell_rects, normalize_roi_strip, rotate_image
+  from .runtime_digit_pipeline import (
+    DATASET_TIGHTEN_INK_RATIO,
+    build_cell_rects,
+    normalize_roi_strip,
+    rotate_image,
+  )
 except ImportError:
-  from runtime_digit_pipeline import build_cell_rects, normalize_roi_strip, rotate_image
+  from runtime_digit_pipeline import (
+    DATASET_TIGHTEN_INK_RATIO,
+    build_cell_rects,
+    normalize_roi_strip,
+    rotate_image,
+  )
 
 
 def parse_args() -> argparse.Namespace:
@@ -217,7 +227,10 @@ def main() -> None:
 
       with Image.open(window_path) as image:
         source = image.convert("RGB")
-        normalized = normalize_roi_strip(source)
+        normalized = normalize_roi_strip(
+          source,
+          tighten_min_area_ratio=DATASET_TIGHTEN_INK_RATIO
+        )
         if normalized is None:
           skipped.append({"split": split, "filename": filename, "reason": "normalize-roi-strip-failed"})
           continue
@@ -242,8 +255,9 @@ def main() -> None:
         canonical_axis_counts[canonical_major_axis] += 1
         axis_rotation = normalized.major_axis_rotation
         applied_rotation = (axis_rotation + (180 if direction_flip else 0)) % 360
-        if applied_rotation in rotation_counts:
-          rotation_counts[applied_rotation] += 1
+        rotation_key = str(applied_rotation)
+        if rotation_key in rotation_counts:
+          rotation_counts[rotation_key] += 1
         if normalized.deskew_angle != 0:
           deskewed_count += 1
 
@@ -270,7 +284,7 @@ def main() -> None:
           "primary_lowerness": f"{primary_lowerness:.6f}",
           "flipped_lowerness": f"{flipped_lowerness:.6f}",
           "deskew_angle": str(normalized.deskew_angle),
-          "normalization_mode": "runtime-parity"
+          "normalization_mode": "dataset-roi-preserving"
         })
 
         section_offsets = section_overrides.get(filename, [0.0] * args.section_count)
