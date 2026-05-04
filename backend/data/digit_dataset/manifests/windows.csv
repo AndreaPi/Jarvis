@@ -2,8 +2,6 @@ split,filename,window_path,reading,roi_x,roi_y,roi_w,roi_h
 train,meter_20200701.JPEG,windows/train/meter_20200701.png,1784,619,784,336,98
 train,meter_20201111.JPEG,windows/train/meter_20201111.png,1819,659,504,639,175
 train,meter_20251009.JPEG,windows/train/meter_20251009.png,2279,587,747,183,399
-train,meter_20260112.JPEG,windows/train/meter_20260112.png,2302,615,936,143,353
-train,meter_20260113.jpg,windows/train/meter_20260113.png,2302,1448,1224,800,256
 train,meter_20260130.JPEG,windows/train/meter_20260130.png,2307,574,826,163,393
 train,meter_20260202.JPEG,windows/train/meter_20260202.png,2308,615,789,94,276
 train,meter_20260210.JPEG,windows/train/meter_20260210.png,2310,576,664,151,385

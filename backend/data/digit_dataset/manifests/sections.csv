@@ -11,14 +11,6 @@ train,meter_20251009.JPEG,2279,windows/train/meter_20251009.png,windows_canonica
 train,meter_20251009.JPEG,2279,windows/train/meter_20251009.png,windows_canonical/train/meter_20251009.png,1,x,90,0.000,126,0,264,252,sections/train/meter_20251009_s1.png
 train,meter_20251009.JPEG,2279,windows/train/meter_20251009.png,windows_canonical/train/meter_20251009.png,2,x,90,0.000,256,0,394,252,sections/train/meter_20251009_s2.png
 train,meter_20251009.JPEG,2279,windows/train/meter_20251009.png,windows_canonical/train/meter_20251009.png,3,x,90,0.000,386,0,520,252,sections/train/meter_20251009_s3.png
-train,meter_20260112.JPEG,2302,windows/train/meter_20260112.png,windows_canonical/train/meter_20260112.png,0,x,90,0.000,0,0,138,227,sections/train/meter_20260112_s0.png
-train,meter_20260112.JPEG,2302,windows/train/meter_20260112.png,windows_canonical/train/meter_20260112.png,1,x,90,0.000,126,0,264,227,sections/train/meter_20260112_s1.png
-train,meter_20260112.JPEG,2302,windows/train/meter_20260112.png,windows_canonical/train/meter_20260112.png,2,x,90,0.000,256,0,394,227,sections/train/meter_20260112_s2.png
-train,meter_20260112.JPEG,2302,windows/train/meter_20260112.png,windows_canonical/train/meter_20260112.png,3,x,90,0.000,386,0,520,227,sections/train/meter_20260112_s3.png
-train,meter_20260113.jpg,2302,windows/train/meter_20260113.png,windows_canonical/train/meter_20260113.png,0,x,0,0.000,0,0,138,116,sections/train/meter_20260113_s0.png
-train,meter_20260113.jpg,2302,windows/train/meter_20260113.png,windows_canonical/train/meter_20260113.png,1,x,0,0.000,126,0,264,116,sections/train/meter_20260113_s1.png
-train,meter_20260113.jpg,2302,windows/train/meter_20260113.png,windows_canonical/train/meter_20260113.png,2,x,0,0.000,256,0,394,116,sections/train/meter_20260113_s2.png
-train,meter_20260113.jpg,2302,windows/train/meter_20260113.png,windows_canonical/train/meter_20260113.png,3,x,0,0.000,386,0,520,116,sections/train/meter_20260113_s3.png
 train,meter_20260130.JPEG,2307,windows/train/meter_20260130.png,windows_canonical/train/meter_20260130.png,0,x,90,0.000,0,0,138,231,sections/train/meter_20260130_s0.png
 train,meter_20260130.JPEG,2307,windows/train/meter_20260130.png,windows_canonical/train/meter_20260130.png,1,x,90,0.000,126,0,264,231,sections/train/meter_20260130_s1.png
 train,meter_20260130.JPEG,2307,windows/train/meter_20260130.png,windows_canonical/train/meter_20260130.png,2,x,90,0.000,256,0,394,231,sections/train/meter_20260130_s2.png

@@ -22,9 +22,9 @@
 - Diff artifacts and benchmark reports should use the last `6. OCR input candidate` frame as the selected OCR input snapshot.
 
 ## Active Benchmark Baseline
-- Current local benchmark set: `25` images.
+- Current local benchmark set: `23` images.
 - Current promotion target:
-  - UI test set: `MAE 65.79`, `Exact Match 11/25`, `No-read 1/25`
+  - UI test set: `MAE 71.77`, `Exact Match 9/23`, `No-read 1/23`
   - `npm run test:e2e`: passes (`7/7`)
 - Use `MAE` as the primary promotion signal, with `Exact Match` and `No-read` as guardrails.
 
@@ -37,7 +37,7 @@
 - Keep `roi-rotaug-e30-640.pt` as default until a challenger improves end-to-end OCR, not just detection presence.
 
 ## Current Focus
-1. Keep the `MAE 65.79` / `Exact Match 11/25` / `No-read 1/25` baseline as the primary-path promotion target.
+1. Keep the `MAE 71.77` / `Exact Match 9/23` / `No-read 1/23` baseline as the primary-path promotion target.
 2. Use strip-reader shadow logs to compare whole-strip predictions against the current per-cell classifier, especially on `meter_20260327.JPEG` and April captures.
 3. Fix the remaining neural ROI miss on `meter_20201111.JPEG`.
 4. Keep runtime/exporter comparison tooling available, but avoid broad promotion work unless live browser shadow results beat the primary path.

@@ -7,9 +7,9 @@ Current baseline policy:
 - Use the latest UI **Run test set** histogram as source of truth (`window.__jarvisLastTestSetHistogram`).
 - Treat fixed numeric snapshots as historical only; they go stale quickly as thresholds/ranking change.
 - Evaluation uses `MAE` as the primary promotion signal; `Exact Match` and `No-read` are guardrails.
-- The active local test-set CSV has `25` images.
-- Current primary-path baseline: `MAE 65.79`, `Exact Match 11/25`, `No-read 1/25`.
-- `meter_20260219.JPEG` is intentionally removed from the active raw/test/training corpus because the visible reading is ambiguous and the canonical strip cuts through the final digit.
+- The active local test-set CSV has `23` images.
+- Current primary-path baseline: `MAE 71.77`, `Exact Match 9/23`, `No-read 1/23`.
+- `meter_20260112.JPEG`, `meter_20260113.jpg`, and `meter_20260219.JPEG` are intentionally removed from the active raw/test/training corpus because their visible readings are ambiguous.
 
 Digit dataset status (current workflow):
 
@@ -24,7 +24,7 @@ Digit dataset status (current workflow):
 1. Keep the whole-strip reader shadow-only until its exact-match rate and `MAE` beat the current per-cell primary path.
 2. Inspect strip-reader shadow predictions for `meter_20260327.JPEG` and the April captures; these are the current high-value mismatch probes.
 3. Fix the remaining neural ROI miss on `meter_20201111.JPEG`.
-4. Validate the canonical strip-window dataset visually before retraining; with only 25 strip samples, one bad crop or orientation can dominate the model.
+4. Validate the canonical strip-window dataset visually before retraining; with only 23 strip samples, one bad crop or orientation can dominate the model.
 5. Evaluate a house-specific `23xx` constrained strip-reader variant that hard-codes prefix `23` and predicts only the final two digits.
 6. Verify each OCR tuning change on the full test set with `MAE` + guardrails (`Exact Match`, `No-read`) before keeping it.
 
