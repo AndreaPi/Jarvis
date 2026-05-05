@@ -9,7 +9,8 @@
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "benchmark:roi-diff": "node scripts/compare-roi-checkpoints.cjs",
-    "qa:strip-runtime": "node scripts/export-strip-runtime-qa.cjs"
+    "qa:strip-runtime": "node scripts/export-strip-runtime-qa.cjs",
+    "qa:ocr-oracle": "node scripts/export-ocr-candidate-oracle.cjs"
   },
   "devDependencies": {
     "@playwright/test": "1.58.1"
