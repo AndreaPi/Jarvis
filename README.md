@@ -96,6 +96,12 @@ Optional: train the whole-strip shadow reader checkpoint:
 python train_strip_digit_reader.py --device cpu
 ```
 
+Optional: train the guarded house-specific `23xx` strip-reader checkpoint:
+
+```bash
+python train_strip_digit_reader_23xx.py --device cpu
+```
+
 ## Artifact Retention
 
 Treat the following as Tier 1 artifacts that must not be lost:
@@ -185,7 +191,7 @@ In the Codex/DevTools environment, a backend started inside the sandbox may answ
 By default, the frontend calls `http://127.0.0.1:8001/roi/detect` and requires neural ROI detection before OCR.
 Digit decoding is still selected by the per-cell neural classifier at `http://127.0.0.1:8001/digit/predict-cells`.
 The whole-strip reader at `http://127.0.0.1:8001/digit/predict-strip` runs shadow-only and is logged under `selectionLog.stripReader`.
-A future house-specific strip-reader variant may hard-code the prefix `23` and predict only the final two digits; this shortcut must be reviewed yearly or when readings approach `2390`.
+The constrained house-specific reader at `http://127.0.0.1:8001/digit/predict-strip-23xx` also runs shadow-only and is logged under `selectionLog.stripReader23xx`; it only accepts a forced `23xx` value when its second-digit-is-`3` guard reaches the configured threshold.
 Check backend readiness with:
 
 ```bash
@@ -212,6 +218,7 @@ This benchmark requires all three local model files to be present:
 - `backend/models/roi.pt`
 - `backend/models/digit_classifier.pt`
 - `backend/models/digit_strip_reader.pt`
+- `backend/models/digit_strip_reader_23xx.pt` for constrained-reader shadow diagnostics
 
 Report artifacts are written under `output/roi-checkpoint-diff/<timestamp>/`.
 Per-image diff tables include selected OCR metadata (`sourceLabel`, `method`, `preprocessMode`) and stage `6` exports use the last `6. OCR input candidate` frame from each debug session (the winning decode strip variant).
@@ -235,6 +242,7 @@ CI runs these tests on every pull request and on pushes to `master`.
 - OCR now relies on neural ROI detection; if the backend is unavailable or ROI fails, the app asks for manual reading input.
 - Digit decoding uses the backend neural classifier endpoint (`/digit/predict-cells`) and is enabled by default.
 - The whole-strip digit reader endpoint (`/digit/predict-strip`) is enabled in shadow mode by default; it logs predictions/debug stage `8` but does not affect the selected reading.
+- The constrained house-specific `23xx` endpoint (`/digit/predict-strip-23xx`) is also shadow-only; it logs accepted/abstained diagnostics and must not affect the selected reading until benchmark evidence supports promotion.
 - Edge-derived ROI strip candidates are enabled by default and can be toggled with `OCR_CONFIG.roiDeterministic.useEdgeCandidates`.
 - The selection layer prioritizes edge-derived strips, but the primary classifier pass now also includes top base-strip candidates when they are available; a narrow base fallback rerun is still available only when base candidates were not already evaluated and edge support remains weak. Low-confidence edge-only reads can still be rejected at the final gate.
 - Use the UI `Run test set` action plus `npm run test:e2e` for OCR regressions before and after tuning.

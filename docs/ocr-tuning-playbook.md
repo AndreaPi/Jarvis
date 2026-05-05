@@ -16,16 +16,16 @@ Digit dataset status (current workflow):
 - Dataset generation now uses `extract_digit_windows.py` -> `split_digit_windows.py` -> `label_digit_sections.py`.
 - `split_digit_windows.py` canonicalizes orientation (major axis + optional reading-direction `flip180` overrides) before equispaced 4-way split.
 - Classifier training consumes `data/digit_dataset/sections_labeled/{train,val,test}`.
-- Whole-strip shadow-reader training consumes `data/digit_dataset/windows_canonical/{train,val,test}` and `canonical_windows.csv` readings.
+- Whole-strip shadow-reader training consumes `data/digit_dataset/windows_canonical/{train,val,test}` and `canonical_windows.csv` readings. The constrained `23xx` reader uses the same canonical windows with a guard label derived from `reading[1] === "3"` and suffix labels from the final two digits.
 - Synthetic generation remains train-only (`sections_synthetic/train`) and is mixed into training with `--synthetic-target-ratio`.
 
-## Immediate Next Steps (May 1, 2026)
+## Immediate Next Steps (May 4, 2026)
 
 1. Keep the whole-strip reader shadow-only until its exact-match rate and `MAE` beat the current per-cell primary path.
-2. Inspect strip-reader shadow predictions for `meter_20260327.JPEG` and the April captures; these are the current high-value mismatch probes.
-3. Fix the remaining neural ROI miss on `meter_20201111.JPEG`.
-4. Validate the canonical strip-window dataset visually before retraining; with only 23 strip samples, one bad crop or orientation can dominate the model.
-5. Evaluate a house-specific `23xx` constrained strip-reader variant that hard-codes prefix `23` and predicts only the final two digits.
+2. Treat the May 4, 2026 canonical strip-window QA pass as accepted for the remaining 23-image dataset: all retained strips are readable and label-consistent, even when some crops are not tightly framed.
+3. Do not promote the retrained four-head strip reader. After retraining on the accepted canonical windows, the UI primary path remained at `MAE 71.77`, `Exact Match 9/23`, `No-read 1/23`, and focused strip-runtime QA on `meter_20260327.JPEG` plus April captures produced only `1/7` exact strip-shadow matches.
+4. Fix the remaining neural ROI miss on `meter_20201111.JPEG`.
+5. Keep the first house-specific `23xx` constrained strip-reader checkpoint shadow-only. It is diagnostic-only: cross-validation looked conservative (`0` guard false positives, `19` guard false negatives), but runtime QA still found accepted wrong predictions. Lowering the guard from `0.98` to `0.80` accepted more wrong values, so threshold tuning is not enough.
 6. Verify each OCR tuning change on the full test set with `MAE` + guardrails (`Exact Match`, `No-read`) before keeping it.
 
 ## Goals
@@ -57,7 +57,7 @@ npm run test:e2e
   - `7. classifier cell crops`
   - `8. strip reader input`
 - Inspect selection logs in `window.__jarvisOcrSelectionLogs`.
-- Compare `selectionLog.selected` against `selectionLog.stripReader` before considering any strip-reader promotion.
+- Compare `selectionLog.selected` against `selectionLog.stripReader` and `selectionLog.stripReader23xx` before considering any strip-reader promotion.
 
 3. Apply one narrow change
 
@@ -97,6 +97,7 @@ It requires these local checkpoints before starting:
 - `backend/models/roi.pt`
 - `backend/models/digit_classifier.pt`
 - `backend/models/digit_strip_reader.pt`
+- `backend/models/digit_strip_reader_23xx.pt` for constrained-reader shadow diagnostics
 
 Artifacts are saved to:
 
@@ -167,22 +168,26 @@ Use temporary ranking/threshold experiments first, then codify only if net-posit
 Files:
 
 - `backend/train_strip_digit_reader.py`
+- `backend/train_strip_digit_reader_23xx.py`
 - `backend/strip_digit_reader.py`
+- `backend/strip_digit_reader_23xx.py`
 - `src/ocr/digit-classifier.js`
 - `src/ocr/pipeline.js`
 
 Focus:
 
-- Compare `selectionLog.stripReader.value` to expected readings and selected classifier readings.
+- Compare `selectionLog.stripReader.value` and `selectionLog.stripReader23xx` to expected readings and selected classifier readings.
 - Watch whether stage `8` receives a visually plausible full strip before blaming the model.
 - Retrain after canonical windows change, then judge promotion only with the UI test set.
+- The May 4, 2026 four-head retrain is a shadow baseline, not a promotion candidate; use it to study candidate source behavior and as a comparison point for constrained-reader experiments.
 
 House-specific `23xx` shortcut:
 
-- A constrained strip-reader experiment may hard-code the first two digits as `23` and train/predict only the final two digit positions.
+- The constrained strip-reader experiment hard-codes the first two digits as `23`, trains/predicts only the final two digit positions, and uses a dedicated second-digit-is-`3` guard before accepting any forced `23xx` value.
 - This is a deliberate local shortcut for the current home water meter, not a general OCR assumption.
 - Review the assumption at least yearly, immediately if readings approach `2390`, and before reusing Jarvis for another meter.
-- If implemented, persist the fixed prefix in config/checkpoint metadata and keep the unconstrained four-head reader benchmark available.
+- The default guard threshold is `0.98`; false positives are the dangerous failure mode, so tune for near-zero false positives even if recall is poor.
+- The May 4, 2026 checkpoint persists the fixed prefix in config/checkpoint metadata and keeps the unconstrained four-head reader benchmark available. It is not promotion-ready because runtime suffix predictions are unreliable, and lowering the guard threshold mostly accepts more wrong values.
 
 ### 4) Acceptance/Support Guardrails
 

@@ -8,6 +8,7 @@
 - On neural ROI failure, the UI shows an explicit reason and asks for manual measurement input.
 - Digit-classifier inference is mandatory in the frontend OCR flow (`OCR_CONFIG.digitClassifier.enabled` defaults to `true`).
 - The whole-strip digit reader (`OCR_CONFIG.digitStripReader`) runs in shadow mode only. Its predictions are logged for comparison and debug, but they must not change user-visible OCR selection until a benchmark explicitly promotes it.
+- The constrained house-specific `23xx` strip reader (`OCR_CONFIG.digitStripReader23xx`) also runs in shadow mode only. It logs accepted/abstained diagnostics under `selectionLog.stripReader23xx` and must not change user-visible OCR selection.
 - Frontend OCR evaluation is strip-only, classifier-first candidate decoding. The old Tesseract word-pass and sparse-scan stages are not part of the active path.
 - Edge-derived candidate generation is enabled by default and can be toggled with `OCR_CONFIG.roiDeterministic.useEdgeCandidates`.
 - The primary classifier shortlist now mixes high-ranked edge and base strip candidates so valid full-strip rotations are not starved behind edge-only passes.
@@ -31,24 +32,25 @@
 ## OCR Workflow and Guardrails
 - Before committing OCR changes, run both `npm run test:e2e` and the UI `Run test set`.
 - Prefer running the test set with the debug overlay enabled.
-- Test-set review should inspect `Detected`, `Absolute Error`, `Failure Reason`, stages `5/6/7/8`, and `selectionLog.stripReader`.
+- Test-set review should inspect `Detected`, `Absolute Error`, `Failure Reason`, stages `5/6/7/8`, `selectionLog.stripReader`, and `selectionLog.stripReader23xx`.
 - `npm run benchmark:roi-diff` remains the standard checkpoint comparison workflow.
 - The benchmark requires `backend/models/roi-rotaug-e30-640.pt`, `backend/models/roi.pt`, `backend/models/digit_classifier.pt`, and `backend/models/digit_strip_reader.pt` to exist locally before it will start.
 - Keep `roi-rotaug-e30-640.pt` as default until a challenger improves end-to-end OCR, not just detection presence.
 
 ## Current Focus
 1. Keep the `MAE 71.77` / `Exact Match 9/23` / `No-read 1/23` baseline as the primary-path promotion target.
-2. Use strip-reader shadow logs to compare whole-strip predictions against the current per-cell classifier, especially on `meter_20260327.JPEG` and April captures.
-3. Fix the remaining neural ROI miss on `meter_20201111.JPEG`.
-4. Keep runtime/exporter comparison tooling available, but avoid broad promotion work unless live browser shadow results beat the primary path.
-5. Near-term strip-reader experiment: a house-specific `23xx` constrained reader may hard-code the first two digits as `23` and train/predict only the last two digits. This is an explicit shortcut, not a general OCR solution.
-6. Medium-term: evaluate YOLO OBB ROI detection to reduce rotation and edge ambiguity.
+2. Treat the May 4, 2026 canonical-strip QA pass as accepted for the remaining 23 images; all retained strips are readable, with realistic crop-tightness variation.
+3. Keep the retrained four-head strip reader shadow-only. Its May 4, 2026 focused runtime QA on `meter_20260327.JPEG` plus April captures reached only `1/7` exact, so it is not a promotion candidate.
+4. Use strip-reader shadow logs to compare whole-strip predictions by source against the current per-cell classifier, especially when deciding whether a future constrained reader should use selected-source or confidence-best candidates.
+5. Fix the remaining neural ROI miss on `meter_20201111.JPEG`.
+6. Keep the constrained `23xx` reader shadow-only. The first May 4, 2026 checkpoint is diagnostic-only: cross-validation looked conservative (`0` guard false positives, `19` guard false negatives), but runtime QA still found accepted wrong predictions. Lowering the guard from `0.98` to `0.80` accepted more wrong values, so threshold tuning is not enough.
+7. Medium-term: evaluate YOLO OBB ROI detection to reduce rotation and edge ambiguity.
 
 ## House-Specific `23xx` Assumption
 - The current meter is expected to stay in the `2300`-`2399` range for the useful life of this local project.
-- A constrained two-head strip reader may therefore emit `23` + two predicted suffix digits, reducing the learned task from four positions to two.
+- The constrained reader may therefore emit `23` + two predicted suffix digits, reducing the learned task from four positions to two. It is gated by a dedicated second-digit-is-`3` guard and abstains unless the guard confidence is at least `0.98`.
 - This assumption must be reviewed at least yearly, and immediately if readings approach `2390` or the system is reused for a different meter/home.
-- Any implementation must document the prefix in config/model metadata and must keep the unconstrained benchmark path available for comparison.
+- The prefix is documented in config/model metadata; keep the unconstrained benchmark path available for comparison.
 - Do not present the constrained reader as generally valid beyond this house-specific water-meter workflow.
 
 ## OBB Notes

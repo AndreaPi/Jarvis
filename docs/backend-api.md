@@ -33,12 +33,15 @@ Key fields:
 - `ready` / `roi_ready`: ROI detector is loadable.
 - `digit_ready`: digit classifier is loadable.
 - `strip_digit_ready`: whole-strip reader is loadable.
+- `strip_digit_23xx_ready`: guarded house-specific `23xx` reader is loadable.
 - `model_path`, `model_source`, `device`: ROI model/runtime selection.
 - `digit_model_path`, `digit_device`: digit model/runtime selection.
 - `strip_digit_model_path`, `strip_digit_device`: strip-reader model/runtime selection.
+- `strip_digit_23xx_model_path`, `strip_digit_23xx_device`: constrained strip-reader model/runtime selection.
 - `default_confidence`, `default_iou`, `default_imgsz`: ROI inference defaults.
 - `digit_min_confidence`, `digit_top_k`: classifier acceptance defaults.
 - `strip_digit_min_confidence`, `strip_digit_top_k`: strip-reader acceptance defaults.
+- `strip_digit_23xx_guard_threshold`, `strip_digit_23xx_top_k`: constrained strip-reader guard/defaults.
 
 ### `POST /roi/detect`
 
@@ -141,6 +144,31 @@ Response includes:
 - `top_k_by_position`: per-position alternatives
 - `accepted` / `ok` based on `STRIP_DIGIT_MIN_CONFIDENCE`
 
+### `POST /digit/predict-strip-23xx`
+
+Classifies one strip with the house-specific guarded `23xx` shortcut. This endpoint is shadow-only for frontend OCR and must not replace `/digit/predict-cells` or `/digit/predict-strip` without benchmark promotion.
+
+Request:
+
+- Form-data field: `image` (required)
+
+Example:
+
+```bash
+curl -s -X POST http://127.0.0.1:8001/digit/predict-strip-23xx \
+  -F "image=@backend/data/digit_dataset/windows_canonical/test/meter_20260327.png"
+```
+
+Response includes:
+
+- `accepted`: true only when the second-digit-is-`3` guard passes the configured threshold.
+- `value`: accepted `23xx` string, or null when the guard abstains.
+- `predicted_value`: diagnostic `23xx` string even when abstained.
+- `fixed_prefix`: `"23"`.
+- `prefix_guard`, `guard_confidence`, `guard_threshold`.
+- `suffix_digits`, `suffix_confidences`.
+- `top_k_by_position`: guard and suffix alternatives.
+
 ## Error Semantics
 
 - `400`: bad input (empty upload, unsupported image, too many images, etc.)
@@ -172,10 +200,18 @@ Strip digit reader:
 - `STRIP_DIGIT_TOP_K` (default `3`)
 - `STRIP_DIGIT_DEVICE` (`cpu`, `cuda`, `auto`)
 
+Constrained `23xx` strip digit reader:
+
+- `STRIP_DIGIT_23XX_MODEL_PATH`
+- `STRIP_DIGIT_23XX_GUARD_THRESHOLD` (default `0.98`)
+- `STRIP_DIGIT_23XX_TOP_K` (default `3`)
+- `STRIP_DIGIT_23XX_DEVICE` (`cpu`, `cuda`, `auto`)
+
 ## Source
 
 - API entrypoint: `backend/app.py`
 - ROI detector wrapper: `backend/detector.py`
 - Digit classifier wrapper: `backend/digit_classifier.py`
 - Strip reader wrapper: `backend/strip_digit_reader.py`
-- Strip reader model/trainer: `backend/strip_digit_model.py`, `backend/train_strip_digit_reader.py`
+- Constrained strip reader wrapper: `backend/strip_digit_reader_23xx.py`
+- Strip reader model/trainers: `backend/strip_digit_model.py`, `backend/train_strip_digit_reader.py`, `backend/train_strip_digit_reader_23xx.py`
