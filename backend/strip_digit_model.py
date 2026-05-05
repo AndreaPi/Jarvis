@@ -72,6 +72,60 @@ def build_strip_digit_reader(
   return StripDigitReaderCnn()
 
 
+def build_strip_digit_reader_23xx(num_classes: int = DEFAULT_NUM_CLASSES):
+  torch, nn = _resolve_torch()
+
+  class StripDigitReader23xxCnn(nn.Module):
+    def __init__(self) -> None:
+      super().__init__()
+      self.fixed_prefix = "23"
+      self.num_classes = num_classes
+      self.features = nn.Sequential(
+        nn.Conv2d(1, 32, kernel_size=5, padding=2),
+        nn.BatchNorm2d(32),
+        nn.ReLU(inplace=True),
+        nn.MaxPool2d(kernel_size=2),
+        nn.Conv2d(32, 64, kernel_size=3, padding=1),
+        nn.BatchNorm2d(64),
+        nn.ReLU(inplace=True),
+        nn.MaxPool2d(kernel_size=2),
+        nn.Conv2d(64, 128, kernel_size=3, padding=1),
+        nn.BatchNorm2d(128),
+        nn.ReLU(inplace=True),
+        nn.MaxPool2d(kernel_size=2),
+        nn.Conv2d(128, 192, kernel_size=3, padding=1),
+        nn.BatchNorm2d(192),
+        nn.ReLU(inplace=True),
+        nn.MaxPool2d(kernel_size=2),
+        nn.Conv2d(192, 192, kernel_size=3, padding=1),
+        nn.BatchNorm2d(192),
+        nn.ReLU(inplace=True)
+      )
+      self.pool = nn.AdaptiveAvgPool2d((4, 16))
+      self.embedding = nn.Sequential(
+        nn.Flatten(),
+        nn.Dropout(p=0.28),
+        nn.Linear(192 * 4 * 16, 384),
+        nn.ReLU(inplace=True),
+        nn.Dropout(p=0.18)
+      )
+      self.guard_head = nn.Linear(384, 2)
+      self.suffix_heads = nn.ModuleList([
+        nn.Linear(384, num_classes)
+        for _ in range(2)
+      ])
+
+    def forward(self, inputs):
+      features = self.pool(self.features(inputs))
+      embedding = self.embedding(features)
+      return {
+        "guard_logits": self.guard_head(embedding),
+        "suffix_logits": torch.stack([head(embedding) for head in self.suffix_heads], dim=1)
+      }
+
+  return StripDigitReader23xxCnn()
+
+
 def letterbox_strip_image(
   image: Image.Image,
   width: int = DEFAULT_STRIP_WIDTH,

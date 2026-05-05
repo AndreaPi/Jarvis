@@ -24,6 +24,11 @@ try:
 except ImportError:
   from strip_digit_reader import StripDigitReader, StripDigitReaderUnavailableError
 
+try:
+  from .strip_digit_reader_23xx import StripDigitReader23xx, StripDigitReader23xxUnavailableError
+except ImportError:
+  from strip_digit_reader_23xx import StripDigitReader23xx, StripDigitReader23xxUnavailableError
+
 
 def _env_float(name: str, default: float) -> float:
   value = os.getenv(name)
@@ -63,6 +68,12 @@ STRIP_DIGIT_MODEL_PATH = Path(
 ).expanduser().resolve()
 STRIP_DIGIT_MIN_CONFIDENCE = _env_float("STRIP_DIGIT_MIN_CONFIDENCE", 0.0)
 STRIP_DIGIT_TOP_K = _env_int("STRIP_DIGIT_TOP_K", 3)
+DEFAULT_STRIP_DIGIT_23XX_MODEL_PATH = BASE_DIR / "models" / "digit_strip_reader_23xx.pt"
+STRIP_DIGIT_23XX_MODEL_PATH = Path(
+  os.getenv("STRIP_DIGIT_23XX_MODEL_PATH", str(DEFAULT_STRIP_DIGIT_23XX_MODEL_PATH))
+).expanduser().resolve()
+STRIP_DIGIT_23XX_GUARD_THRESHOLD = _env_float("STRIP_DIGIT_23XX_GUARD_THRESHOLD", 0.98)
+STRIP_DIGIT_23XX_TOP_K = _env_int("STRIP_DIGIT_23XX_TOP_K", 3)
 CLASS_INDEX = os.getenv("ROI_CLASS_INDEX")
 DEVICE_RAW = os.getenv("ROI_DEVICE", "cpu").strip()
 if not DEVICE_RAW:
@@ -76,6 +87,10 @@ STRIP_DIGIT_DEVICE_RAW = os.getenv("STRIP_DIGIT_DEVICE", DIGIT_DEVICE_RAW).strip
 if not STRIP_DIGIT_DEVICE_RAW:
   STRIP_DIGIT_DEVICE_RAW = DIGIT_DEVICE_RAW
 STRIP_DIGIT_DEVICE = None if STRIP_DIGIT_DEVICE_RAW.lower() == "auto" else STRIP_DIGIT_DEVICE_RAW
+STRIP_DIGIT_23XX_DEVICE_RAW = os.getenv("STRIP_DIGIT_23XX_DEVICE", STRIP_DIGIT_DEVICE_RAW).strip()
+if not STRIP_DIGIT_23XX_DEVICE_RAW:
+  STRIP_DIGIT_23XX_DEVICE_RAW = STRIP_DIGIT_DEVICE_RAW
+STRIP_DIGIT_23XX_DEVICE = None if STRIP_DIGIT_23XX_DEVICE_RAW.lower() == "auto" else STRIP_DIGIT_23XX_DEVICE_RAW
 
 if CLASS_INDEX is None:
   CLASS_INDEX_VALUE = None
@@ -108,6 +123,8 @@ _digit_classifier: DigitClassifier | None = None
 _digit_classifier_error: str | None = None
 _strip_digit_reader: StripDigitReader | None = None
 _strip_digit_reader_error: str | None = None
+_strip_digit_reader_23xx: StripDigitReader23xx | None = None
+_strip_digit_reader_23xx_error: str | None = None
 
 
 def get_detector() -> RoiDetector:
@@ -149,6 +166,22 @@ def get_strip_digit_reader() -> StripDigitReader:
     raise
 
 
+def get_strip_digit_reader_23xx() -> StripDigitReader23xx:
+  global _strip_digit_reader_23xx, _strip_digit_reader_23xx_error
+  if _strip_digit_reader_23xx:
+    return _strip_digit_reader_23xx
+  try:
+    _strip_digit_reader_23xx = StripDigitReader23xx(
+      STRIP_DIGIT_23XX_MODEL_PATH,
+      device=STRIP_DIGIT_23XX_DEVICE
+    )
+    _strip_digit_reader_23xx_error = None
+    return _strip_digit_reader_23xx
+  except StripDigitReader23xxUnavailableError as error:
+    _strip_digit_reader_23xx_error = str(error)
+    raise
+
+
 def _load_rgb_image(file_bytes: bytes) -> np.ndarray:
   try:
     with Image.open(io.BytesIO(file_bytes)) as image:
@@ -162,12 +195,15 @@ def health() -> dict:
   roi_model_exists = MODEL_PATH.exists()
   digit_model_exists = DIGIT_MODEL_PATH.exists()
   strip_digit_model_exists = STRIP_DIGIT_MODEL_PATH.exists()
+  strip_digit_23xx_model_exists = STRIP_DIGIT_23XX_MODEL_PATH.exists()
   roi_ready = False
   digit_ready = False
   strip_digit_ready = False
+  strip_digit_23xx_ready = False
   roi_error = _detector_error
   digit_error = _digit_classifier_error
   strip_digit_error = _strip_digit_reader_error
+  strip_digit_23xx_error = _strip_digit_reader_23xx_error
   try:
     get_detector()
     roi_ready = True
@@ -186,6 +222,12 @@ def health() -> dict:
     strip_digit_error = None
   except StripDigitReaderUnavailableError as reader_error:
     strip_digit_error = str(reader_error)
+  try:
+    get_strip_digit_reader_23xx()
+    strip_digit_23xx_ready = True
+    strip_digit_23xx_error = None
+  except StripDigitReader23xxUnavailableError as reader_error:
+    strip_digit_23xx_error = str(reader_error)
 
   return {
     "ok": True,
@@ -193,6 +235,7 @@ def health() -> dict:
     "roi_ready": roi_ready,
     "digit_ready": digit_ready,
     "strip_digit_ready": strip_digit_ready,
+    "strip_digit_23xx_ready": strip_digit_23xx_ready,
     "model_path": str(MODEL_PATH),
     "model_source": MODEL_SOURCE,
     "default_model_path": str(DEFAULT_MODEL_PATH),
@@ -201,9 +244,12 @@ def health() -> dict:
     "digit_model_exists": digit_model_exists,
     "strip_digit_model_path": str(STRIP_DIGIT_MODEL_PATH),
     "strip_digit_model_exists": strip_digit_model_exists,
+    "strip_digit_23xx_model_path": str(STRIP_DIGIT_23XX_MODEL_PATH),
+    "strip_digit_23xx_model_exists": strip_digit_23xx_model_exists,
     "device": DEVICE_RAW if roi_ready else (DEVICE or "auto"),
     "digit_device": DIGIT_DEVICE_RAW if digit_ready else (DIGIT_DEVICE or "auto"),
     "strip_digit_device": STRIP_DIGIT_DEVICE_RAW if strip_digit_ready else (STRIP_DIGIT_DEVICE or "auto"),
+    "strip_digit_23xx_device": STRIP_DIGIT_23XX_DEVICE_RAW if strip_digit_23xx_ready else (STRIP_DIGIT_23XX_DEVICE or "auto"),
     "default_confidence": DEFAULT_CONFIDENCE,
     "default_iou": DEFAULT_IOU,
     "default_imgsz": DEFAULT_IMGSZ,
@@ -211,9 +257,12 @@ def health() -> dict:
     "digit_top_k": DIGIT_TOP_K,
     "strip_digit_min_confidence": STRIP_DIGIT_MIN_CONFIDENCE,
     "strip_digit_top_k": STRIP_DIGIT_TOP_K,
+    "strip_digit_23xx_guard_threshold": STRIP_DIGIT_23XX_GUARD_THRESHOLD,
+    "strip_digit_23xx_top_k": STRIP_DIGIT_23XX_TOP_K,
     "error": roi_error,
     "digit_error": digit_error,
-    "strip_digit_error": strip_digit_error
+    "strip_digit_error": strip_digit_error,
+    "strip_digit_23xx_error": strip_digit_23xx_error
   }
 
 
@@ -368,5 +417,41 @@ async def predict_digit_strip(image: UploadFile = File(...)) -> dict:
     "digits": prediction.digits if accepted else [],
     "predicted_digits": prediction.digits,
     "digit_confidences": prediction.digit_confidences,
+    "top_k_by_position": prediction.top_k_by_position
+  }
+
+
+@app.post("/digit/predict-strip-23xx")
+async def predict_digit_strip_23xx(image: UploadFile = File(...)) -> dict:
+  try:
+    reader = get_strip_digit_reader_23xx()
+  except StripDigitReader23xxUnavailableError as error:
+    raise HTTPException(status_code=503, detail=str(error)) from error
+
+  file_bytes = await image.read()
+  if not file_bytes:
+    raise HTTPException(status_code=400, detail="Empty upload.")
+
+  image_rgb = _load_rgb_image(file_bytes)
+  prediction = reader.predict(
+    image_rgb=image_rgb,
+    top_k=STRIP_DIGIT_23XX_TOP_K,
+    guard_threshold=STRIP_DIGIT_23XX_GUARD_THRESHOLD
+  )
+
+  return {
+    "ok": True,
+    "accepted": prediction.accepted,
+    "model": reader.model_name,
+    "device": reader.device_name,
+    "value": prediction.value,
+    "predicted_value": prediction.predicted_value,
+    "fixed_prefix": prediction.fixed_prefix,
+    "prefix_guard": prediction.prefix_guard,
+    "suffix_digits": prediction.suffix_digits,
+    "confidence": prediction.confidence,
+    "guard_confidence": prediction.guard_confidence,
+    "guard_threshold": STRIP_DIGIT_23XX_GUARD_THRESHOLD,
+    "suffix_confidences": prediction.suffix_confidences,
     "top_k_by_position": prediction.top_k_by_position
   }
