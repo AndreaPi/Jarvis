@@ -19,6 +19,11 @@ const stripRuntimeState = {
   disabledUntilTs: 0
 };
 
+const strip23xxRuntimeState = {
+  consecutiveFailures: 0,
+  disabledUntilTs: 0
+};
+
 const canvasToBlob = (canvas) => {
   return new Promise((resolve, reject) => {
     if (!canvas || typeof canvas.toBlob !== 'function') {
@@ -260,4 +265,98 @@ const predictDigitStrip = async (stripCanvas, stripReaderConfig, requestOptions 
   }
 };
 
-export { predictDigitCells, predictDigitStrip };
+const predictDigitStrip23xx = async (stripCanvas, stripReaderConfig, requestOptions = {}) => {
+  if (!stripReaderConfig || !stripReaderConfig.enabled || !stripReaderConfig.endpoint) {
+    return createProbeMiss('disabled');
+  }
+  if (!stripCanvas) {
+    return createProbeMiss('missing-strip');
+  }
+  const ignoreCooldown = requestOptions && requestOptions.ignoreCooldown === true;
+  if (!ignoreCooldown && Date.now() < strip23xxRuntimeState.disabledUntilTs) {
+    return createProbeMiss('cooldown');
+  }
+  if (typeof fetch !== 'function' || typeof FormData === 'undefined') {
+    return createProbeMiss('unsupported-environment');
+  }
+
+  const timeoutMs = Number.isFinite(stripReaderConfig.timeoutMs) ? stripReaderConfig.timeoutMs : 1800;
+  const abortController = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timeoutId = abortController ? setTimeout(() => abortController.abort(), timeoutMs) : null;
+
+  try {
+    const formData = new FormData();
+    const blob = await canvasToBlob(stripCanvas);
+    formData.append('image', blob, 'strip_23xx.png');
+
+    const response = await fetch(stripReaderConfig.endpoint, {
+      method: 'POST',
+      body: formData,
+      signal: abortController ? abortController.signal : undefined
+    });
+    if (!response.ok) {
+      setFailureCooldown(strip23xxRuntimeState, stripReaderConfig);
+      return createProbeMiss('http-error', { status: response.status });
+    }
+
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch (error) {
+      setFailureCooldown(strip23xxRuntimeState, stripReaderConfig);
+      return createProbeMiss('invalid-json');
+    }
+
+    if (!payload || payload.ok === false) {
+      setFailureCooldown(strip23xxRuntimeState, stripReaderConfig);
+      return createProbeMiss('invalid-payload');
+    }
+
+    const predictedValue = normalizeDigitString(payload.value || payload.predicted_value);
+    const suffixDigits = Array.isArray(payload.suffix_digits)
+      ? payload.suffix_digits.map((digit) => normalizeDigit(digit))
+      : (predictedValue ? predictedValue.slice(2).split('') : []);
+    if (!predictedValue || suffixDigits.length !== 2 || suffixDigits.some((digit) => !digit)) {
+      setFailureCooldown(strip23xxRuntimeState, stripReaderConfig);
+      return createProbeMiss('invalid-payload');
+    }
+
+    const confidence = toFiniteNumber(payload.confidence) ?? 0;
+    const guardConfidence = toFiniteNumber(payload.guard_confidence) ?? 0;
+    const guardThreshold = toFiniteNumber(payload.guard_threshold)
+      ?? toFiniteNumber(stripReaderConfig.guardThreshold)
+      ?? 0.98;
+    clearFailureState(strip23xxRuntimeState);
+    return {
+      ok: true,
+      accepted: payload.accepted === true,
+      model: payload.model || null,
+      device: payload.device || null,
+      value: payload.accepted === true ? predictedValue : null,
+      predictedValue,
+      fixedPrefix: payload.fixed_prefix || '23',
+      prefixGuard: payload.prefix_guard || null,
+      confidence,
+      guardConfidence,
+      guardThreshold,
+      suffixDigits,
+      suffixConfidences: Array.isArray(payload.suffix_confidences)
+        ? payload.suffix_confidences.map((value) => toFiniteNumber(value) ?? 0)
+        : [],
+      topKByPosition: Array.isArray(payload.top_k_by_position) ? payload.top_k_by_position : []
+    };
+  } catch (error) {
+    if (error && error.name === 'AbortError') {
+      setFailureCooldown(strip23xxRuntimeState, stripReaderConfig);
+      return createProbeMiss('timeout');
+    }
+    setFailureCooldown(strip23xxRuntimeState, stripReaderConfig);
+    return createProbeMiss('network-error');
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+};
+
+export { predictDigitCells, predictDigitStrip, predictDigitStrip23xx };

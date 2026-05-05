@@ -267,6 +267,9 @@ const collectImageQa = async (page, filename, outputDir, readings, canonicalRows
   const stripReader = runPayload.selectionLog && runPayload.selectionLog.stripReader
     ? runPayload.selectionLog.stripReader
     : null;
+  const stripReader23xx = runPayload.selectionLog && runPayload.selectionLog.stripReader23xx
+    ? runPayload.selectionLog.stripReader23xx
+    : null;
 
   return {
     filename,
@@ -284,6 +287,24 @@ const collectImageQa = async (page, filename, outputDir, readings, canonicalRows
       : '',
     stripSelectedSourceValue: stripReader && stripReader.selectedSourceCandidate && stripReader.selectedSourceCandidate.value
       ? stripReader.selectedSourceCandidate.value
+      : '',
+    strip23xxAccepted: Boolean(stripReader23xx && stripReader23xx.accepted),
+    strip23xxValue: stripReader23xx && stripReader23xx.value ? stripReader23xx.value : '',
+    strip23xxPredictedValue: stripReader23xx && stripReader23xx.predictedValue ? stripReader23xx.predictedValue : '',
+    strip23xxConfidence: Number.isFinite(stripReader23xx && stripReader23xx.confidence) ? stripReader23xx.confidence : null,
+    strip23xxGuardConfidence: Number.isFinite(stripReader23xx && stripReader23xx.guardConfidence)
+      ? stripReader23xx.guardConfidence
+      : null,
+    strip23xxSource: stripReader23xx && stripReader23xx.sourceLabel ? stripReader23xx.sourceLabel : '',
+    strip23xxHeadlineReason: stripReader23xx && stripReader23xx.headlineReason ? stripReader23xx.headlineReason : '',
+    strip23xxCandidateCount: stripReader23xx && Array.isArray(stripReader23xx.candidates)
+      ? stripReader23xx.candidates.length
+      : 0,
+    strip23xxConfidenceBestValue: stripReader23xx && stripReader23xx.confidenceBest && stripReader23xx.confidenceBest.predictedValue
+      ? stripReader23xx.confidenceBest.predictedValue
+      : '',
+    strip23xxSelectedSourceValue: stripReader23xx && stripReader23xx.selectedSourceCandidate && stripReader23xx.selectedSourceCandidate.predictedValue
+      ? stripReader23xx.selectedSourceCandidate.predictedValue
       : '',
     error: runPayload.error || '',
     canonicalPath,
@@ -310,8 +331,15 @@ const buildReportHtml = (rows, outputDir) => {
 
   const rowHtml = rows.map((row) => {
     const confidence = Number.isFinite(row.stripConfidence) ? `${row.stripConfidence.toFixed(1)}%` : 'n/a';
+    const strip23xxConfidence = Number.isFinite(row.strip23xxConfidence)
+      ? `${row.strip23xxConfidence.toFixed(1)}%`
+      : 'n/a';
+    const strip23xxGuardConfidence = Number.isFinite(row.strip23xxGuardConfidence)
+      ? `${row.strip23xxGuardConfidence.toFixed(1)}%`
+      : 'n/a';
     const exactClass = row.detected === row.expected ? 'ok' : 'bad';
     const stripClass = row.stripValue === row.expected ? 'ok' : 'bad';
+    const strip23xxClass = row.strip23xxAccepted && row.strip23xxValue === row.expected ? 'ok' : 'bad';
     return `
       <section class="qa-row">
         <header>
@@ -320,12 +348,20 @@ const buildReportHtml = (rows, outputDir) => {
             <span>Expected <strong>${htmlEscape(row.expected)}</strong></span>
             <span class="${exactClass}">Primary <strong>${htmlEscape(row.detected || 'no-read')}</strong></span>
             <span class="${stripClass}">Strip <strong>${htmlEscape(row.stripValue || 'n/a')}</strong> (${htmlEscape(confidence)})</span>
+            <span class="${strip23xxClass}">23xx <strong>${htmlEscape(row.strip23xxValue || 'abstain')}</strong> (${htmlEscape(strip23xxConfidence)})</span>
+            <span>23xx predicted ${htmlEscape(row.strip23xxPredictedValue || 'n/a')}</span>
+            <span>23xx guard ${htmlEscape(strip23xxGuardConfidence)}</span>
             <span>Primary source ${htmlEscape(row.primarySource || 'n/a')}</span>
             <span>Strip source ${htmlEscape(row.stripSource || 'n/a')}</span>
             <span>Strip rule ${htmlEscape(row.stripHeadlineReason || 'n/a')}</span>
             <span>Strip probes ${htmlEscape(row.stripCandidateCount)}</span>
             <span>Best-by-confidence ${htmlEscape(row.stripConfidenceBestValue || 'n/a')}</span>
             <span>Selected-source strip ${htmlEscape(row.stripSelectedSourceValue || 'n/a')}</span>
+            <span>23xx source ${htmlEscape(row.strip23xxSource || 'n/a')}</span>
+            <span>23xx rule ${htmlEscape(row.strip23xxHeadlineReason || 'n/a')}</span>
+            <span>23xx probes ${htmlEscape(row.strip23xxCandidateCount)}</span>
+            <span>23xx best-by-confidence ${htmlEscape(row.strip23xxConfidenceBestValue || 'n/a')}</span>
+            <span>23xx selected-source ${htmlEscape(row.strip23xxSelectedSourceValue || 'n/a')}</span>
           </div>
           ${row.error ? `<p class="error">${htmlEscape(row.error)}</p>` : ''}
         </header>
@@ -523,7 +559,17 @@ const main = async () => {
       stripHeadlineReason: row.stripHeadlineReason,
       stripCandidateCount: row.stripCandidateCount,
       stripConfidenceBestValue: row.stripConfidenceBestValue,
-      stripSelectedSourceValue: row.stripSelectedSourceValue
+      stripSelectedSourceValue: row.stripSelectedSourceValue,
+      strip23xxAccepted: row.strip23xxAccepted,
+      strip23xxValue: row.strip23xxValue || 'n/a',
+      strip23xxPredictedValue: row.strip23xxPredictedValue || 'n/a',
+      strip23xxConfidence: row.strip23xxConfidence,
+      strip23xxGuardConfidence: row.strip23xxGuardConfidence,
+      strip23xxSource: row.strip23xxSource,
+      strip23xxHeadlineReason: row.strip23xxHeadlineReason,
+      strip23xxCandidateCount: row.strip23xxCandidateCount,
+      strip23xxConfidenceBestValue: row.strip23xxConfidenceBestValue,
+      strip23xxSelectedSourceValue: row.strip23xxSelectedSourceValue
     }))
   }, null, 2));
 };

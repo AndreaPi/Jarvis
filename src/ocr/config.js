@@ -65,6 +65,15 @@ const OCR_CONFIG = {
     disableAfterFailures: 2,
     cooldownMs: 8000
   },
+  digitStripReader23xx: {
+    enabled: true,
+    endpoint: 'http://127.0.0.1:8001/digit/predict-strip-23xx',
+    timeoutMs: 1800,
+    guardThreshold: 0.98,
+    shadowOnly: true,
+    disableAfterFailures: 2,
+    cooldownMs: 8000
+  },
   neuralRoi: {
     enabled: true,
     endpoint: 'http://127.0.0.1:8001/roi/detect',
@@ -103,6 +112,12 @@ const applyRuntimeOverrides = () => {
     OCR_CONFIG.digitStripReader = {
       ...OCR_CONFIG.digitStripReader,
       ...overrides.digitStripReader
+    };
+  }
+  if (overrides.digitStripReader23xx && typeof overrides.digitStripReader23xx === 'object') {
+    OCR_CONFIG.digitStripReader23xx = {
+      ...OCR_CONFIG.digitStripReader23xx,
+      ...overrides.digitStripReader23xx
     };
   }
 };
