@@ -234,6 +234,34 @@ const serializeCellConfidences = (confidences) => {
   });
 };
 
+const serializeCellVariantCandidates = (candidates) => {
+  if (!Array.isArray(candidates) || !candidates.length) {
+    return [];
+  }
+  return candidates.map((candidate) => ({
+    value: candidate && candidate.value ? candidate.value : null,
+    confidence: candidate && Number.isFinite(candidate.confidence)
+      ? Number(candidate.confidence.toFixed(1))
+      : null,
+    score: candidate && Number.isFinite(candidate.score)
+      ? Number(candidate.score.toFixed(3))
+      : null,
+    baseScore: candidate && Number.isFinite(candidate.baseScore)
+      ? Number(candidate.baseScore.toFixed(3))
+      : null,
+    geometryScoreAdjustment: candidate && Number.isFinite(candidate.geometryScoreAdjustment)
+      ? Number(candidate.geometryScoreAdjustment.toFixed(3))
+      : null,
+    cellDigits: candidate && Array.isArray(candidate.cellDigits) ? [...candidate.cellDigits] : null,
+    cellConfidences: serializeCellConfidences(candidate ? candidate.cellConfidences : null),
+    cropMode: candidate && candidate.cropMode ? candidate.cropMode : null,
+    cropRatio: candidate && Number.isFinite(candidate.cropRatio)
+      ? Number(candidate.cropRatio.toFixed(3))
+      : null,
+    orientation: candidate && Number.isFinite(candidate.orientation) ? candidate.orientation : null
+  }));
+};
+
 const serializeStripConfidence = (value) => {
   if (!Number.isFinite(value)) {
     return null;
@@ -799,6 +827,33 @@ const buildCellDebugCanvas = (cellCanvases) => {
     x += cell.width + gap;
   });
   return canvas;
+};
+
+const shouldExportCandidateDebugImages = () => (
+  typeof window !== 'undefined' && window.__JARVIS_EXPORT_CANDIDATE_IMAGES__ === true
+);
+
+const canvasToDebugDataUrl = (canvas) => {
+  if (!canvas || typeof canvas.toDataURL !== 'function') {
+    return '';
+  }
+  try {
+    return canvas.toDataURL('image/png');
+  } catch {
+    return '';
+  }
+};
+
+const buildCandidateDebugImages = (stripCanvas, cellCanvases) => {
+  if (!shouldExportCandidateDebugImages()) {
+    return null;
+  }
+  const cells = Array.isArray(cellCanvases) ? cellCanvases : [];
+  return {
+    strip: canvasToDebugDataUrl(stripCanvas),
+    cells: cells.map((cell) => canvasToDebugDataUrl(cell)),
+    cellSheet: canvasToDebugDataUrl(buildCellDebugCanvas(cells))
+  };
 };
 
 const buildStripReaderDebugCanvas = (stripCanvas, stripReaderResult) => {
@@ -1407,7 +1462,10 @@ const evaluateCandidateBranch = async ({
             confidence: Number.isFinite(reading.confidence) ? Number(reading.confidence.toFixed(1)) : null,
             score: Number.isFinite(reading.score) ? Number(reading.score.toFixed(3)) : null,
             cellDigits: Array.isArray(reading.cellDigits) ? [...reading.cellDigits] : null,
-            cellConfidences: serializeCellConfidences(reading.cellConfidences)
+            cellConfidences: serializeCellConfidences(reading.cellConfidences),
+            cropMode: reading.cropMode || null,
+            cropRatio: Number.isFinite(reading.cropRatio) ? Number(reading.cropRatio.toFixed(3)) : null,
+            variantCandidates: serializeCellVariantCandidates(reading.diagnosticVariants)
           },
           rejects: candidateRejects
         });
@@ -1448,9 +1506,13 @@ const evaluateCandidateBranch = async ({
         );
       }
       const classifierReadingForSelection = { ...classifierReading };
+      const candidateDebugImages = buildCandidateDebugImages(
+        classifierReadingForSelection.decodedStripCanvas,
+        classifierReadingForSelection.decodedCellCanvases
+      );
       delete classifierReadingForSelection.decodedStripCanvas;
       delete classifierReadingForSelection.decodedCellCanvases;
-      candidateTrace.push({
+      const traceEntry = {
         stage: stageLabel,
         sourceLabel: candidate.label,
         width: candidate.canvas.width,
@@ -1476,12 +1538,27 @@ const evaluateCandidateBranch = async ({
           cellDigits: Array.isArray(classifierReadingForSelection.cellDigits)
             ? [...classifierReadingForSelection.cellDigits]
             : null,
-          cellConfidences: serializeCellConfidences(classifierReadingForSelection.cellConfidences)
+          cellConfidences: serializeCellConfidences(classifierReadingForSelection.cellConfidences),
+          cropMode: classifierReadingForSelection.cropMode || null,
+          cropRatio: Number.isFinite(classifierReadingForSelection.cropRatio)
+            ? Number(classifierReadingForSelection.cropRatio.toFixed(3))
+            : null,
+          baseScore: Number.isFinite(classifierReadingForSelection.baseScore)
+            ? Number(classifierReadingForSelection.baseScore.toFixed(3))
+            : null,
+          geometryScoreAdjustment: Number.isFinite(classifierReadingForSelection.geometryScoreAdjustment)
+            ? Number(classifierReadingForSelection.geometryScoreAdjustment.toFixed(3))
+            : null,
+          variantCandidates: serializeCellVariantCandidates(classifierReadingForSelection.diagnosticVariants)
         },
         stripReader: stripReaderProbe,
         stripReader23xx: stripReader23xxProbe,
         rejects: candidateRejects
-      });
+      };
+      if (candidateDebugImages) {
+        traceEntry.debugImages = candidateDebugImages;
+      }
+      candidateTrace.push(traceEntry);
 
       const rankedEvidenceBeforeCurrentReading = rankSelectionEvidence(valueEvidence);
       const preserveAgreedEdgeResult = !!(
