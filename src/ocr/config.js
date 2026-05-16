@@ -39,7 +39,14 @@ const OCR_CONFIG = {
     normalizeWidth: 520,
     deskewMaxAngle: 8,
     deskewStep: 2,
-    useEdgeCandidates: true
+    useEdgeCandidates: true,
+    tightenRegister: true,
+    registerMinCropRatio: 0.45,
+    registerMaxCropRatio: 0.82,
+    registerTargetAspect: 3.2,
+    registerVerticalBandRatio: 0.68,
+    registerCropRatios: [0.82, 0.72, 0.62, 0.52],
+    registerPaddingRatio: 1.02
   },
   digitClassifier: {
     enabled: true,

@@ -228,6 +228,166 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
     return bestStart;
   };
 
+  const smoothProjection = (values, radius) => {
+    const safeRadius = Math.max(0, Math.round(radius));
+    if (!Array.isArray(values) || !values.length || safeRadius <= 0) {
+      return Array.isArray(values) ? [...values] : [];
+    }
+    return values.map((_, index) => {
+      const start = Math.max(0, index - safeRadius);
+      const end = Math.min(values.length - 1, index + safeRadius);
+      let total = 0;
+      for (let i = start; i <= end; i += 1) {
+        total += values[i];
+      }
+      return total / Math.max(1, end - start + 1);
+    });
+  };
+
+  const buildBandColumnProjection = (canvas, bandY, bandHeight) => {
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const { width, height } = canvas;
+    const startY = Math.max(0, Math.min(height - 1, Math.round(bandY)));
+    const safeHeight = Math.max(1, Math.min(height - startY, Math.round(bandHeight)));
+    const data = ctx.getImageData(0, startY, width, safeHeight).data;
+    const columns = new Array(width).fill(0);
+
+    for (let y = 0; y < safeHeight; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const idx = (y * width + x) * 4;
+        const lum = data[idx] * 0.2126 + data[idx + 1] * 0.7152 + data[idx + 2] * 0.0722;
+        columns[x] += 255 - lum;
+      }
+    }
+
+    return columns;
+  };
+
+  const buildRegisterTightenedCanvases = (canvas) => {
+    if (roiDeterministic.tightenRegister === false || !canvas) {
+      return [];
+    }
+    const { width, height } = canvas;
+    if (width < minCandidateWidth || height < minCandidateHeight) {
+      return [];
+    }
+
+    const verticalBandRatio = Number.isFinite(roiDeterministic.registerVerticalBandRatio)
+      ? clamp(roiDeterministic.registerVerticalBandRatio, 0.35, 1)
+      : 0.68;
+    const targetAspect = Number.isFinite(roiDeterministic.registerTargetAspect)
+      ? clamp(roiDeterministic.registerTargetAspect, 2.2, 4.8)
+      : 3.2;
+    const minCropRatio = Number.isFinite(roiDeterministic.registerMinCropRatio)
+      ? clamp(roiDeterministic.registerMinCropRatio, 0.25, 0.9)
+      : 0.45;
+    const maxCropRatio = Number.isFinite(roiDeterministic.registerMaxCropRatio)
+      ? clamp(roiDeterministic.registerMaxCropRatio, minCropRatio, 0.96)
+      : 0.82;
+    const paddingRatio = Number.isFinite(roiDeterministic.registerPaddingRatio)
+      ? clamp(roiDeterministic.registerPaddingRatio, 1, 1.18)
+      : 1.02;
+
+    const { rows } = buildInkProjection(canvas);
+    const bandHeight = Math.max(
+      minCellHeight,
+      Math.min(height, Math.round(height * verticalBandRatio))
+    );
+    const bandY = findMaxInkWindowStart(rows, bandHeight);
+    const rawColumns = buildBandColumnProjection(canvas, bandY, bandHeight);
+    const columns = smoothProjection(rawColumns, Math.max(2, Math.round(width * 0.012)));
+    const desiredWidth = clamp(
+      Math.round(bandHeight * targetAspect),
+      Math.round(width * minCropRatio),
+      Math.round(width * maxCropRatio)
+    );
+    const configuredRatios = Array.isArray(roiDeterministic.registerCropRatios)
+      ? roiDeterministic.registerCropRatios
+        .filter((ratio) => Number.isFinite(ratio))
+        .map((ratio) => clamp(ratio, minCropRatio, maxCropRatio))
+      : [];
+    const requestedWidths = [
+      desiredWidth,
+      ...configuredRatios.map((ratio) => Math.round(width * ratio))
+    ]
+      .map((cropWidth) => clamp(
+        Math.round(cropWidth * paddingRatio),
+        Math.round(width * minCropRatio),
+        Math.round(width * maxCropRatio)
+      ))
+      .filter((cropWidth) => cropWidth >= minCandidateWidth && cropWidth < width * 0.94);
+
+    const variants = [];
+    const seenKeys = new Set();
+    requestedWidths.forEach((cropWidth) => {
+      const coreStart = findMaxInkWindowStart(columns, cropWidth);
+      const x = clamp(
+        coreStart,
+        0,
+        Math.max(0, width - cropWidth)
+      );
+      const cropRatio = cropWidth / Math.max(1, width);
+      if (cropRatio < minCropRatio || cropRatio > maxCropRatio) {
+        return;
+      }
+      const key = `${Math.round(x / 4)}:${Math.round(cropWidth / 4)}`;
+      if (seenKeys.has(key)) {
+        return;
+      }
+      seenKeys.add(key);
+
+      const tightened = cropCanvas(canvas, {
+        x,
+        y: 0,
+        width: cropWidth,
+        height
+      });
+      if (!tightened || tightened.width >= width * 0.94) {
+        return;
+      }
+
+      emitReject('roi-register-tighten-candidate', {
+        originalWidth: width,
+        cropX: x,
+        cropWidth: tightened.width,
+        cropRatio: Number(cropRatio.toFixed(3)),
+        bandY,
+        bandHeight,
+        targetAspect
+      });
+      variants.push({
+        canvas: tightened,
+        cropMode: `tight-register-${cropRatio.toFixed(2)}`,
+        cropX: x,
+        cropWidth: tightened.width,
+        cropRatio
+      });
+    });
+
+    return variants;
+  };
+
+  const getGeometryScoreAdjustment = (reading) => {
+    if (!reading) {
+      return 0;
+    }
+    const cropRatio = Number.isFinite(reading.cropRatio) ? reading.cropRatio : 1;
+    const cropMode = typeof reading.cropMode === 'string' ? reading.cropMode : '';
+    if (!cropMode.startsWith('tight-register')) {
+      return cropRatio > 0.92 ? -0.05 : 0;
+    }
+    if (cropRatio >= 0.56 && cropRatio <= 0.76) {
+      return 0.08;
+    }
+    if (cropRatio > 0.76 && cropRatio <= 0.84) {
+      return 0.04;
+    }
+    if (cropRatio >= 0.48 && cropRatio < 0.56) {
+      return 0.02;
+    }
+    return -0.02;
+  };
+
   const normalizeRoiStripCanvas = (canvas) => {
     const tightenRatio = Number.isFinite(roiDeterministic.tightenInk) ? roiDeterministic.tightenInk : 0.08;
     const minStripAspect = Number.isFinite(roiDeterministic.minStripAspect) ? roiDeterministic.minStripAspect : 1.8;
@@ -381,6 +541,10 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
       overlap: metadata.overlap,
       orientation: Number.isFinite(metadata.orientation) ? metadata.orientation : null,
       deskewAngle: Number.isFinite(metadata.deskewAngle) ? metadata.deskewAngle : null,
+      cropMode: metadata.cropMode || null,
+      cropX: Number.isFinite(metadata.cropX) ? metadata.cropX : null,
+      cropWidth: Number.isFinite(metadata.cropWidth) ? metadata.cropWidth : null,
+      cropRatio: Number.isFinite(metadata.cropRatio) ? metadata.cropRatio : null,
       decoder: 'digit-classifier',
       classifierModel: classifierProbe.model || null
     };
@@ -397,13 +561,16 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
 
     const tunedConfidence = clamp(reading.averageConfidence + reading.foundRatio * 20, 0, 100);
     const normalizedConfidence = clamp(tunedConfidence / 100, 0, 1);
-    const score = clamp(0.42 + normalizedConfidence * 0.46 + (reading.foundRatio === 1 ? 0.08 : 0.02), 0, 0.99);
+    const baseScore = clamp(0.42 + normalizedConfidence * 0.46 + (reading.foundRatio === 1 ? 0.08 : 0.02), 0, 0.99);
+    const geometryScoreAdjustment = getGeometryScoreAdjustment(reading);
 
     return {
       value: reading.value,
       confidence: tunedConfidence,
       areaRatio: 0.28,
-      score,
+      score: baseScore,
+      baseScore,
+      geometryScoreAdjustment,
       cellDigits: reading.cellDigits || [],
       cellConfidences: reading.cellConfidences || [],
       decoder: reading.decoder || 'digit-classifier',
@@ -411,7 +578,11 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
       variantIndex: Number.isFinite(reading.variantIndex) ? reading.variantIndex : null,
       overlap: Number.isFinite(reading.overlap) ? reading.overlap : null,
       orientation: Number.isFinite(reading.orientation) ? reading.orientation : null,
-      deskewAngle: Number.isFinite(reading.deskewAngle) ? reading.deskewAngle : null
+      deskewAngle: Number.isFinite(reading.deskewAngle) ? reading.deskewAngle : null,
+      cropMode: reading.cropMode || null,
+      cropX: Number.isFinite(reading.cropX) ? reading.cropX : null,
+      cropWidth: Number.isFinite(reading.cropWidth) ? reading.cropWidth : null,
+      cropRatio: Number.isFinite(reading.cropRatio) ? reading.cropRatio : null
     };
   };
 
@@ -430,16 +601,32 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
     ? normalizeAngle(roiNormalized.majorAxisRotation)
     : 0;
   const tryOppositeOrientation = roiDeterministic.tryOppositeOrientation === true;
-  const orientationVariants = [
-    { orientation: baseOrientation, canvas: roiNormalized.canvas }
+  const selectRegisterVariants = roiDeterministic.selectRegisterVariants === true;
+  const baseVariants = [
+    {
+      canvas: roiNormalized.canvas,
+      cropMode: 'full-strip',
+      cropX: 0,
+      cropWidth: roiNormalized.canvas.width,
+      cropRatio: 1
+    }
   ];
+  baseVariants.push(...buildRegisterTightenedCanvases(roiNormalized.canvas));
+  const orientationVariants = baseVariants.map((variant) => ({
+    ...variant,
+    orientation: baseOrientation
+  }));
   if (tryOppositeOrientation) {
-    orientationVariants.push({
-      orientation: normalizeAngle(baseOrientation + 180),
-      canvas: rotateCanvas(roiNormalized.canvas, 180)
+    baseVariants.forEach((variant) => {
+      orientationVariants.push({
+        ...variant,
+        orientation: normalizeAngle(baseOrientation + 180),
+        canvas: rotateCanvas(variant.canvas, 180)
+      });
     });
   }
   let best = null;
+  const finalizedVariants = [];
 
   for (let i = 0; i < orientationVariants.length; i += 1) {
     const variant = orientationVariants[i];
@@ -457,7 +644,11 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
         variantIndex: i,
         overlap,
         orientation: variant.orientation,
-        deskewAngle: roiNormalized.deskewAngle
+        deskewAngle: roiNormalized.deskewAngle,
+        cropMode: variant.cropMode,
+        cropX: variant.cropX,
+        cropWidth: variant.cropWidth,
+        cropRatio: variant.cropRatio
       },
       { requireAllCells }
     );
@@ -470,6 +661,11 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
       decodedStripCanvas: variant.canvas,
       decodedCellCanvases: cellCanvases
     };
+    finalizedVariants.push(finalizedWithDecodeCanvas);
+    const eligibleForPrimarySelection = selectRegisterVariants || variant.cropMode === 'full-strip';
+    if (!eligibleForPrimarySelection) {
+      continue;
+    }
     if (
       !best
       || finalizedWithDecodeCanvas.score > best.score
@@ -480,6 +676,26 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
     ) {
       best = finalizedWithDecodeCanvas;
     }
+  }
+
+  if (best && finalizedVariants.length) {
+    best.diagnosticVariants = finalizedVariants
+      .map((candidate) => ({
+        value: candidate.value,
+        score: Number.isFinite(candidate.score) ? candidate.score : null,
+        baseScore: Number.isFinite(candidate.baseScore) ? candidate.baseScore : null,
+        geometryScoreAdjustment: Number.isFinite(candidate.geometryScoreAdjustment)
+          ? candidate.geometryScoreAdjustment
+          : null,
+        confidence: Number.isFinite(candidate.confidence) ? candidate.confidence : null,
+        cellDigits: Array.isArray(candidate.cellDigits) ? [...candidate.cellDigits] : [],
+        cellConfidences: Array.isArray(candidate.cellConfidences) ? [...candidate.cellConfidences] : [],
+        cropMode: candidate.cropMode || null,
+        cropRatio: Number.isFinite(candidate.cropRatio) ? candidate.cropRatio : null,
+        orientation: Number.isFinite(candidate.orientation) ? candidate.orientation : null
+      }))
+      .sort((a, b) => (b.score ?? -1) - (a.score ?? -1))
+      .slice(0, 6);
   }
 
   return best;
