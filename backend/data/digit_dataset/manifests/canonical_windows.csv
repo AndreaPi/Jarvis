@@ -20,5 +20,8 @@ train,meter_20260416.JPEG,2325,windows/train/meter_20260416.png,windows_canonica
 train,meter_20260420.JPEG,2326,windows/train/meter_20260420.png,windows_canonical/train/meter_20260420.png,231,557,520,216,y,x,90,0,default,90,0.480324,0.519676,0,dataset-roi-preserving
 train,meter_20260423.JPEG,2327,windows/train/meter_20260423.png,windows_canonical/train/meter_20260423.png,198,480,520,214,y,x,90,0,default,90,0.462411,0.537589,0,dataset-roi-preserving
 train,meter_20260427.JPEG,2328,windows/train/meter_20260427.png,windows_canonical/train/meter_20260427.png,202,480,520,219,y,x,90,0,default,90,0.484784,0.515216,0,dataset-roi-preserving
+train,meter_20260507.JPEG,2330,windows/train/meter_20260507.png,windows_canonical/train/meter_20260507.png,206,426,520,251,y,x,90,0,default,90,0.468183,0.531817,0,dataset-roi-preserving
+train,meter_20260512.JPEG,2331,windows/train/meter_20260512.png,windows_canonical/train/meter_20260512.png,199,460,520,225,y,x,90,0,default,90,0.452956,0.547044,0,dataset-roi-preserving
+train,meter_20260515.JPEG,2332,windows/train/meter_20260515.png,windows_canonical/train/meter_20260515.png,272,644,520,220,y,x,90,0,default,90,0.450144,0.549856,0,dataset-roi-preserving
 val,meter_20260323.JPEG,2320,windows/val/meter_20260323.png,windows_canonical/val/meter_20260323.png,187,377,520,258,y,x,90,0,default,90,0.441537,0.558463,0,dataset-roi-preserving
 test,meter_20260327.JPEG,2321,windows/test/meter_20260327.png,windows_canonical/test/meter_20260327.png,128,300,520,264,y,x,90,0,default,90,0.506000,0.494000,8,dataset-roi-preserving
