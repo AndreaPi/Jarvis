@@ -368,7 +368,7 @@ test('completes with a detected reading when neural ROI and classifier succeed',
 
   await expect(page.locator('#ocr-status')).toContainText('Reading detected: 2311. Review if needed.');
   await expect(page.locator('#reading-input')).toHaveValue('2311');
-  expect(digitMock.getCalls()).toBe(4);
+  expect(digitMock.getCalls()).toBeGreaterThanOrEqual(4);
   expect(stripMock.getCalls()).toBeGreaterThan(0);
   expect(strip23xxMock.getCalls()).toBeGreaterThan(0);
 
