@@ -18,7 +18,7 @@ Jarvis is a lightweight personal assistant web app. The first module helps you r
 - Run a built-in OCR test set table with `Detected`, `Absolute Error`, and `Failure Reason` columns plus MAE/exact-match/no-read summary stats.
 
 ## Local Development
-1. Ensure Python 3 and Node.js are installed.
+1. Ensure Python 3, `uv`, and Node.js are installed.
 2. Run the dev server:
 
 ```bash
@@ -56,9 +56,9 @@ You can run a Python backend that detects the meter digit window using a fine-tu
 
 ```bash
 cd backend
-python3 -m venv .venv
+uv venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 ```
 
 Use `backend/.venv` for any Python workflow that touches images or CV dependencies such as `ultralytics`, `opencv`, or `Pillow`.
@@ -66,7 +66,7 @@ Use `backend/.venv` for any Python workflow that touches images or CV dependenci
 For CPU-only environments (for example Vercel), install:
 
 ```bash
-pip install -r requirements-cpu.txt
+uv pip install -r requirements-cpu.txt
 ```
 
 
@@ -106,7 +106,7 @@ python train_strip_digit_reader_23xx.py --device cpu
 
 Treat the following as Tier 1 artifacts that must not be lost:
 
-- raw meter photos in `assets/`
+- canonical meter photos in `assets/`
 - `assets/meter_readings.csv`
 - `backend/data/roi_dataset/images/**`
 - `backend/data/roi_dataset/labels/**`
@@ -123,7 +123,7 @@ uv pip install --python backend/.venv/bin/python "dvc[s3]"
 
 Currently tracked by DVC:
 
-- each raw meter photo in `assets/` via per-file `*.dvc` pointers
+- each canonical meter photo in `assets/` via per-file `*.dvc` pointers
 - `backend/data/roi_dataset/images` via `backend/data/roi_dataset/images.dvc`
 - `backend/data/digit_dataset/windows` via `backend/data/digit_dataset/windows.dvc`
 - `backend/data/digit_dataset/windows_canonical` via `backend/data/digit_dataset/windows_canonical.dvc`
@@ -143,7 +143,7 @@ dvc add backend/data/digit_dataset/sections
 dvc add backend/data/digit_dataset/sections_labeled
 dvc add backend/data/digit_dataset/sections_synthetic/train
 dvc add backend/models/*.pt
-find assets -maxdepth 1 -type f ! -name 'meter_readings.csv' ! -name '*:Zone.Identifier' -print0 | xargs -0 dvc add
+find assets -maxdepth 1 -type f \( -iname 'meter_*.jpg' -o -iname 'meter_*.jpeg' -o -iname 'meter_*.png' \) -print0 | xargs -0 dvc add
 scripts/dvc-push-safe.sh
 ```
 
@@ -212,7 +212,7 @@ Generate a per-image ROI checkpoint comparison report (`roi-rotaug-e30-640.pt` v
 npm run benchmark:roi-diff
 ```
 
-This benchmark requires all three local model files to be present:
+This benchmark requires the listed local model files to be present:
 
 - `backend/models/roi-rotaug-e30-640.pt`
 - `backend/models/roi.pt`
@@ -222,6 +222,16 @@ This benchmark requires all three local model files to be present:
 
 Report artifacts are written under `output/roi-checkpoint-diff/<timestamp>/`.
 Per-image diff tables include selected OCR metadata (`sourceLabel`, `method`, `preprocessMode`) and stage `6` exports use the last `6. OCR input candidate` frame from each debug session (the winning decode strip variant).
+
+Generate focused OCR QA artifacts when tuning candidate selection and cell crops:
+
+```bash
+npm run qa:ocr-oracle
+npm run qa:strip-runtime
+npm run qa:cell-crops
+```
+
+These write timestamped reports under `output/ocr-candidate-oracle/`, `output/strip-runtime-qa/`, and `output/cell-crop-failure-qa/`.
 
 CI runs these tests on every pull request and on pushes to `master`.
 
@@ -250,6 +260,7 @@ CI runs these tests on every pull request and on pushes to `master`.
 
 ## Asset Naming (Meter Images)
 - Use the EXIF `DateTimeOriginal` value as the source of truth for the acquisition date.
-- Rename files to `meter_yyyymmdd` (zero-padded) and keep the original extension.
+- Rename JPEG/PNG files to `meter_yyyymmdd` (zero-padded) and keep the original extension.
+- Convert HEIC/HEIF imports to canonical JPEGs named `meter_yyyymmdd.JPEG`, verify the converted JPEG opens, then delete the original HEIC/HEIF file instead of tracking it in DVC.
 - If multiple images share the same date, keep one as-is and add numeric suffixes to the rest (e.g., `_1`, `_2`).
 - If EXIF is missing, prefer a known date from the filename or capture notes and document it.

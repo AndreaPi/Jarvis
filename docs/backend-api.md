@@ -55,7 +55,7 @@ Example:
 
 ```bash
 curl -s -X POST http://127.0.0.1:8001/roi/detect \
-  -F "image=@assets/meter_02272026.JPEG"
+  -F "image=@assets/meter_20260515.JPEG"
 ```
 
 Success response (shape):

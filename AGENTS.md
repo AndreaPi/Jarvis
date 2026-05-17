@@ -51,9 +51,9 @@ Open `http://localhost:8000` after starting the frontend server.
 - Backend is intended for local use; keep host/CORS scoped to localhost unless explicitly deploying.
 
 ## Artifact Retention
-- Treat raw `assets/` photos, `assets/meter_readings.csv`, ROI images/labels, `backend/data/roi_dataset/splits.json`, digit manifests, and promoted `backend/models/*.pt` checkpoints as must-retain artifacts.
+- Treat canonical `assets/` meter photos, `assets/meter_readings.csv`, ROI images/labels, `backend/data/roi_dataset/splits.json`, digit manifests, and promoted `backend/models/*.pt` checkpoints as must-retain artifacts.
 - Use DVC for large Tier 1 binaries:
-  - per-file DVC tracking for raw meter photos in `assets/`
+  - per-file DVC tracking for canonical meter photos in `assets/`
   - `backend/data/roi_dataset/images.dvc`
   - `backend/data/digit_dataset/windows.dvc`
   - `backend/data/digit_dataset/windows_canonical.dvc`

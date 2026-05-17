@@ -6,15 +6,15 @@ Python service for neural ROI detection (digit window), per-cell digit-classifie
 
 ```bash
 cd backend
-python3 -m venv .venv
+uv venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 ```
 
 For CPU-only environments (for example Vercel), install:
 
 ```bash
-pip install -r requirements-cpu.txt
+uv pip install -r requirements-cpu.txt
 ```
 
 ## 2) Fine-tune on your dataset
@@ -229,9 +229,9 @@ Frontend integration defaults:
 ## CPU-only vs GPU
 
 - CPU-only install (recommended for Vercel/serverless):
-  - `pip install -r requirements-cpu.txt`
+  - `uv pip install -r requirements-cpu.txt`
 - GPU-capable install:
-  - install a CUDA-enabled PyTorch build, then `pip install -r requirements.txt`.
+  - install a CUDA-enabled PyTorch build, then `uv pip install -r requirements.txt`.
 
 Training can also be pinned with `--device`:
 

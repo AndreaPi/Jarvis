@@ -23,10 +23,11 @@
 - Diff artifacts and benchmark reports should use the last `6. OCR input candidate` frame as the selected OCR input snapshot.
 
 ## Active Benchmark Baseline
-- Current local benchmark set: `23` images.
-- Current promotion target:
+- Current UI test-set surface is `assets/meter_readings.csv`, currently `26` images after the May 2026 ROI ingestion.
+- Last recorded primary-path benchmark was on the pre-May `23` image set:
   - UI test set: `MAE 71.77`, `Exact Match 9/23`, `No-read 1/23`
   - `npm run test:e2e`: passes (`7/7`)
+- Re-run the UI `Run test set` before treating any metric as the current promotion target.
 - Use `MAE` as the primary promotion signal, with `Exact Match` and `No-read` as guardrails.
 
 ## OCR Workflow and Guardrails
@@ -38,8 +39,8 @@
 - Keep `roi-rotaug-e30-640.pt` as default until a challenger improves end-to-end OCR, not just detection presence.
 
 ## Current Focus
-1. Keep the `MAE 71.77` / `Exact Match 9/23` / `No-read 1/23` baseline as the primary-path promotion target.
-2. Treat the May 4, 2026 canonical-strip QA pass as accepted for the remaining 23 images; all retained strips are readable, with realistic crop-tightness variation.
+1. Refresh the UI `Run test set` baseline on the current 26-image CSV before promoting OCR changes.
+2. Treat the May 4, 2026 canonical-strip QA pass as accepted for the 23-image digit-training corpus; all retained strips are readable, with realistic crop-tightness variation.
 3. Keep the retrained four-head strip reader shadow-only. Its May 4, 2026 focused runtime QA on `meter_20260327.JPEG` plus April captures reached only `1/7` exact, so it is not a promotion candidate.
 4. Use strip-reader shadow logs to compare whole-strip predictions by source against the current per-cell classifier, especially when deciding whether a future constrained reader should use selected-source or confidence-best candidates.
 5. Fix the remaining neural ROI miss on `meter_20201111.JPEG`.

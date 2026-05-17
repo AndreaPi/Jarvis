@@ -7,8 +7,9 @@ Current baseline policy:
 - Use the latest UI **Run test set** histogram as source of truth (`window.__jarvisLastTestSetHistogram`).
 - Treat fixed numeric snapshots as historical only; they go stale quickly as thresholds/ranking change.
 - Evaluation uses `MAE` as the primary promotion signal; `Exact Match` and `No-read` are guardrails.
-- The active local test-set CSV has `23` images.
-- Current primary-path baseline: `MAE 71.77`, `Exact Match 9/23`, `No-read 1/23`.
+- The active local test-set CSV is `assets/meter_readings.csv`, currently `26` images after the May 2026 ROI ingestion.
+- Last recorded primary-path baseline was measured on the pre-May `23` image set: `MAE 71.77`, `Exact Match 9/23`, `No-read 1/23`.
+- Re-run the UI `Run test set` before treating any metric as the current promotion target.
 - `meter_20260112.JPEG`, `meter_20260113.jpg`, and `meter_20260219.JPEG` are intentionally removed from the active raw/test/training corpus because their visible readings are ambiguous.
 
 Digit dataset status (current workflow):
@@ -22,7 +23,7 @@ Digit dataset status (current workflow):
 ## Immediate Next Steps (May 4, 2026)
 
 1. Keep the whole-strip reader shadow-only until its exact-match rate and `MAE` beat the current per-cell primary path.
-2. Treat the May 4, 2026 canonical strip-window QA pass as accepted for the remaining 23-image dataset: all retained strips are readable and label-consistent, even when some crops are not tightly framed.
+2. Treat the May 4, 2026 canonical strip-window QA pass as accepted for the 23-image digit-training corpus: all retained strips are readable and label-consistent, even when some crops are not tightly framed.
 3. Do not promote the retrained four-head strip reader. After retraining on the accepted canonical windows, the UI primary path remained at `MAE 71.77`, `Exact Match 9/23`, `No-read 1/23`, and focused strip-runtime QA on `meter_20260327.JPEG` plus April captures produced only `1/7` exact strip-shadow matches.
 4. Fix the remaining neural ROI miss on `meter_20201111.JPEG`.
 5. Keep the first house-specific `23xx` constrained strip-reader checkpoint shadow-only. It is diagnostic-only: cross-validation looked conservative (`0` guard false positives, `19` guard false negatives), but runtime QA still found accepted wrong predictions. Lowering the guard from `0.98` to `0.80` accepted more wrong values, so threshold tuning is not enough.
@@ -115,6 +116,18 @@ The report includes:
 - Stage `7` shows the four cell crops used by the current primary classifier.
 - Stage `8` shows the best whole-strip shadow-reader input and prediction/confidence summary.
 - Summary deltas for `MAE`, guardrail rates (`Exact Match`, `No-read`), and dominant failure buckets (`mismatch`, `classifier-edge-gate-final-drop`, `ocr-no-digits`, `no-detection`).
+
+## Focused QA Exporters
+
+Use these scripts when the UI histogram points to candidate-selection, strip-reader, or cell-crop failures:
+
+```bash
+npm run qa:ocr-oracle
+npm run qa:strip-runtime
+npm run qa:cell-crops
+```
+
+They write timestamped reports under `output/ocr-candidate-oracle/`, `output/strip-runtime-qa/`, and `output/cell-crop-failure-qa/`.
 
 ## Checkpoint Promotion Gates
 
