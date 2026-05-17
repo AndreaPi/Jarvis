@@ -9,6 +9,7 @@
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "benchmark:roi-diff": "node scripts/compare-roi-checkpoints.cjs",
+    "qa:strip-dataset": "backend/.venv/bin/python backend/export_strip_dataset_qa.py",
     "qa:strip-runtime": "node scripts/export-strip-runtime-qa.cjs",
     "qa:ocr-oracle": "node scripts/export-ocr-candidate-oracle.cjs",
     "qa:cell-crops": "node scripts/export-cell-crop-failure-qa.cjs"

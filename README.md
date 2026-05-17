@@ -226,12 +226,13 @@ Per-image diff tables include selected OCR metadata (`sourceLabel`, `method`, `p
 Generate focused OCR QA artifacts when tuning candidate selection and cell crops:
 
 ```bash
+npm run qa:strip-dataset
 npm run qa:ocr-oracle
 npm run qa:strip-runtime
 npm run qa:cell-crops
 ```
 
-These write timestamped reports under `output/ocr-candidate-oracle/`, `output/strip-runtime-qa/`, and `output/cell-crop-failure-qa/`.
+These write timestamped reports under `output/strip-dataset-qa/`, `output/ocr-candidate-oracle/`, `output/strip-runtime-qa/`, and `output/cell-crop-failure-qa/`. Use `qa:strip-dataset` after rebuilding digit windows and before retraining, so the canonical strips can be visually accepted first.
 
 CI runs these tests on every pull request and on pushes to `master`.
 

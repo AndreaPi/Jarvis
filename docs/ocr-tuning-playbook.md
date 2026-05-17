@@ -122,12 +122,13 @@ The report includes:
 Use these scripts when the UI histogram points to candidate-selection, strip-reader, or cell-crop failures:
 
 ```bash
+npm run qa:strip-dataset
 npm run qa:ocr-oracle
 npm run qa:strip-runtime
 npm run qa:cell-crops
 ```
 
-They write timestamped reports under `output/ocr-candidate-oracle/`, `output/strip-runtime-qa/`, and `output/cell-crop-failure-qa/`.
+They write timestamped reports under `output/strip-dataset-qa/`, `output/ocr-candidate-oracle/`, `output/strip-runtime-qa/`, and `output/cell-crop-failure-qa/`. Run `qa:strip-dataset` after digit-window regeneration and visually accept the canonical strips before using them for retraining.
 
 ## Checkpoint Promotion Gates
 
