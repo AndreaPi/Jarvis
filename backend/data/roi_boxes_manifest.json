@@ -205,5 +205,32 @@
       "width": 0.044024,
       "height": 0.090204
     }
+  },
+  {
+    "filename": "meter_20260507.JPEG",
+    "rectNorm": {
+      "x": 0.4207205,
+      "y": 0.445405,
+      "width": 0.044685,
+      "height": 0.08
+    }
+  },
+  {
+    "filename": "meter_20260512.JPEG",
+    "rectNorm": {
+      "x": 0.4279285,
+      "y": 0.437838,
+      "width": 0.043243,
+      "height": 0.086486
+    }
+  },
+  {
+    "filename": "meter_20260515.JPEG",
+    "rectNorm": {
+      "x": 0.3818015,
+      "y": 0.4162165,
+      "width": 0.059099,
+      "height": 0.121081
+    }
   }
 ]
