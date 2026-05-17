@@ -15,8 +15,11 @@ Use `backend/.venv` for any Python step in this workflow. Do not rely on the sys
    - `find assets -type f -name '*:Zone.Identifier' -delete`
 
 2. Ingest new photos in `assets/`.
+   - Always start by scanning `assets/` for import candidates instead of waiting for the user to name files.
+   - Suggested scan: `find assets -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.heic' -o -iname '*.heif' \) -print`
    - Treat `jpg|jpeg|png|heic|heif` (any case) files not already named `meter_*` as candidates.
    - Exclude names already listed in `assets/meter_readings.csv`.
+   - Report detected candidates before normalization so the user can catch accidental imports early.
    - HEIC/HEIF is a Mac/iCloud import format only for this repo; do not keep HEIC/HEIF as canonical assets.
 
 3. Normalize each candidate from capture metadata.
@@ -47,7 +50,7 @@ Use `backend/.venv` for any Python step in this workflow. Do not rely on the sys
    - Do not use the old external `jarvis-roi-dataset-sync` helper path; the repo now expects `backend/build_roi_dataset.py` with a manifest input.
 
 7. Rebuild the ROI dataset from the current CSV + ROI manifest.
-   - `cd /home/andrea/GitHubRepositories/Jarvis/backend`
+   - `cd /Users/andrea/GitHubRepositories/Jarvis/backend` or `cd backend` from the repo root.
    - `source .venv/bin/activate`
    - `python build_roi_dataset.py --roi-json <path-to-roi-json>`
    - The builder persists split assignments in `backend/data/roi_dataset/splits.json`.
