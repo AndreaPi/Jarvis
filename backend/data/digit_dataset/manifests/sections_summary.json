@@ -28,5 +28,7 @@
   "direction_overrides": "/Users/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset/manifests/direction_overrides.csv",
   "direction_override_count": 0,
   "section_overrides": "/Users/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset/manifests/section_overrides.csv",
-  "section_override_count": 3
+  "section_override_count": 3,
+  "canonical_overrides": "/Users/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset/manifests/canonical_overrides.csv",
+  "canonical_override_count": 6
 }

@@ -51,3 +51,8 @@
 4. Retrain the per-cell classifier only after class coverage improves.
 5. Retrain the strip reader after canonical windows change; keep it shadow-only until UI benchmark exact-match and `MAE` beat the current primary path.
 6. Promote new checkpoints only when benchmarked OCR `MAE` improves without exact-match or no-read regressions.
+
+## Canonical Strip QA Overrides
+- `split_digit_windows.py` reads optional reviewed corrections from `data/digit_dataset/manifests/canonical_overrides.csv`.
+- Use canonical overrides only for small, visually accepted dataset-generation fixes such as side trimming, retaining more top/bottom source-window context, or extra deskew on specific filenames.
+- After changing canonical overrides, regenerate sections, labels, synthetic train sections, validate the dataset, and run `npm run qa:strip-dataset` for visual acceptance before any retraining.

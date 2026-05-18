@@ -89,6 +89,13 @@ This creates:
 - `data/digit_dataset/sections_labeled/{train,val,test}/{0..9}`
 - manifests under `data/digit_dataset/manifests`
 
+`split_digit_windows.py` also reads optional per-image canonical strip corrections from
+`data/digit_dataset/manifests/canonical_overrides.csv`. Use that manifest for small,
+reviewed dataset-generation fixes such as trimming excess side padding, retaining a little
+more top/bottom context from the source ROI window, or applying an extra deskew correction.
+After changing canonical overrides, regenerate sections, labels, synthetic train sections,
+and the strip QA page before retraining.
+
 Keep `data/digit_dataset/manifests/**` in Git. The bulk image trees above are DVC-managed via:
 
 - `data/digit_dataset/windows.dvc`

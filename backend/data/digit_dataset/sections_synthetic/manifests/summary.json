@@ -10,15 +10,15 @@
   "total_cells": 1296,
   "digit_counts": {
     "0": 92,
-    "1": 146,
-    "2": 259,
-    "3": 220,
-    "4": 98,
-    "5": 89,
-    "6": 82,
-    "7": 105,
-    "8": 117,
-    "9": 88
+    "1": 145,
+    "2": 273,
+    "3": 222,
+    "4": 104,
+    "5": 88,
+    "6": 76,
+    "7": 104,
+    "8": 112,
+    "9": 80
   },
   "manifest_path": "/Users/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset/sections_synthetic/manifests/synthetic_cells.csv"
 }

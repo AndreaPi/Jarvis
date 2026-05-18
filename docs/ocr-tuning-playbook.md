@@ -16,6 +16,7 @@ Digit dataset status (current workflow):
 
 - Dataset generation now uses `extract_digit_windows.py` -> `split_digit_windows.py` -> `label_digit_sections.py`.
 - `split_digit_windows.py` canonicalizes orientation (major axis + optional reading-direction `flip180` overrides) before equispaced 4-way split.
+- Small reviewed canonical-strip fixes live in `data/digit_dataset/manifests/canonical_overrides.csv`; regenerate sections, labels, synthetic train sections, and `qa:strip-dataset` after changing it.
 - Classifier training consumes `data/digit_dataset/sections_labeled/{train,val,test}`.
 - Whole-strip shadow-reader training consumes `data/digit_dataset/windows_canonical/{train,val,test}` and `canonical_windows.csv` readings. The constrained `23xx` reader uses the same canonical windows with a guard label derived from `reading[1] === "3"` and suffix labels from the final two digits.
 - Synthetic generation remains train-only (`sections_synthetic/train`) and is mixed into training with `--synthetic-target-ratio`.
