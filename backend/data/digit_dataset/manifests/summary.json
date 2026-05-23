@@ -1,8 +1,8 @@
 {
-  "rows_exported": 26,
+  "rows_exported": 28,
   "rows_skipped": 0,
   "splits": {
-    "train": 24,
+    "train": 26,
     "val": 1,
     "test": 1
   },

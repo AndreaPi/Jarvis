@@ -1,6 +1,6 @@
 outs:
-- md5: 0d0824ed740dcef720bcbb18a7439073.dir
-  size: 2084227
-  nfiles: 26
+- md5: 80a510768f04d298ecb161dfcb54f57d.dir
+  size: 2276256
+  nfiles: 28
   hash: md5
   path: windows_canonical

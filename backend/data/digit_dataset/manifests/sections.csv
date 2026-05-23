@@ -95,6 +95,14 @@ train,meter_20260515.JPEG,2332,windows/train/meter_20260515.png,windows_canonica
 train,meter_20260515.JPEG,2332,windows/train/meter_20260515.png,windows_canonical/train/meter_20260515.png,1,x,90,0.000,126,0,264,220,sections/train/meter_20260515_s1.png
 train,meter_20260515.JPEG,2332,windows/train/meter_20260515.png,windows_canonical/train/meter_20260515.png,2,x,90,0.000,256,0,394,220,sections/train/meter_20260515_s2.png
 train,meter_20260515.JPEG,2332,windows/train/meter_20260515.png,windows_canonical/train/meter_20260515.png,3,x,90,0.000,386,0,520,220,sections/train/meter_20260515_s3.png
+train,meter_20260518.JPEG,2333,windows/train/meter_20260518.png,windows_canonical/train/meter_20260518.png,0,x,90,0.000,0,0,138,199,sections/train/meter_20260518_s0.png
+train,meter_20260518.JPEG,2333,windows/train/meter_20260518.png,windows_canonical/train/meter_20260518.png,1,x,90,0.000,126,0,264,199,sections/train/meter_20260518_s1.png
+train,meter_20260518.JPEG,2333,windows/train/meter_20260518.png,windows_canonical/train/meter_20260518.png,2,x,90,0.000,256,0,394,199,sections/train/meter_20260518_s2.png
+train,meter_20260518.JPEG,2333,windows/train/meter_20260518.png,windows_canonical/train/meter_20260518.png,3,x,90,0.000,386,0,520,199,sections/train/meter_20260518_s3.png
+train,meter_20260521.JPEG,2334,windows/train/meter_20260521.png,windows_canonical/train/meter_20260521.png,0,x,90,0.000,0,0,138,226,sections/train/meter_20260521_s0.png
+train,meter_20260521.JPEG,2334,windows/train/meter_20260521.png,windows_canonical/train/meter_20260521.png,1,x,90,0.000,126,0,264,226,sections/train/meter_20260521_s1.png
+train,meter_20260521.JPEG,2334,windows/train/meter_20260521.png,windows_canonical/train/meter_20260521.png,2,x,90,0.000,256,0,394,226,sections/train/meter_20260521_s2.png
+train,meter_20260521.JPEG,2334,windows/train/meter_20260521.png,windows_canonical/train/meter_20260521.png,3,x,90,0.000,386,0,520,226,sections/train/meter_20260521_s3.png
 val,meter_20260323.JPEG,2320,windows/val/meter_20260323.png,windows_canonical/val/meter_20260323.png,0,x,90,8.000,4,0,142,258,sections/val/meter_20260323_s0.png
 val,meter_20260323.JPEG,2320,windows/val/meter_20260323.png,windows_canonical/val/meter_20260323.png,1,x,90,0.000,126,0,264,258,sections/val/meter_20260323_s1.png
 val,meter_20260323.JPEG,2320,windows/val/meter_20260323.png,windows_canonical/val/meter_20260323.png,2,x,90,0.000,256,0,394,258,sections/val/meter_20260323_s2.png
