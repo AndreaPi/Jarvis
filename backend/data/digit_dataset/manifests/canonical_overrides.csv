@@ -3,5 +3,8 @@ meter_20201111.JPEG,0,0,0,0,0,1,0,0,28,0,retain lower digit context from source 
 meter_20251009.JPEG,70,50,0,0,0,0,0,0,0,0,strip too wide around digit register
 meter_20260216.JPEG,0,0,0,0,0,1,0,0,8,17,retain lower digit context from direction-aligned source window
 meter_20260220.JPEG,0,0,0,0,0,1,0,0,12,6,shift framing down to retain lower digit context
+meter_20260224.JPEG,25,25,0,0,0,0,0,0,0,0,slightly tighten wide canonical strip
 meter_20260323.JPEG,55,45,18,18,0,0,0,0,0,0,strip too wide around digit register with extra vertical padding
 meter_20260327.JPEG,0,0,0,0,-16,0,0,0,0,0,test strip needs extra clockwise deskew
+meter_20260507.JPEG,35,35,0,0,0,0,0,0,0,0,slightly tighten wide blurry canonical strip
+meter_20260524.JPEG,0,0,0,0,180,0,0,0,0,0,final strip needs 180-degree rotation after normalization

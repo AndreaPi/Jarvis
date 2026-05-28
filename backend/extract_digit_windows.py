@@ -123,6 +123,26 @@ def ensure_dirs(out_dir: Path) -> None:
     (out_dir / "windows" / split).mkdir(parents=True, exist_ok=True)
 
 
+def snapshot_review_manifests(out_dir: Path) -> dict[str, str]:
+  manifests_dir = out_dir / "manifests"
+  if not manifests_dir.exists():
+    return {}
+  snapshots: dict[str, str] = {}
+  for path in manifests_dir.glob("*overrides.csv"):
+    if path.is_file():
+      snapshots[path.name] = path.read_text(encoding="utf-8")
+  return snapshots
+
+
+def restore_review_manifests(out_dir: Path, snapshots: dict[str, str]) -> None:
+  if not snapshots:
+    return
+  manifests_dir = out_dir / "manifests"
+  manifests_dir.mkdir(parents=True, exist_ok=True)
+  for name, content in snapshots.items():
+    (manifests_dir / name).write_text(content, encoding="utf-8")
+
+
 def main() -> None:
   args = parse_args()
   base_dir = Path(__file__).resolve().parent
@@ -138,9 +158,11 @@ def main() -> None:
 
   value_map = read_value_map(csv_path)
 
+  review_manifest_snapshots = snapshot_review_manifests(out_dir) if args.clean else {}
   if args.clean and out_dir.exists():
     shutil.rmtree(out_dir)
   ensure_dirs(out_dir)
+  restore_review_manifests(out_dir, review_manifest_snapshots)
 
   rows: list[dict[str, str]] = []
   skipped: list[dict[str, str]] = []

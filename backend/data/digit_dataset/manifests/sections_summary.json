@@ -1,34 +1,34 @@
 {
-  "windows_processed": 28,
-  "sections_exported": 112,
+  "windows_processed": 29,
+  "sections_exported": 116,
   "windows_skipped": 0,
   "section_count": 4,
   "splits": {
-    "train": 26,
-    "val": 1,
+    "train": 28,
+    "val": 0,
     "test": 1
   },
   "source_axis_counts": {
     "x": 3,
-    "y": 25
+    "y": 26
   },
   "canonical_axis_counts": {
-    "x": 28,
+    "x": 29,
     "y": 0
   },
   "applied_rotation_counts": {
     "0": 1,
     "90": 25,
     "180": 2,
-    "270": 0
+    "270": 1
   },
-  "deskewed_count": 2,
+  "deskewed_count": 3,
   "dataset_dir": "/Users/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset",
   "windows_manifest": "/Users/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset/manifests/windows.csv",
   "direction_overrides": "/Users/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset/manifests/direction_overrides.csv",
-  "direction_override_count": 0,
+  "direction_override_count": 1,
   "section_overrides": "/Users/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset/manifests/section_overrides.csv",
   "section_override_count": 3,
   "canonical_overrides": "/Users/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset/manifests/canonical_overrides.csv",
-  "canonical_override_count": 6
+  "canonical_override_count": 9
 }
