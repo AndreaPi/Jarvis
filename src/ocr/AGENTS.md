@@ -23,9 +23,10 @@
 - Diff artifacts and benchmark reports should use the last `6. OCR input candidate` frame as the selected OCR input snapshot.
 
 ## Active Benchmark Baseline
-- Current UI test-set surface is `assets/meter_readings.csv`, currently `26` images after the May 2026 ROI ingestion.
-- Last recorded primary-path benchmark was on the pre-May `23` image set:
-  - UI test set: `MAE 71.77`, `Exact Match 9/23`, `No-read 1/23`
+- Current UI test-set surface is `assets/meter_readings.csv`, currently `29` images after the May 2026 ROI ingestion through `meter_20260524.JPEG`.
+- Current restored promoted per-cell classifier baseline with the conservative geometry ranker, measured May 29, 2026:
+  - UI test set: `MAE 166.07`, `Exact Match 10/29`, `No-read 1/29`
+  - Same-corpus ranker-off control: `MAE 166.57`, `Exact Match 10/29`, `No-read 1/29`
   - `npm run test:e2e`: passes (`7/7`)
 - Re-run the UI `Run test set` before treating any metric as the current promotion target.
 - Use `MAE` as the primary promotion signal, with `Exact Match` and `No-read` as guardrails.
@@ -39,13 +40,24 @@
 - Keep `roi-rotaug-e30-640.pt` as default until a challenger improves end-to-end OCR, not just detection presence.
 
 ## Current Focus
-1. Refresh the UI `Run test set` baseline on the current 26-image CSV before promoting OCR changes.
+1. Keep the restored promoted `backend/models/digit_classifier.pt` as the primary safety baseline.
 2. Treat the May 4, 2026 canonical-strip QA pass as accepted for the 23-image digit-training corpus; all retained strips are readable, with realistic crop-tightness variation.
 3. Keep the retrained four-head strip reader shadow-only. Its May 4, 2026 focused runtime QA on `meter_20260327.JPEG` plus April captures reached only `1/7` exact, so it is not a promotion candidate.
 4. Use strip-reader shadow logs to compare whole-strip predictions by source against the current per-cell classifier, especially when deciding whether a future constrained reader should use selected-source or confidence-best candidates.
-5. Fix the remaining neural ROI miss on `meter_20201111.JPEG`.
+5. Do not promote digit-classifier scratch retrains or clean-section-only fine-tunes unless they beat the restored checkpoint on the UI test set. A May 24, 2026 clean + curated-runtime-failure challenger improved grouped CV but failed the then-28-image UI gate (`MAE 139.11`, `Exact Match 3/28`, `No-read 1/28`).
 6. Keep the constrained `23xx` reader shadow-only. The first May 4, 2026 checkpoint is diagnostic-only: cross-validation looked conservative (`0` guard false positives, `19` guard false negatives), but runtime QA still found accepted wrong predictions. Lowering the guard from `0.98` to `0.80` accepted more wrong values, so threshold tuning is not enough.
 7. Medium-term: evaluate YOLO OBB ROI detection to reduce rotation and edge ambiguity.
+
+## Digit Classifier Training Guardrail
+- Restore promoted checkpoints from DVC before digit experiments when local model outputs drift.
+- Use `backend/export_runtime_digit_failure_set.py` to reconstruct train-only runtime failure crops, then `npm run qa:runtime-failure-dataset` for visual QA.
+- Use `npm run qa:runtime-failure-dataset:selected` when the review should focus only on UI-selected failure candidates.
+- Use `npm run qa:digit-classifier-cv` for grouped source-image CV on the train pool, but treat it as diagnostic only.
+- May 27, 2026 split policy: the digit dataset has no validation split. `meter_20260323.JPEG` is train, while `meter_20260327.JPEG` remains a fixed hard test holdout. Grouped CV by source image is the default experiment evaluator, and sibling cells/crops from the same meter photo must never leak across folds.
+- Write challengers under `backend/runs/...`; do not overwrite `backend/models/digit_classifier.pt` until the challenger improves UI `MAE` without worsening exact match or no-read count.
+- May 24, 2026 runtime-failure review found most selected failures were upstream strip/cell geometry problems, not standalone digit-classifier misses. Prioritize candidate geometry/ranking fixes before more digit fine-tuning.
+- May 29, 2026 conservative geometry ranker is a tiny tie-breaker, not a hard reject: it penalizes suspicious full-strip cell splits only when coherent same-prefix edge evidence already exists. Stronger geometry penalties regressed earlier UI benchmarks. On the current 29-image corpus, ranker-on measured `MAE 166.07`, `Exact Match 10/29`, `No-read 1/29`; ranker-off measured `MAE 166.57`, `Exact Match 10/29`, `No-read 1/29`, so the ranker stays enabled as a small same-corpus MAE improvement.
+- May 24, 2026 curated-runtime fine-tune from the promoted checkpoint fixed some reviewed classifier/local-split misses (`meter_20260413.JPEG`) but broadly damaged previously-correct rows. Grouped CV improved, but the UI gate rejected the challenger, so keep runtime-failure fine-tuning as an experiment only until a full UI run improves `MAE` without guardrail regressions.
 
 ## House-Specific `23xx` Assumption
 - The current meter is expected to stay in the `2300`-`2399` range for the useful life of this local project.

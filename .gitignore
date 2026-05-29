@@ -16,6 +16,7 @@ backend/data/roi_dataset/labels/*.cache
 backend/data/roi_dataset/previews/
 backend/data/roi_dataset/qa_previews/
 backend/data/roi_dataset/roi_boxes.json
+backend/data/runtime_failure_dataset/
 .env
 
 # Playwright CLI generated artifacts

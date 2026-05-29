@@ -33,6 +33,7 @@
 - `cd backend && source .venv/bin/activate && python train_digit_classifier.py --device cpu --synthetic-root data/digit_dataset/sections_synthetic --synthetic-target-ratio 2.0`: Train on mixed real + synthetic data while keeping val/test real-only.
 - `cd backend && source .venv/bin/activate && python train_strip_digit_reader.py --device cpu`: Train the fixed four-head whole-strip reader from `data/digit_dataset/windows_canonical`.
 - `cd backend && source .venv/bin/activate && python train_strip_digit_reader_23xx.py --device cpu`: Train the guarded house-specific `23xx` shadow reader from `data/digit_dataset/windows_canonical`.
+- `npm run qa:digit-classifier-cv`: Run grouped source-image CV on the train pool for digit-classifier recipe checks. This replaces the old one-image validation split as the default experiment evaluator.
 
 ## House-Specific Strip Reader Shortcut
 - The constrained `23xx` strip reader is implemented as a shadow-only experiment. It uses a binary guard for whether the second digit is `3` plus two suffix digit heads; it only emits `23xx` when the guard confidence reaches `0.98`.
@@ -43,6 +44,7 @@
 - `train_roi.py` should keep heavy augmentation and rotation expansion `90,180,270,360`; weaker runs require explicit override with `--allow-no-augment-policy`.
 - Treat promoted checkpoints under `backend/models/*.pt` as must-retain artifacts and keep DVC state up to date when models or datasets change.
 - Keep host/CORS scoped to localhost unless there is an explicit deployment task.
+- Digit-model experiments use grouped CV by source image. The digit dataset currently has no validation split; `meter_20260323.JPEG` is train and `meter_20260327.JPEG` remains a fixed hard test holdout. UI **Run test set** remains the promotion gate.
 
 ## Digit Dataset Expansion Loop (`4/5/6/9`)
 1. Refresh capture planning with `python plan_digit_expansion.py --target-train-per-digit 12 --priority-digits 4,5,6,9`.

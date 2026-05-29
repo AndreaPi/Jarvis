@@ -129,6 +129,66 @@ source .venv/bin/activate
 python train_digit_classifier.py --device cpu
 ```
 
+### Recover and fine-tune the promoted digit classifier safely
+
+`backend/models/digit_classifier.pt` is the safety baseline for the primary OCR path. Do not overwrite it with a scratch retrain unless the challenger beats the restored checkpoint on the UI **Run test set**. The current clean canonical section dataset is small and imbalanced, and a clean/synthetic scratch retrain regressed badly on browser runtime crops.
+
+Restore the promoted checkpoints before experiments:
+
+```bash
+cd ..
+env DVC_SITE_CACHE_DIR=/tmp/dvc-site-cache \
+  backend/.venv/bin/python -m dvc checkout --force \
+  backend/models/digit_classifier.pt.dvc \
+  backend/models/digit_strip_reader.pt.dvc
+env DVC_SITE_CACHE_DIR=/tmp/dvc-site-cache \
+  backend/.venv/bin/python -m dvc status \
+  backend/models/digit_classifier.pt.dvc \
+  backend/models/digit_strip_reader.pt.dvc
+```
+
+To reconstruct the runtime-failure crop dataset from the restored classifier and current ROI model:
+
+```bash
+cd backend
+source .venv/bin/activate
+python export_runtime_digit_failure_set.py
+cd ..
+npm run qa:runtime-failure-dataset
+npm run qa:runtime-failure-dataset:selected
+```
+
+The runtime-failure dataset is generated under `backend/data/runtime_failure_dataset/` and is intentionally train-only. It is ignored by Git unless a future promoted recipe explicitly decides to DVC-track it. Use the selected-only QA view when reviewing the candidates the UI actually chose; the full QA view is mainly for comparing alternate candidates.
+
+Use grouped CV before training a challenger:
+
+```bash
+npm run qa:digit-classifier-cv
+```
+
+The CV folds are grouped by source image filename to avoid sibling-cell leakage. By default, CV uses the train pool only; `meter_20260327.JPEG` remains a fixed hard test holdout. It compares the restored checkpoint, clean-cell fine-tuning, and clean + runtime-failure fine-tuning. This is evidence for candidate recipes, not a promotion gate by itself.
+
+As of May 27, 2026, the digit dataset intentionally has no one-image validation split: `meter_20260323.JPEG` moved into train because a single validation image was too noisy to guide model selection. If `train_digit_classifier.py` sees no validation samples, checkpoint selection falls back to train loss; judge recipes with grouped CV and the UI **Run test set** before promotion.
+
+Write challengers outside `backend/models/`:
+
+```bash
+cd backend
+source .venv/bin/activate
+python train_digit_classifier.py \
+  --device cpu \
+  --init-checkpoint models/digit_classifier.pt \
+  --extra-train-root data/runtime_failure_dataset/sections_labeled \
+  --synthetic-root data/digit_dataset/sections_synthetic \
+  --synthetic-target-ratio 2.0 \
+  --synthetic-selection-strategy balanced \
+  --project runs \
+  --name digit-classifier-finetune-runtime \
+  --copy-to runs/digit-classifier-finetune-runtime/digit_classifier.pt
+```
+
+May 24, 2026 recovery result: grouped CV improved from restored baseline `51.8%` per-cell accuracy to clean-only `61.6%` and clean + curated-runtime-failure `66.1%`, but the final challenger failed the then-28-image UI promotion gate (`3/28` exact, `MAE 139.11`, `1` no-read) versus the restored checkpoint with the conservative geometry ranker (`10/28` exact, `MAE 61.22`, `1` no-read). The promoted checkpoint therefore remains `backend/models/digit_classifier.pt`. The current May 29, 2026 29-image UI baseline is tracked in `src/ocr/AGENTS.md` and `docs/ocr-tuning-playbook.md`.
+
 ## Train the whole-strip shadow reader
 
 This trains a fixed four-head CNN on canonical ROI windows (`data/digit_dataset/windows_canonical`) and writes:

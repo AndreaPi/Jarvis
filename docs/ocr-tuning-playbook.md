@@ -7,8 +7,9 @@ Current baseline policy:
 - Use the latest UI **Run test set** histogram as source of truth (`window.__jarvisLastTestSetHistogram`).
 - Treat fixed numeric snapshots as historical only; they go stale quickly as thresholds/ranking change.
 - Evaluation uses `MAE` as the primary promotion signal; `Exact Match` and `No-read` are guardrails.
-- The active local test-set CSV is `assets/meter_readings.csv`, currently `26` images after the May 2026 ROI ingestion.
-- Last recorded primary-path baseline was measured on the pre-May `23` image set: `MAE 71.77`, `Exact Match 9/23`, `No-read 1/23`.
+- The active local test-set CSV is `assets/meter_readings.csv`, currently `29` images after the May 2026 ROI ingestion through `meter_20260524.JPEG`.
+- Current restored promoted digit-classifier baseline with the conservative geometry ranker, measured May 29, 2026: `MAE 166.07`, `Exact Match 10/29`, `No-read 1/29`.
+- Same-corpus May 29, 2026 ranker-off control: `MAE 166.57`, `Exact Match 10/29`, `No-read 1/29`. The ranker remains enabled because it slightly improves `MAE` without worsening guardrails.
 - Re-run the UI `Run test set` before treating any metric as the current promotion target.
 - `meter_20260112.JPEG`, `meter_20260113.jpg`, and `meter_20260219.JPEG` are intentionally removed from the active raw/test/training corpus because their visible readings are ambiguous.
 
@@ -20,13 +21,14 @@ Digit dataset status (current workflow):
 - Classifier training consumes `data/digit_dataset/sections_labeled/{train,val,test}`.
 - Whole-strip shadow-reader training consumes `data/digit_dataset/windows_canonical/{train,val,test}` and `canonical_windows.csv` readings. The constrained `23xx` reader uses the same canonical windows with a guard label derived from `reading[1] === "3"` and suffix labels from the final two digits.
 - Synthetic generation remains train-only (`sections_synthetic/train`) and is mixed into training with `--synthetic-target-ratio`.
+- As of May 27, 2026, the digit dataset intentionally has no validation split: `meter_20260323.JPEG` moved into train, while `meter_20260327.JPEG` remains a fixed hard test holdout. Use grouped source-image CV on the train pool for model experiments; the fixed test image is a historical diagnostic, not a promotion gate.
 
-## Immediate Next Steps (May 4, 2026)
+## Immediate Next Steps (May 29, 2026)
 
 1. Keep the whole-strip reader shadow-only until its exact-match rate and `MAE` beat the current per-cell primary path.
 2. Treat the May 4, 2026 canonical strip-window QA pass as accepted for the 23-image digit-training corpus: all retained strips are readable and label-consistent, even when some crops are not tightly framed.
 3. Do not promote the retrained four-head strip reader. After retraining on the accepted canonical windows, the UI primary path remained at `MAE 71.77`, `Exact Match 9/23`, `No-read 1/23`, and focused strip-runtime QA on `meter_20260327.JPEG` plus April captures produced only `1/7` exact strip-shadow matches.
-4. Fix the remaining neural ROI miss on `meter_20201111.JPEG`.
+4. Keep the restored promoted per-cell digit classifier as the safety baseline. A May 24, 2026 fine-tune challenger using clean + curated-runtime-failure cells failed the then-28-image UI gate (`MAE 139.11`, `Exact Match 3/28`, `No-read 1/28`) versus the restored baseline with the conservative geometry ranker (`MAE 61.22`, `Exact Match 10/28`, `No-read 1/28`).
 5. Keep the first house-specific `23xx` constrained strip-reader checkpoint shadow-only. It is diagnostic-only: cross-validation looked conservative (`0` guard false positives, `19` guard false negatives), but runtime QA still found accepted wrong predictions. Lowering the guard from `0.98` to `0.80` accepted more wrong values, so threshold tuning is not enough.
 6. Verify each OCR tuning change on the full test set with `MAE` + guardrails (`Exact Match`, `No-read`) before keeping it.
 
@@ -127,9 +129,42 @@ npm run qa:strip-dataset
 npm run qa:ocr-oracle
 npm run qa:strip-runtime
 npm run qa:cell-crops
+npm run qa:runtime-failure-dataset
+npm run qa:runtime-failure-dataset:selected
+npm run qa:digit-classifier-cv
 ```
 
-They write timestamped reports under `output/strip-dataset-qa/`, `output/ocr-candidate-oracle/`, `output/strip-runtime-qa/`, and `output/cell-crop-failure-qa/`. Run `qa:strip-dataset` after digit-window regeneration and visually accept the canonical strips before using them for retraining.
+They write timestamped reports under `output/strip-dataset-qa/`, `output/ocr-candidate-oracle/`, `output/strip-runtime-qa/`, `output/cell-crop-failure-qa/`, and `output/runtime-failure-dataset-qa/`. Run `qa:strip-dataset` after digit-window regeneration and visually accept the canonical strips before using them for retraining. Use `qa:runtime-failure-dataset` after exporting runtime failure cells so hard-example crops can be reviewed before any fine-tuning run. Use `qa:runtime-failure-dataset:selected` when the review should focus only on the UI-selected failure candidate for each image.
+
+## Digit Classifier Recovery Notes
+
+The promoted `backend/models/digit_classifier.pt` checkpoint currently contains behavior that was not recovered by training from the clean canonical section dataset alone. Treat it as the safety baseline and restore it from DVC before digit-classifier experiments:
+
+```bash
+env DVC_SITE_CACHE_DIR=/tmp/dvc-site-cache \
+  backend/.venv/bin/python -m dvc checkout --force \
+  backend/models/digit_classifier.pt.dvc \
+  backend/models/digit_strip_reader.pt.dvc
+```
+
+Runtime-failure crops can be reconstructed with:
+
+```bash
+cd backend
+source .venv/bin/activate
+python export_runtime_digit_failure_set.py
+cd ..
+npm run qa:runtime-failure-dataset
+npm run qa:digit-classifier-cv
+```
+
+May 24, 2026 evidence: grouped source-image CV suggested runtime-failure cells are a useful ingredient (`51.8%` restored baseline, `61.6%` clean fine-tune, `66.1%` clean + curated-runtime-failure fine-tune), but the then-28-image full UI benchmark rejected the resulting challenger (`MAE 139.11`, `Exact Match 3/28`, `No-read 1/28`). It fixed some targeted rows, including `meter_20260413.JPEG`, but damaged many rows the restored checkpoint already handled. Do not promote any digit classifier trained only from `sections_labeled` or from a CV-positive recipe unless it beats the restored checkpoint on the same UI **Run test set**.
+
+May 27, 2026 split policy: grouped cross-validation by source image is now the default model-experiment workflow. Fold assignment must group by original meter filename, not individual section/cell crops, so cells, canonical strips, synthetic variants, and runtime-failure crops derived from one photo cannot leak between train and evaluation folds. The default CV command uses only the train pool, because the single remaining `test` image is kept as a fixed historical hard-case diagnostic.
+
+May 24, 2026 UI-selected runtime-failure review: the dominant failure mode is upstream strip/cell geometry, not pure digit classification. The tracked taxonomy lives in `docs/ocr-runtime-failure-selected-taxonomy.csv` and is rendered by `qa:runtime-failure-dataset`. Among the 15 UI-selected failure candidates, 13 are structurally invalid before classification: six have over-wide strips where cells 1 and 4 contain no digits while cells 2 and 3 contain two digits each (`meter_20200701.JPEG`, `meter_20260216.JPEG`, `meter_20260420.JPEG`, `meter_20260423.JPEG`, `meter_20260427.JPEG`, `meter_20260507.JPEG`), five are truncated on the right with two digits missing (`meter_20260401.JPEG`, `meter_20260409.JPEG`, `meter_20260512.JPEG`, `meter_20260515.JPEG`, `meter_20260518.JPEG`), and two are degenerate/rotated captures with one or zero usable digits (`meter_20260214.JPEG`, `meter_20260416.JPEG`). Only two reviewed failures looked like classifier or local split misses on otherwise usable strips (`meter_20260413.JPEG`, `meter_20260521.JPEG`). Prioritize candidate geometry/ranking fixes before spending more effort on digit-classifier fine-tuning.
+
+May 29, 2026 selector follow-up: the conservative candidate geometry ranker is deliberately a ranking tie-breaker, not a hard gate. It measures per-cell texture to detect sparse edge cells plus crowded middle cells, then applies only a tiny score penalty when compatible same-prefix edge evidence exists. Stronger penalties and low-texture gates regressed earlier UI benchmarks, so keep the ranker conservative unless a future UI Run test set proves otherwise. On the current 29-image corpus, ranker-on measured `MAE 166.07`, `Exact Match 10/29`, `No-read 1/29`; ranker-off measured `MAE 166.57`, `Exact Match 10/29`, `No-read 1/29`.
 
 ## Checkpoint Promotion Gates
 
@@ -151,6 +186,14 @@ Strip-reader shadow rule:
 
 - Keep `digitStripReader.shadowOnly=true` until the same UI run shows whole-strip shadow exact match and `MAE` outperform the primary selected values.
 - Do not promote based on canonical-window train/val/test metrics alone; the browser candidate crops are the promotion surface.
+
+Digit-classifier rule:
+
+- Keep `backend/models/digit_classifier.pt` restored from DVC as the primary safety baseline.
+- Train challengers into `backend/runs/...`, not `backend/models/`.
+- A challenger must improve `MAE` and must not regress exact match or no-read count on the UI **Run test set** before promotion.
+- Clean canonical section metrics and grouped CV are diagnostic only; browser runtime candidate crops are the promotion surface.
+- The digit dataset no longer uses a one-image validation split. If `train_digit_classifier.py` sees no `val` samples, checkpoint selection falls back to train loss; use grouped CV plus the UI **Run test set** to judge the recipe.
 
 ## High-Impact Tuning Areas
 
