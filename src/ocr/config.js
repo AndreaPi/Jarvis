@@ -60,6 +60,22 @@ const OCR_CONFIG = {
     fallbackEdgeMinAverageConfidence: 25,
     fallbackEdgeMinCellConfidence: 18,
     fallbackEdgeRequireNonEdgeSupport: false,
+    geometryRanker: {
+      enabled: true,
+      maxPenalty: 0.04,
+      edgePenaltyMultiplier: 0.55,
+      fullStripMinCropRatio: 0.92,
+      weakEdgeRelativeEnergy: 0.72,
+      weakEdgeMaxActiveWidth: 0.48,
+      weakEdgeRelativeActiveColumns: 0.58,
+      weakEdgeMaxActiveColumns: 24,
+      crowdedMiddleMinActiveWidth: 0.72,
+      crowdedMiddleMinActiveColumns: 30,
+      overwidePenalty: 0.03,
+      suspectedOverwidePenalty: 0.025,
+      rightTruncatedPenalty: 0.02,
+      degeneratePenalty: 0
+    },
     disableAfterFailures: 2,
     cooldownMs: 8000
   },

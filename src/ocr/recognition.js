@@ -388,6 +388,150 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
     return -0.02;
   };
 
+  const measureCellTexture = (canvas) => {
+    if (!canvas || !canvas.width || !canvas.height) {
+      return {
+        energy: 0,
+        activeWidthRatio: 0,
+        activeColumnCount: 0,
+        width: 0,
+        height: 0
+      };
+    }
+
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const { width, height } = canvas;
+    const data = ctx.getImageData(0, 0, width, height).data;
+    const columns = new Array(width).fill(0);
+    let gradientTotal = 0;
+
+    for (let y = 0; y < height; y += 1) {
+      let previousLum = null;
+      for (let x = 0; x < width; x += 1) {
+        const idx = (y * width + x) * 4;
+        const lum = data[idx] * 0.2126 + data[idx + 1] * 0.7152 + data[idx + 2] * 0.0722;
+        if (previousLum !== null) {
+          const gradient = Math.abs(lum - previousLum);
+          columns[x] += gradient;
+          gradientTotal += gradient;
+        }
+        previousLum = lum;
+      }
+    }
+
+    const mean = columns.reduce((sum, value) => sum + value, 0) / Math.max(1, columns.length);
+    const variance = columns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / Math.max(1, columns.length);
+    const std = Math.sqrt(variance);
+    const maxColumn = Math.max(...columns, 0);
+    const activeThreshold = Math.max(mean + std * 0.25, maxColumn * 0.18);
+    const activeIndexes = [];
+    columns.forEach((value, index) => {
+      if (value >= activeThreshold && value > 0) {
+        activeIndexes.push(index);
+      }
+    });
+    const activeWidth = activeIndexes.length
+      ? (activeIndexes[activeIndexes.length - 1] - activeIndexes[0] + 1)
+      : 0;
+    const energy = gradientTotal / Math.max(1, width * height * 255);
+
+    return {
+      energy,
+      activeWidthRatio: activeWidth / Math.max(1, width),
+      activeColumnCount: activeIndexes.length,
+      width,
+      height
+    };
+  };
+
+  const assessCellSplitGeometry = (cellCanvases) => {
+    const ranker = (OCR_CONFIG.digitClassifier && OCR_CONFIG.digitClassifier.geometryRanker) || {};
+    if (ranker.enabled === false || !Array.isArray(cellCanvases) || cellCanvases.length < 4) {
+      return null;
+    }
+
+    const metrics = cellCanvases.map((cell) => measureCellTexture(cell));
+    const middleEnergy = (metrics[1].energy + metrics[2].energy) / 2;
+    const maxPenalty = Number.isFinite(ranker.maxPenalty) ? ranker.maxPenalty : 0.18;
+    const weakEdgeRelativeEnergy = Number.isFinite(ranker.weakEdgeRelativeEnergy)
+      ? ranker.weakEdgeRelativeEnergy
+      : 0.72;
+    const weakEdgeMaxActiveWidth = Number.isFinite(ranker.weakEdgeMaxActiveWidth)
+      ? ranker.weakEdgeMaxActiveWidth
+      : 0.48;
+    const weakEdgeRelativeActiveColumns = Number.isFinite(ranker.weakEdgeRelativeActiveColumns)
+      ? ranker.weakEdgeRelativeActiveColumns
+      : 0.58;
+    const weakEdgeMaxActiveColumns = Number.isFinite(ranker.weakEdgeMaxActiveColumns)
+      ? ranker.weakEdgeMaxActiveColumns
+      : 24;
+    const crowdedMiddleMinActiveWidth = Number.isFinite(ranker.crowdedMiddleMinActiveWidth)
+      ? ranker.crowdedMiddleMinActiveWidth
+      : 0.72;
+    const crowdedMiddleMinActiveColumns = Number.isFinite(ranker.crowdedMiddleMinActiveColumns)
+      ? ranker.crowdedMiddleMinActiveColumns
+      : 30;
+    const reasons = [];
+    let penalty = 0;
+    const middleActiveColumns = (metrics[1].activeColumnCount + metrics[2].activeColumnCount) / 2;
+
+    const isWeakEdge = (index) => {
+      const metric = metrics[index];
+      return (
+        (
+          middleEnergy > 0
+          && metric.energy < middleEnergy * weakEdgeRelativeEnergy
+          && metric.activeWidthRatio <= weakEdgeMaxActiveWidth
+        )
+        || (
+          middleActiveColumns > 0
+          && metric.activeColumnCount <= weakEdgeMaxActiveColumns
+          && metric.activeColumnCount < middleActiveColumns * weakEdgeRelativeActiveColumns
+        )
+      );
+    };
+    const weakLeftEdge = isWeakEdge(0);
+    const weakRightEdge = isWeakEdge(3);
+    const middleCrowdedCount = [1, 2].filter((index) => (
+      (
+        metrics[index].activeWidthRatio >= crowdedMiddleMinActiveWidth
+        || metrics[index].activeColumnCount >= crowdedMiddleMinActiveColumns
+      )
+      && metrics[index].energy >= middleEnergy * 0.72
+    )).length;
+    const lowTextureCount = metrics.filter((metric) => metric.energy < 0.004).length;
+
+    if (weakLeftEdge && weakRightEdge && middleCrowdedCount >= 1) {
+      penalty += Number.isFinite(ranker.overwidePenalty) ? ranker.overwidePenalty : 0.14;
+      reasons.push('overwide-empty-edges');
+    } else if ((weakLeftEdge || weakRightEdge) && middleCrowdedCount >= 2) {
+      penalty += Number.isFinite(ranker.suspectedOverwidePenalty) ? ranker.suspectedOverwidePenalty : 0.09;
+      reasons.push('suspected-overwide-split');
+    }
+
+    if (weakRightEdge && !weakLeftEdge && middleCrowdedCount >= 1) {
+      penalty += Number.isFinite(ranker.rightTruncatedPenalty) ? ranker.rightTruncatedPenalty : 0.08;
+      reasons.push('right-edge-underfilled');
+    }
+
+    const degeneratePenalty = Number.isFinite(ranker.degeneratePenalty) ? ranker.degeneratePenalty : 0;
+    if (degeneratePenalty > 0 && lowTextureCount >= 3) {
+      penalty += degeneratePenalty;
+      reasons.push('degenerate-low-texture-cells');
+    }
+
+    penalty = clamp(penalty, 0, maxPenalty);
+    return {
+      penalty,
+      reasons,
+      cells: metrics.map((metric) => ({
+        energy: Number(metric.energy.toFixed(4)),
+        activeWidthRatio: Number(metric.activeWidthRatio.toFixed(3)),
+        activeColumnCount: metric.activeColumnCount
+      }))
+    };
+  };
+
   const normalizeRoiStripCanvas = (canvas) => {
     const tightenRatio = Number.isFinite(roiDeterministic.tightenInk) ? roiDeterministic.tightenInk : 0.08;
     const minStripAspect = Number.isFinite(roiDeterministic.minStripAspect) ? roiDeterministic.minStripAspect : 1.8;
@@ -479,6 +623,7 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
     const requireAllCells = !!decodeOptions.requireAllCells;
     const minFound = requireAllCells ? cellCanvases.length : OCR_CONFIG.minDigits;
     const classifier = OCR_CONFIG.digitClassifier || {};
+    const splitGeometry = assessCellSplitGeometry(cellCanvases);
 
     if (!classifier.enabled || !classifier.endpoint) {
       emitReject('classifier-disabled', metadata);
@@ -537,6 +682,7 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
       averageConfidence: confidenceTotal / Math.max(found, 1),
       cellDigits: digits,
       cellConfidences,
+      splitGeometry,
       variantIndex: metadata.variantIndex,
       overlap: metadata.overlap,
       orientation: Number.isFinite(metadata.orientation) ? metadata.orientation : null,
@@ -563,6 +709,7 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
     const normalizedConfidence = clamp(tunedConfidence / 100, 0, 1);
     const baseScore = clamp(0.42 + normalizedConfidence * 0.46 + (reading.foundRatio === 1 ? 0.08 : 0.02), 0, 0.99);
     const geometryScoreAdjustment = getGeometryScoreAdjustment(reading);
+    const splitGeometry = reading.splitGeometry || null;
 
     return {
       value: reading.value,
@@ -571,6 +718,13 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
       score: baseScore,
       baseScore,
       geometryScoreAdjustment,
+      geometryRankPenalty: splitGeometry && Number.isFinite(splitGeometry.penalty)
+        ? splitGeometry.penalty
+        : 0,
+      geometryRankReasons: splitGeometry && Array.isArray(splitGeometry.reasons)
+        ? splitGeometry.reasons
+        : [],
+      splitGeometry,
       cellDigits: reading.cellDigits || [],
       cellConfidences: reading.cellConfidences || [],
       decoder: reading.decoder || 'digit-classifier',
@@ -687,6 +841,13 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
         geometryScoreAdjustment: Number.isFinite(candidate.geometryScoreAdjustment)
           ? candidate.geometryScoreAdjustment
           : null,
+        geometryRankPenalty: Number.isFinite(candidate.geometryRankPenalty)
+          ? candidate.geometryRankPenalty
+          : null,
+        geometryRankReasons: Array.isArray(candidate.geometryRankReasons)
+          ? [...candidate.geometryRankReasons]
+          : [],
+        splitGeometry: candidate.splitGeometry || null,
         confidence: Number.isFinite(candidate.confidence) ? candidate.confidence : null,
         cellDigits: Array.isArray(candidate.cellDigits) ? [...candidate.cellDigits] : [],
         cellConfidences: Array.isArray(candidate.cellConfidences) ? [...candidate.cellConfidences] : [],

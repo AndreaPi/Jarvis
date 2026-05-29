@@ -252,6 +252,13 @@ const serializeCellVariantCandidates = (candidates) => {
     geometryScoreAdjustment: candidate && Number.isFinite(candidate.geometryScoreAdjustment)
       ? Number(candidate.geometryScoreAdjustment.toFixed(3))
       : null,
+    geometryRankPenalty: candidate && Number.isFinite(candidate.geometryRankPenalty)
+      ? Number(candidate.geometryRankPenalty.toFixed(3))
+      : null,
+    geometryRankReasons: candidate && Array.isArray(candidate.geometryRankReasons)
+      ? [...candidate.geometryRankReasons]
+      : [],
+    splitGeometry: candidate && candidate.splitGeometry ? candidate.splitGeometry : null,
     cellDigits: candidate && Array.isArray(candidate.cellDigits) ? [...candidate.cellDigits] : null,
     cellConfidences: serializeCellConfidences(candidate ? candidate.cellConfidences : null),
     cropMode: candidate && candidate.cropMode ? candidate.cropMode : null,
@@ -1089,6 +1096,78 @@ const evaluateCandidateBranch = async ({
     }
   };
 
+  const applyGeometryRankPenalty = (reading, candidate, stage) => {
+    const ranker = (classifierConfig && classifierConfig.geometryRanker) || {};
+    if (
+      ranker.enabled === false
+      || !reading
+      || !Number.isFinite(reading.geometryRankPenalty)
+      || reading.geometryRankPenalty <= 0
+    ) {
+      return reading;
+    }
+
+    const cropRatio = Number.isFinite(reading.cropRatio) ? reading.cropRatio : 1;
+    const cropMode = typeof reading.cropMode === 'string' ? reading.cropMode : '';
+    const fullStripMinCropRatio = Number.isFinite(ranker.fullStripMinCropRatio)
+      ? ranker.fullStripMinCropRatio
+      : 0.92;
+    if (cropMode && cropMode !== 'full-strip' && cropRatio < fullStripMinCropRatio) {
+      return reading;
+    }
+
+    const edgeMultiplier = Number.isFinite(ranker.edgePenaltyMultiplier)
+      ? clamp(ranker.edgePenaltyMultiplier, 0, 1)
+      : 0.55;
+    const maxPenalty = Number.isFinite(ranker.maxPenalty) ? ranker.maxPenalty : 0.18;
+    const sourceLabel = reading.sourceLabel || (candidate && candidate.label) || null;
+    const rankReasons = Array.isArray(reading.geometryRankReasons) ? reading.geometryRankReasons : [];
+    if (!isEdgeSourceLabel(sourceLabel)) {
+      const prefix = typeof reading.value === 'string' ? reading.value.slice(0, 2) : '';
+      let samePrefixEdgeBest = -1;
+      let conflictingPrefixEdgeBest = -1;
+      if (prefix) {
+        [...valueEvidence.values()].forEach((entry) => {
+          if (!entry || entry.edgeHits <= 0 || typeof entry.value !== 'string') {
+            return;
+          }
+          const bestScore = Number.isFinite(entry.bestScore) ? entry.bestScore : -1;
+          if (entry.value.startsWith(prefix)) {
+            samePrefixEdgeBest = Math.max(samePrefixEdgeBest, bestScore);
+          } else {
+            conflictingPrefixEdgeBest = Math.max(conflictingPrefixEdgeBest, bestScore);
+          }
+        });
+      }
+      if (
+        samePrefixEdgeBest < 0
+        || samePrefixEdgeBest < conflictingPrefixEdgeBest - 0.02
+      ) {
+        return reading;
+      }
+    }
+    const multiplier = isEdgeSourceLabel(sourceLabel) ? edgeMultiplier : 1;
+    const penalty = clamp(reading.geometryRankPenalty * multiplier, 0, maxPenalty);
+    if (penalty <= 0) {
+      return reading;
+    }
+
+    const rawScore = Number.isFinite(reading.score) ? reading.score : 0;
+    reading.unpenalizedScore = rawScore;
+    reading.selectionGeometryPenalty = penalty;
+    reading.score = clamp(rawScore - penalty, 0, 0.99);
+    recordReject('classifier-geometry-rank-penalty', {
+      stage,
+      sourceLabel,
+      value: reading.value || null,
+      rawScore: Number(rawScore.toFixed(3)),
+      score: Number(reading.score.toFixed(3)),
+      penalty: Number(penalty.toFixed(3)),
+      reasons: [...rankReasons]
+    });
+    return reading;
+  };
+
   const rankClassifierCandidates = (rawCandidates) => {
     if (!Array.isArray(rawCandidates) || !rawCandidates.length) {
       return [];
@@ -1465,6 +1544,13 @@ const evaluateCandidateBranch = async ({
             cellConfidences: serializeCellConfidences(reading.cellConfidences),
             cropMode: reading.cropMode || null,
             cropRatio: Number.isFinite(reading.cropRatio) ? Number(reading.cropRatio.toFixed(3)) : null,
+            geometryRankPenalty: Number.isFinite(reading.geometryRankPenalty)
+              ? Number(reading.geometryRankPenalty.toFixed(3))
+              : null,
+            geometryRankReasons: Array.isArray(reading.geometryRankReasons)
+              ? [...reading.geometryRankReasons]
+              : [],
+            splitGeometry: reading.splitGeometry || null,
             variantCandidates: serializeCellVariantCandidates(reading.diagnosticVariants)
           },
           rejects: candidateRejects
@@ -1497,6 +1583,7 @@ const evaluateCandidateBranch = async ({
           penalty: 0.22
         });
       }
+      applyGeometryRankPenalty(classifierReading, candidate, stageLabel);
       if (classifierReading.sourceLabel && classifierReading.decodedStripCanvas) {
         recordDecodeCanvas(
           classifierReading.sourceLabel,
@@ -1549,6 +1636,19 @@ const evaluateCandidateBranch = async ({
           geometryScoreAdjustment: Number.isFinite(classifierReadingForSelection.geometryScoreAdjustment)
             ? Number(classifierReadingForSelection.geometryScoreAdjustment.toFixed(3))
             : null,
+          geometryRankPenalty: Number.isFinite(classifierReadingForSelection.geometryRankPenalty)
+            ? Number(classifierReadingForSelection.geometryRankPenalty.toFixed(3))
+            : null,
+          selectionGeometryPenalty: Number.isFinite(classifierReadingForSelection.selectionGeometryPenalty)
+            ? Number(classifierReadingForSelection.selectionGeometryPenalty.toFixed(3))
+            : null,
+          unpenalizedScore: Number.isFinite(classifierReadingForSelection.unpenalizedScore)
+            ? Number(classifierReadingForSelection.unpenalizedScore.toFixed(3))
+            : null,
+          geometryRankReasons: Array.isArray(classifierReadingForSelection.geometryRankReasons)
+            ? [...classifierReadingForSelection.geometryRankReasons]
+            : [],
+          splitGeometry: classifierReadingForSelection.splitGeometry || null,
           variantCandidates: serializeCellVariantCandidates(classifierReadingForSelection.diagnosticVariants)
         },
         stripReader: stripReaderProbe,
