@@ -99,6 +99,7 @@ Use `backend/.venv` for any Python step in this workflow. Do not rely on the sys
    - Run `dvc add backend/data/roi_dataset/images`
    - Run `dvc add assets/<new-meter-file>` for each newly ingested canonical photo.
    - For Mac/iCloud imports, DVC-track the converted `meter_YYYYMMDD.JPEG`, not the original `IMG_*.HEIC`/`IMG_*.HEIF`.
+   - If DVC tries to use an unwritable system cache such as `/Library/Caches/dvc`, rerun with `DVC_SITE_CACHE_DIR=/tmp/dvc-site-cache`.
    - Run `scripts/dvc-push-safe.sh` if a DVC remote is configured
    - Only do this after the user has approved the ROI overlays for the new image(s).
 
