@@ -23,12 +23,13 @@
 - Diff artifacts and benchmark reports should use the last `6. OCR input candidate` frame as the selected OCR input snapshot.
 
 ## Active Benchmark Baseline
-- Current UI test-set surface is `assets/meter_readings.csv`, currently `29` images after the May 2026 ROI ingestion through `meter_20260524.JPEG`.
+- Current UI test-set surface is `assets/meter_readings.csv`, currently `31` images after the June 2026 ROI ingestion through `meter_20260606.JPEG`.
 - Current restored promoted per-cell classifier baseline with the conservative geometry ranker, measured May 29, 2026:
   - UI test set: `MAE 166.07`, `Exact Match 10/29`, `No-read 1/29`
   - Same-corpus ranker-off control: `MAE 166.57`, `Exact Match 10/29`, `No-read 1/29`
   - `npm run test:e2e`: passes (`7/7`)
 - Re-run the UI `Run test set` before treating any metric as the current promotion target.
+- Latest local UI run on June 8, 2026: `MAE 388.00`, `Exact Match 11/31`, `No-read 1/31`.
 - Use `MAE` as the primary promotion signal, with `Exact Match` and `No-read` as guardrails.
 
 ## OCR Workflow and Guardrails
@@ -46,7 +47,8 @@
 4. Use strip-reader shadow logs to compare whole-strip predictions by source against the current per-cell classifier, especially when deciding whether a future constrained reader should use selected-source or confidence-best candidates.
 5. Do not promote digit-classifier scratch retrains or clean-section-only fine-tunes unless they beat the restored checkpoint on the UI test set. A May 24, 2026 clean + curated-runtime-failure challenger improved grouped CV but failed the then-28-image UI gate (`MAE 139.11`, `Exact Match 3/28`, `No-read 1/28`).
 6. Keep the constrained `23xx` reader shadow-only. The first May 4, 2026 checkpoint is diagnostic-only: cross-validation looked conservative (`0` guard false positives, `19` guard false negatives), but runtime QA still found accepted wrong predictions. Lowering the guard from `0.98` to `0.80` accepted more wrong values, so threshold tuning is not enough.
-7. Medium-term: evaluate YOLO OBB ROI detection to reduce rotation and edge ambiguity.
+7. Use `npm run qa:cell-crops` to inspect candidate-family coverage before changing selection. The June 8, 2026 register-localization probe found expected readings only on already-covered rows, so it was rolled back; the retained report now includes non-readable candidates and expected-hit family counts.
+8. Medium-term: evaluate YOLO OBB ROI detection to reduce rotation and edge ambiguity.
 
 ## Digit Classifier Training Guardrail
 - Restore promoted checkpoints from DVC before digit experiments when local model outputs drift.

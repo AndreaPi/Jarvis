@@ -981,9 +981,13 @@ const evaluateCandidateBranch = async ({
   setProgress,
   scanCanvas = null
 }) => {
-  const activeCandidates = Array.isArray(candidates)
+  const allCandidates = Array.isArray(candidates)
     ? candidates.filter((candidate) => !!(candidate && candidate.canvas))
     : [];
+  const activeCandidates = allCandidates
+    .filter((candidate) => candidate.diagnosticOnly !== true);
+  const diagnosticCandidates = allCandidates
+    .filter((candidate) => candidate.diagnosticOnly === true);
   if (!activeCandidates.length && scanCanvas) {
     activeCandidates.push({ canvas: scanCanvas, label: 'raw-fallback-roi' });
   }
@@ -1458,7 +1462,9 @@ const evaluateCandidateBranch = async ({
     };
   }
 
-  const runCandidatePass = async (candidates, stageLabel) => {
+  const runCandidatePass = async (candidates, stageLabel, options = {}) => {
+    const allowSelection = options.allowSelection !== false;
+    const recordEvidence = options.recordEvidence !== false;
     const nonEdgeAvailable = candidates.some((candidate) => !isEdgeSourceLabel(candidate.label));
     let pass = 0;
     const expectedPasses = candidates.length;
@@ -1504,6 +1510,8 @@ const evaluateCandidateBranch = async ({
         candidateTrace.push({
           stage: stageLabel,
           sourceLabel: candidate.label,
+          diagnosticOnly: candidate.diagnosticOnly === true,
+          probeKind: candidate.probeKind || null,
           width: candidate.canvas.width,
           height: candidate.canvas.height,
           fallbackScore: Number.isFinite(candidate.fallbackScore)
@@ -1526,6 +1534,8 @@ const evaluateCandidateBranch = async ({
         candidateTrace.push({
           stage: stageLabel,
           sourceLabel: candidate.label,
+          diagnosticOnly: candidate.diagnosticOnly === true,
+          probeKind: candidate.probeKind || null,
           width: candidate.canvas.width,
           height: candidate.canvas.height,
           fallbackScore: Number.isFinite(candidate.fallbackScore)
@@ -1602,6 +1612,8 @@ const evaluateCandidateBranch = async ({
       const traceEntry = {
         stage: stageLabel,
         sourceLabel: candidate.label,
+        diagnosticOnly: candidate.diagnosticOnly === true,
+        probeKind: candidate.probeKind || null,
         width: candidate.canvas.width,
         height: candidate.canvas.height,
         fallbackScore: Number.isFinite(candidate.fallbackScore)
@@ -1673,22 +1685,27 @@ const evaluateCandidateBranch = async ({
         ))
       );
       if (
-        !bestResult
-        || (
-          classifierReadingForSelection.score > bestResult.score
-          && (
-            !preserveAgreedEdgeResult
-            || classifierReadingForSelection.score > (bestResult.score + 0.03)
+        allowSelection
+        && (
+          !bestResult
+          || (
+            classifierReadingForSelection.score > bestResult.score
+            && (
+              !preserveAgreedEdgeResult
+              || classifierReadingForSelection.score > (bestResult.score + 0.03)
+            )
           )
-        )
-        || (
-          classifierReadingForSelection.score === bestResult.score
-          && (classifierReadingForSelection.confidence ?? 0) > (bestResult.confidence ?? 0)
+          || (
+            classifierReadingForSelection.score === bestResult.score
+            && (classifierReadingForSelection.confidence ?? 0) > (bestResult.confidence ?? 0)
+          )
         )
       ) {
         bestResult = classifierReadingForSelection;
       }
-      recordCandidateReadings(classifierReadingForSelection, `${candidate.label}:classifier`);
+      if (recordEvidence) {
+        recordCandidateReadings(classifierReadingForSelection, `${candidate.label}:classifier`);
+      }
 
     }
     return false;
@@ -1714,6 +1731,21 @@ const evaluateCandidateBranch = async ({
   ) {
     selectedCandidates = rankedBaseCandidates.slice(0, Math.min(2, maxPrimaryCandidates));
     await runCandidatePass(selectedCandidates, 'classifier-fallback-base');
+  }
+  if (classifierConfig.decodeDiagnosticCandidates === true && diagnosticCandidates.length) {
+    const maxDiagnosticCandidates = Number.isFinite(classifierConfig.maxDiagnosticCandidates)
+      ? Math.max(0, Math.min(80, Math.round(classifierConfig.maxDiagnosticCandidates)))
+      : 36;
+    if (maxDiagnosticCandidates > 0) {
+      const rankedDiagnosticCandidates = rankClassifierCandidates(diagnosticCandidates)
+        .slice(0, maxDiagnosticCandidates);
+      if (rankedDiagnosticCandidates.length) {
+        await runCandidatePass(rankedDiagnosticCandidates, 'classifier-diagnostic-normalization', {
+          allowSelection: false,
+          recordEvidence: false
+        });
+      }
+    }
   }
 
   return {

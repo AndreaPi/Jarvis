@@ -114,3 +114,47 @@ The next pass started upstream in ROI candidate construction rather than retrain
 - `npm run test:e2e` passed (`7/7`).
 
 Next debugging should continue upstream, but now with arbitration in mind: the new edge-context candidates improved direct candidate coverage for some rows, yet several correct candidates still lose to nearby wrong base or edge-context reads.
+
+## Execution Notes - 2026-06-08 Arbitration Follow-up
+
+The immediate arbitration follow-up improved diagnostics but did not produce a safe production behavior change:
+
+- The cell-crop QA report now records selected-vs-expected comparison fields: selected source, best expected source, and score delta when the expected reading is present in expanded candidates.
+- A guarded edge-context primary-slot and edge-over-base arbitration experiment was tested and rejected. `npm run qa:cell-crops` produced `output/cell-crop-failure-qa/20260608-075710/` with unchanged aggregate coverage (`rowCount: 19`, `expectedAbsentRowCount: 13`, `expectedPresentRowCount: 6`) but introduced a new selected-reading regression on `meter_20260310.JPEG` and worsened `meter_20260327.JPEG`.
+- The production arbitration and primary-slot changes were rolled back. The retained diagnostic-only run is `output/cell-crop-failure-qa/20260608-080023/`, again with `rowCount: 19`, `expectedAbsentRowCount: 13`, `expectedPresentRowCount: 6`, and coverage counts of `13` absent, `3` internal-variant present, and `3` direct-candidate present.
+
+Next debugging should use the new score deltas to separate two cases before changing selection: rows where the expected reading is absent from all candidates, and rows where the expected reading is present but loses by a small, explainable margin.
+
+## Execution Notes - 2026-06-08 Shadow Normalization Probe
+
+The upstream follow-up implemented a shadow-only crop-normalization probe:
+
+- `src/ocr/alignment.js` now emits bounded target-aspect normalization candidates from edge crops, tagged as diagnostic by default through `roiDeterministic.normalizationProbe.shadowOnly`.
+- `src/ocr/pipeline.js` filters diagnostic candidates out of production selection. They are decoded only when `digitClassifier.decodeDiagnosticCandidates` is enabled, and that pass cannot update `bestResult` or production evidence.
+- `npm run qa:cell-crops` produced `output/cell-crop-failure-qa/20260608-115615/`. With diagnostic decoding enabled in the oracle pass, `expectedAbsentRowCount` fell from `13` to `10`; `shadowProbeHitRowCount` was `4`.
+- The QA split now reports `candidate-coverage`, `shadow-coverage-gain`, and `selection-arbitration`. The retained run split was `10` candidate-coverage rows, `4` shadow-coverage-gain rows, and `5` selection-arbitration rows.
+- A production-path UI test-set run on the current `31` rows stayed at `MAE 388.00`, `Exact Match 11/31`, and `No-read 1/31`, because diagnostic candidates remain shadow-only by default.
+
+This made one narrow normalization family, the repeated winning probe shape `a24-h116-center`, the next guarded promotion experiment to try.
+
+## Execution Notes - 2026-06-08 Guarded Promotion Experiment
+
+The guarded `a24-h116-center` normalization promotion experiment was implemented and rejected:
+
+- `npm run qa:cell-crops` produced `output/cell-crop-failure-qa/20260608-121226/` with `rowCount: 19`, `expectedAbsentRowCount: 10`, `expectedPresentRowCount: 9`, and split counts of `10` candidate-coverage rows, `2` shadow-coverage-gain rows, and `7` selection-arbitration rows.
+- The experiment made normalized probe crops selectable only under a `23xx`/confidence/score-gap guard, but it still introduced selected-reading regressions. The clearest new regression was `meter_20260130.JPEG`, expected `2307` but selected `2309` from `roi-90-normprobe-a24-h116-center-roi`.
+- Other hard rows were pulled toward wrong normprobe selections, so the production promotion hook was rolled back.
+- The retained code keeps normalization probes shadow-only and keeps the QA/reporting improvements that distinguish candidate absence, shadow-probe coverage gain, and selection arbitration.
+
+Next debugging should treat `a24-h116-center` as useful diagnostic evidence, not a production candidate family. Focus on why it helps coverage on a few rows while producing unsafe high-confidence wrong selections when promoted.
+
+## Execution Notes - 2026-06-08 Register-Localization Probe
+
+A diagnostic register-localization crop-construction experiment was implemented and rejected as a candidate-generation change:
+
+- The experiment added measured ink-span `regloc` crops as diagnostic-only candidates, then `npm run qa:cell-crops` produced `output/cell-crop-failure-qa/20260608-124444/`.
+- Aggregate coverage did not improve: `rowCount: 19`, `expectedAbsentRowCount: 10`, `expectedPresentRowCount: 9`, and split counts remained `10` candidate-coverage rows, `4` shadow-coverage-gain rows, and `5` selection-arbitration rows.
+- `regloc` did find expected readings on `5` rows, but only on rows that were already covered by existing edge, edge-context, base, or normprobe families. No current candidate-coverage row gained the expected reading.
+- The production candidate generator was rolled back to avoid extra diagnostic cost. The retained improvement is QA reporting: the cell-crop report now includes non-readable candidate trace rows, source-family counts, expected-hit family counts, and `registerLocalizationHitRowCount` for future experiments.
+
+Next debugging should use the improved QA family counts before adding another crop family. The remaining `10` candidate-coverage rows still require a different upstream approach, likely earlier ROI geometry or a crop construction method that can recover expected readings on absent rows rather than adding redundant hits on already-covered rows.

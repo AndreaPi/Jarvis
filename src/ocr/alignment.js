@@ -40,8 +40,29 @@ const buildNeuralRoiCandidates = (source, debugSession, addDebugStageFn = () => 
   const edgeContextMaxVariantsPerAngle = Number.isFinite(roiDeterministic.edgeContextMaxVariantsPerAngle)
     ? Math.max(0, Math.min(12, Math.round(roiDeterministic.edgeContextMaxVariantsPerAngle)))
     : 3;
+  const normalizationProbe = roiDeterministic.normalizationProbe || {};
+  const normalizationProbeEnabled = normalizationProbe.enabled !== false;
+  const normalizationProbeShadowOnly = normalizationProbe.shadowOnly !== false;
+  const normalizationProbeTargetAspects = Array.isArray(normalizationProbe.targetAspects)
+    ? normalizationProbe.targetAspects
+      .filter((ratio) => Number.isFinite(ratio))
+      .map((ratio) => Math.max(1.4, Math.min(6, ratio)))
+    : [2.4, 2.8, 3.2];
+  const normalizationProbeHeightRatios = Array.isArray(normalizationProbe.heightRatios)
+    ? normalizationProbe.heightRatios
+      .filter((ratio) => Number.isFinite(ratio))
+      .map((ratio) => Math.max(0.8, Math.min(2.2, ratio)))
+    : [1, 1.16];
+  const normalizationProbeShiftRatios = Array.isArray(normalizationProbe.shiftRatios)
+    ? normalizationProbe.shiftRatios
+      .filter((ratio) => Number.isFinite(ratio))
+      .map((ratio) => Math.max(-0.4, Math.min(0.4, ratio)))
+    : [-0.12, 0, 0.12];
+  const normalizationProbeMaxVariantsPerAngle = Number.isFinite(normalizationProbe.maxVariantsPerAngle)
+    ? Math.max(0, Math.min(48, Math.round(normalizationProbe.maxVariantsPerAngle)))
+    : 12;
 
-  const pushCandidate = (canvas, label) => {
+  const pushCandidate = (canvas, label, metadata = {}) => {
     if (!canvas) {
       return;
     }
@@ -49,7 +70,7 @@ const buildNeuralRoiCandidates = (source, debugSession, addDebugStageFn = () => 
     if (!normalized || normalized.width < 24 || normalized.height < 16) {
       return;
     }
-    candidates.push({ canvas: normalized, label });
+    candidates.push({ canvas: normalized, label, ...metadata });
     if (!debugStripSource) {
       debugStripSource = canvas;
     }
@@ -113,6 +134,69 @@ const buildNeuralRoiCandidates = (source, debugSession, addDebugStageFn = () => 
     });
   };
 
+  const pushNormalizationProbeCandidates = (rotated, edgeRect, angle) => {
+    if (
+      !normalizationProbeEnabled
+      || !rotated
+      || !edgeRect
+      || normalizationProbeMaxVariantsPerAngle <= 0
+      || !normalizationProbeTargetAspects.length
+      || !normalizationProbeHeightRatios.length
+      || !normalizationProbeShiftRatios.length
+    ) {
+      return;
+    }
+
+    const centerX = edgeRect.x + edgeRect.width * 0.5;
+    const centerY = edgeRect.y + edgeRect.height * 0.5;
+    const seen = new Set();
+    let emitted = 0;
+
+    normalizationProbeTargetAspects.forEach((targetAspect) => {
+      normalizationProbeHeightRatios.forEach((heightRatio) => {
+        normalizationProbeShiftRatios.forEach((shiftRatio) => {
+          if (emitted >= normalizationProbeMaxVariantsPerAngle) {
+            return;
+          }
+          const targetHeight = Math.min(rotated.height, Math.max(edgeRect.height, edgeRect.height * heightRatio));
+          const targetWidth = Math.min(
+            rotated.width,
+            Math.max(edgeRect.width * 1.04, targetHeight * targetAspect)
+          );
+          const rect = normalizeCropRect(rotated, {
+            x: centerX - targetWidth * 0.5 + edgeRect.width * shiftRatio,
+            y: centerY - targetHeight * 0.5,
+            width: targetWidth,
+            height: targetHeight
+          });
+          if (!rect || rect.width < 8 || rect.height < 8) {
+            return;
+          }
+          const key = `${Math.round(rect.x / 3)}:${Math.round(rect.y / 3)}:${Math.round(rect.width / 3)}:${Math.round(rect.height / 3)}`;
+          if (seen.has(key)) {
+            return;
+          }
+          seen.add(key);
+          emitted += 1;
+          const aspectToken = String(Math.round(targetAspect * 10)).padStart(2, '0');
+          const heightToken = String(Math.round(heightRatio * 100)).padStart(3, '0');
+          const shiftPercent = Math.round(Math.abs(shiftRatio) * 100);
+          const suffix = shiftRatio === 0
+            ? 'center'
+            : (shiftRatio > 0 ? `right${shiftPercent}` : `left${shiftPercent}`);
+          pushCandidate(
+            cropCanvas(rotated, rect),
+            `roi-${angle}-normprobe-a${aspectToken}-h${heightToken}-${suffix}`,
+            {
+              diagnosticOnly: normalizationProbeShadowOnly,
+              probeKind: 'normalization'
+            }
+          );
+        });
+      });
+    });
+  };
+
   angles.forEach((angle) => {
     const rotated = angle === 0 ? source : rotateCanvas(source, angle);
 
@@ -122,6 +206,7 @@ const buildNeuralRoiCandidates = (source, debugSession, addDebugStageFn = () => 
         const edgeCrop = cropCanvas(rotated, edgeRect);
         pushCandidate(edgeCrop, `roi-${angle}-edge`);
         pushEdgeContextCandidates(rotated, edgeRect, angle);
+        pushNormalizationProbeCandidates(rotated, edgeRect, angle);
       }
     }
 

@@ -44,6 +44,14 @@ const OCR_CONFIG = {
     edgeContextPaddingY: 0.08,
     edgeContextShiftRatios: [-0.08, 0, 0.08],
     edgeContextMaxVariantsPerAngle: 3,
+    normalizationProbe: {
+      enabled: true,
+      shadowOnly: true,
+      targetAspects: [2.4, 2.8, 3.2],
+      heightRatios: [1, 1.16],
+      shiftRatios: [-0.12, 0, 0.12],
+      maxVariantsPerAngle: 12
+    },
     tightenRegister: true,
     registerMinCropRatio: 0.45,
     registerMaxCropRatio: 0.82,
@@ -61,6 +69,8 @@ const OCR_CONFIG = {
     fallbackPreferNonEdge: false,
     fallbackTargetAspect: 2.6,
     maxPrimaryCandidates: 4,
+    decodeDiagnosticCandidates: false,
+    maxDiagnosticCandidates: 36,
     fallbackEdgeMinAverageConfidence: 25,
     fallbackEdgeMinCellConfidence: 18,
     fallbackEdgeRequireNonEdgeSupport: false,
