@@ -191,9 +191,46 @@ const candidateVariantValues = (entry) => (
     : []
 );
 
-const candidateMatchesExpected = (entry, expected) => (
-  candidateValue(entry) === expected || candidateVariantValues(entry).includes(expected)
-);
+const candidateMatchKind = (entry, expected) => {
+  if (candidateValue(entry) === expected) {
+    return 'direct';
+  }
+  return candidateVariantValues(entry).includes(expected) ? 'variant' : '';
+};
+
+const candidateMatchesExpected = (entry, expected) => !!candidateMatchKind(entry, expected);
+
+const describeExpectedCoverage = (candidates, expected) => {
+  for (const candidate of candidates) {
+    if (candidateMatchKind(candidate, expected) === 'direct') {
+      return {
+        bucket: 'expected-present-as-candidate',
+        sourceLabel: candidate.sourceLabel || '',
+        matchKind: 'direct'
+      };
+    }
+  }
+  for (const candidate of candidates) {
+    const variants = candidate && candidate.result && Array.isArray(candidate.result.variantCandidates)
+      ? candidate.result.variantCandidates
+      : [];
+    const matchedVariant = variants.find((variant) => variant && variant.value === expected) || null;
+    if (matchedVariant) {
+      return {
+        bucket: 'expected-present-as-internal-variant',
+        sourceLabel: candidate.sourceLabel || '',
+        matchKind: 'variant',
+        cropMode: matchedVariant.cropMode || '',
+        registerSelectionEligible: matchedVariant.registerSelectionEligible === true
+      };
+    }
+  }
+  return {
+    bucket: 'expected-absent-from-expanded-candidates',
+    sourceLabel: '',
+    matchKind: 'absent'
+  };
+};
 
 const confidenceText = (value) => Number.isFinite(value) ? `${value.toFixed(1)}%` : 'n/a';
 
@@ -240,8 +277,9 @@ const buildReportHtml = (rows, outputDir) => {
         ? `<p class="variants"><strong>internal variants:</strong> ${result.variantCandidates.map((variant) => {
           const score = Number.isFinite(variant.score) ? variant.score.toFixed(3) : 'n/a';
           const crop = `${variant.cropMode || 'n/a'}${Number.isFinite(variant.cropRatio) ? ` ${variant.cropRatio.toFixed(3)}` : ''}`;
+          const eligibility = variant.registerSelectionEligible ? ' eligible' : '';
           const marker = variant.value === row.expected ? ' *expected*' : '';
-          return `${htmlEscape(variant.value || 'no-read')} (${score}, ${htmlEscape(crop)})${marker}`;
+          return `${htmlEscape(variant.value || 'no-read')} (${score}, ${htmlEscape(crop)}${eligibility})${marker}`;
         }).join(' | ')}</p>`
         : '';
       return `
@@ -267,12 +305,14 @@ const buildReportHtml = (rows, outputDir) => {
       `;
     }).join('\n');
     return `
-      <section class="row">
+      <section class="row ${htmlEscape(row.coverage.bucket)}">
         <h2>${htmlEscape(row.filename)}</h2>
         <p class="meta">
           <span>expected <b>${htmlEscape(row.expected)}</b></span>
           <span>normal selected <b>${htmlEscape(row.productionSelected || 'no-read')}</b></span>
           <span>selected source ${htmlEscape(row.productionSelectedSource || 'n/a')}</span>
+          <span>coverage ${htmlEscape(row.coverage.bucket)}</span>
+          <span>coverage source ${htmlEscape(row.coverage.sourceLabel || 'n/a')}</span>
           <span>candidate count ${row.candidates.length}</span>
         </p>
         ${candidateHtml}
@@ -293,6 +333,8 @@ const buildReportHtml = (rows, outputDir) => {
     .candidate { box-shadow: 0 8px 24px rgba(23,32,51,0.06); }
     .candidate.expected { border-color: #0f7a4f; }
     .candidate.selected { border-color: #b45309; }
+    .expected-present-as-candidate, .expected-present-as-internal-variant { border-color: #0f7a4f; }
+    .expected-absent-from-expanded-candidates { border-color: #b42318; }
     .meta { display: flex; flex-wrap: wrap; gap: 8px; }
     .meta span { border: 1px solid #d7dee8; border-radius: 999px; padding: 4px 8px; background: #fff; }
     .variants { color: #475467; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.5; }
@@ -306,7 +348,7 @@ const buildReportHtml = (rows, outputDir) => {
 </head>
 <body>
   <h1>Jarvis Cell Crop Failure QA</h1>
-  <p class="subtitle">Rows where the expanded per-cell candidate oracle did not find the expected reading. Generated ${htmlEscape(new Date().toISOString())}.</p>
+  <p class="subtitle">Rows where production OCR did not match the expected reading. Coverage buckets separate missing candidates from selection losses. Generated ${htmlEscape(new Date().toISOString())}.</p>
   ${rowHtml}
 </body>
 </html>`;
@@ -339,23 +381,26 @@ const main = async () => {
       const readable = rawCandidates
         .map((candidate) => ({ ...candidate, value: candidateValue(candidate) }))
         .filter((candidate) => candidate.value);
-      if (readable.some((candidate) => candidateMatchesExpected(candidate, row.value))) {
+      const productionSelected = productionRun.selectionLog && productionRun.selectionLog.selected
+        ? productionRun.selectionLog.selected
+        : null;
+      const productionSelectedValue = productionSelected && productionSelected.value ? productionSelected.value : '';
+      if (productionSelectedValue === row.value) {
         continue;
       }
+      const coverage = describeExpectedCoverage(readable, row.value);
       const rowDir = path.join(imagesDir, sanitizeFileToken(row.filename));
       await fsp.mkdir(rowDir, { recursive: true });
       const candidates = [];
       for (let index = 0; index < readable.length; index += 1) {
         candidates.push(await writeCandidateImages(row, readable[index], rowDir, index));
       }
-      const productionSelected = productionRun.selectionLog && productionRun.selectionLog.selected
-        ? productionRun.selectionLog.selected
-        : null;
       reportRows.push({
         filename: row.filename,
         expected: row.value,
-        productionSelected: productionSelected && productionSelected.value ? productionSelected.value : '',
+        productionSelected: productionSelectedValue,
         productionSelectedSource: productionSelected && productionSelected.sourceLabel ? productionSelected.sourceLabel : '',
+        coverage,
         candidates
       });
     }
@@ -368,11 +413,21 @@ const main = async () => {
 
   const reportPath = path.join(outputDir, 'cell-crop-failure-qa.html');
   const summaryPath = path.join(outputDir, 'summary.json');
+  const coverageCounts = reportRows.reduce((counts, row) => {
+    counts[row.coverage.bucket] = (counts[row.coverage.bucket] || 0) + 1;
+    return counts;
+  }, {});
   await fsp.writeFile(reportPath, buildReportHtml(reportRows, outputDir), 'utf8');
   await fsp.writeFile(summaryPath, JSON.stringify({
     generatedAt: new Date().toISOString(),
     maxPrimaryCandidates: MAX_PRIMARY_CANDIDATES,
     rowCount: reportRows.length,
+    expectedAbsentRowCount: coverageCounts['expected-absent-from-expanded-candidates'] || 0,
+    expectedPresentRowCount: (
+      (coverageCounts['expected-present-as-candidate'] || 0)
+      + (coverageCounts['expected-present-as-internal-variant'] || 0)
+    ),
+    coverageCounts,
     rows: reportRows.map((row) => ({
       ...row,
       candidates: row.candidates.map((candidate) => ({
@@ -394,10 +449,18 @@ const main = async () => {
     outputDir: relativeFrom(ROOT_DIR, outputDir),
     report: relativeFrom(ROOT_DIR, reportPath),
     summary: relativeFrom(ROOT_DIR, summaryPath),
+    rowCount: reportRows.length,
+    expectedAbsentRowCount: coverageCounts['expected-absent-from-expanded-candidates'] || 0,
+    expectedPresentRowCount: (
+      (coverageCounts['expected-present-as-candidate'] || 0)
+      + (coverageCounts['expected-present-as-internal-variant'] || 0)
+    ),
+    coverageCounts,
     rows: reportRows.map((row) => ({
       filename: row.filename,
       expected: row.expected,
       selected: row.productionSelected || 'no-read',
+      coverage: row.coverage.bucket,
       candidates: row.candidates.length
     }))
   }, null, 2));

@@ -471,6 +471,18 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
     const crowdedMiddleMinActiveColumns = Number.isFinite(ranker.crowdedMiddleMinActiveColumns)
       ? ranker.crowdedMiddleMinActiveColumns
       : 30;
+    const severeEdgeMaxActiveWidth = Number.isFinite(ranker.severeEdgeMaxActiveWidth)
+      ? ranker.severeEdgeMaxActiveWidth
+      : 0.64;
+    const severeEdgeMaxActiveColumns = Number.isFinite(ranker.severeEdgeMaxActiveColumns)
+      ? ranker.severeEdgeMaxActiveColumns
+      : 16;
+    const lowTextureEnergy = Number.isFinite(ranker.lowTextureEnergy)
+      ? ranker.lowTextureEnergy
+      : 0.0032;
+    const lowTextureMaxActiveColumns = Number.isFinite(ranker.lowTextureMaxActiveColumns)
+      ? ranker.lowTextureMaxActiveColumns
+      : 18;
     const reasons = [];
     let penalty = 0;
     const middleActiveColumns = (metrics[1].activeColumnCount + metrics[2].activeColumnCount) / 2;
@@ -492,6 +504,14 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
     };
     const weakLeftEdge = isWeakEdge(0);
     const weakRightEdge = isWeakEdge(3);
+    const isSeverelyWeakEdge = (index) => {
+      const metric = metrics[index];
+      return (
+        metric.activeColumnCount <= severeEdgeMaxActiveColumns
+        || metric.activeWidthRatio <= severeEdgeMaxActiveWidth
+      );
+    };
+    const severeRightEdge = weakRightEdge && isSeverelyWeakEdge(3);
     const middleCrowdedCount = [1, 2].filter((index) => (
       (
         metrics[index].activeWidthRatio >= crowdedMiddleMinActiveWidth
@@ -499,7 +519,10 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
       )
       && metrics[index].energy >= middleEnergy * 0.72
     )).length;
-    const lowTextureCount = metrics.filter((metric) => metric.energy < 0.004).length;
+    const lowTextureCount = metrics.filter((metric) => (
+      metric.energy < lowTextureEnergy
+      && metric.activeColumnCount <= lowTextureMaxActiveColumns
+    )).length;
 
     if (weakLeftEdge && weakRightEdge && middleCrowdedCount >= 1) {
       penalty += Number.isFinite(ranker.overwidePenalty) ? ranker.overwidePenalty : 0.14;
@@ -512,6 +535,13 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
     if (weakRightEdge && !weakLeftEdge && middleCrowdedCount >= 1) {
       penalty += Number.isFinite(ranker.rightTruncatedPenalty) ? ranker.rightTruncatedPenalty : 0.08;
       reasons.push('right-edge-underfilled');
+    }
+
+    if (severeRightEdge && middleCrowdedCount >= 1) {
+      penalty += Number.isFinite(ranker.severeRightTruncatedPenalty)
+        ? ranker.severeRightTruncatedPenalty
+        : 0.025;
+      reasons.push('right-edge-severe-underfilled');
     }
 
     const degeneratePenalty = Number.isFinite(ranker.degeneratePenalty) ? ranker.degeneratePenalty : 0;
