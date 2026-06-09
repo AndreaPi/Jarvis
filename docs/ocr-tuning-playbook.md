@@ -178,6 +178,8 @@ Promote a challenger checkpoint only if all gates pass on the same test-set run:
 
 If any gate fails, keep `roi-rotaug-e30-640.pt` as default and continue tuning extraction/selection.
 
+June 9, 2026 ROI promotion: the retrained `roi.pt` challenger was copied into the promoted `backend/models/roi-rotaug-e30-640.pt` default after `npm run benchmark:roi-diff` measured `MAE 106.83` versus the previous checkpoint's `388.00`, with exact match unchanged at `11/31` and no-read unchanged at `1/31`. A visual audit of changed rows showed the new detector generally produces readable register crops; remaining high-impact misses are primarily classifier/selection failures.
+
 Classifier-default rule:
 
 - Keep `digitClassifier.enabled=true` by default and tune ranking/acceptance using `MAE` + guardrails.

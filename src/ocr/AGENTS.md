@@ -13,7 +13,7 @@
 - Edge-derived candidate generation is enabled by default and can be toggled with `OCR_CONFIG.roiDeterministic.useEdgeCandidates`.
 - The primary classifier shortlist now mixes high-ranked edge and base strip candidates so valid full-strip rotations are not starved behind edge-only passes.
 - Opposite-orientation retry is disabled by default (`roiDeterministic.tryOppositeOrientation=false`).
-- The default ROI checkpoint remains `backend/models/roi-rotaug-e30-640.pt` until a challenger wins on end-to-end OCR metrics.
+- The default ROI checkpoint is `backend/models/roi-rotaug-e30-640.pt`, refreshed on June 9, 2026 after the retrained ROI detector won the end-to-end OCR gate.
 
 ## Debug Overlay Semantics
 - `6a. OCR input candidate (initial preview)` is the first valid ROI candidate before classifier ranking.
@@ -24,12 +24,15 @@
 
 ## Active Benchmark Baseline
 - Current UI test-set surface is `assets/meter_readings.csv`, currently `31` images after the June 2026 ROI ingestion through `meter_20260606.JPEG`.
-- Current restored promoted per-cell classifier baseline with the conservative geometry ranker, measured May 29, 2026:
+- Current promoted ROI + restored promoted per-cell classifier baseline, measured June 9, 2026:
+  - UI checkpoint diff surface: `MAE 106.83`, `Exact Match 11/31`, `No-read 1/31`
+  - Previous ROI checkpoint on the same run: `MAE 388.00`, `Exact Match 11/31`, `No-read 1/31`
+  - `npm run test:e2e`: passes (`7/7`)
+- Historical restored per-cell classifier baseline with the conservative geometry ranker, measured May 29, 2026:
   - UI test set: `MAE 166.07`, `Exact Match 10/29`, `No-read 1/29`
   - Same-corpus ranker-off control: `MAE 166.57`, `Exact Match 10/29`, `No-read 1/29`
   - `npm run test:e2e`: passes (`7/7`)
 - Re-run the UI `Run test set` before treating any metric as the current promotion target.
-- Latest local UI run on June 8, 2026: `MAE 388.00`, `Exact Match 11/31`, `No-read 1/31`.
 - Use `MAE` as the primary promotion signal, with `Exact Match` and `No-read` as guardrails.
 
 ## OCR Workflow and Guardrails
@@ -38,7 +41,7 @@
 - Test-set review should inspect `Detected`, `Absolute Error`, `Failure Reason`, stages `5/6/7/8`, `selectionLog.stripReader`, and `selectionLog.stripReader23xx`.
 - `npm run benchmark:roi-diff` remains the standard checkpoint comparison workflow.
 - The benchmark requires `backend/models/roi-rotaug-e30-640.pt`, `backend/models/roi.pt`, `backend/models/digit_classifier.pt`, and `backend/models/digit_strip_reader.pt` to exist locally before it will start.
-- Keep `roi-rotaug-e30-640.pt` as default until a challenger improves end-to-end OCR, not just detection presence.
+- Keep a challenger out of the default path until it improves end-to-end OCR, not just detection presence.
 
 ## Current Focus
 1. Keep the restored promoted `backend/models/digit_classifier.pt` as the primary safety baseline.
@@ -50,7 +53,7 @@
 7. Use `npm run qa:cell-crops` to inspect candidate-family coverage before changing selection. The June 8, 2026 register-localization probe found expected readings only on already-covered rows, so it was rolled back; the retained report now includes non-readable candidates and expected-hit family counts.
 8. Use `npm run qa:roi-geometry-audit` when expected readings remain absent from expanded candidates. The June 8, 2026 focused audit of the current `10` candidate-coverage rows split them into `7` crop-family boundary-clipped rows and `3` edge-window-present normalization-insufficient rows.
 9. Do not reintroduce the June 9, 2026 `regwin` register-window crop family without a stronger guard. Its focused run produced near-miss values but no exact expected candidate recovery, and selectable experiments regressed to `MAE 1345.10` (`maxPrimaryCandidates=4`) and `MAE 1378.67` (`maxPrimaryCandidates=20`). The implementation was removed to avoid dead diagnostic code.
-10. Medium-term: evaluate YOLO OBB ROI detection to reduce rotation and edge ambiguity.
+10. Medium-term: evaluate YOLO OBB ROI detection only if axis-aligned ROI retrains still leave rotation or edge ambiguity.
 
 ## Digit Classifier Training Guardrail
 - Restore promoted checkpoints from DVC before digit experiments when local model outputs drift.
@@ -69,8 +72,3 @@
 - This assumption must be reviewed at least yearly, and immediately if readings approach `2390` or the system is reused for a different meter/home.
 - The prefix is documented in config/model metadata; keep the unconstrained benchmark path available for comparison.
 - Do not present the constrained reader as generally valid beyond this house-specific water-meter workflow.
-
-## OBB Notes
-- OBB inference outputs rotated geometry (`xywhr`) and polygon corners.
-- OBB training labels use corners format: `class x1 y1 x2 y2 x3 y3 x4 y4`.
-- Ultralytics OBB angle handling is constrained to the `0-90` exclusive range, so re-verify label/export assumptions before implementation.

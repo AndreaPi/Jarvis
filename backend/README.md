@@ -45,6 +45,7 @@ python train_roi.py --data data/roi_dataset.yaml --base-model yolov8n.pt --allow
 
 After training, best weights are copied to `backend/models/roi.pt`.
 The API default is pinned to `backend/models/roi-rotaug-e30-640.pt`; use `ROI_MODEL_PATH` to explicitly test/use `roi.pt` or another checkpoint.
+The default checkpoint was refreshed on June 9, 2026 after the retrained ROI detector improved browser OCR `MAE` from `388.00` to `106.83` with exact match unchanged at `11/31` and no-read unchanged at `1/31`.
 
 Promoted checkpoints in `backend/models/*.pt` are Tier 1 artifacts. Track them with DVC and push them to your configured DVC remote:
 

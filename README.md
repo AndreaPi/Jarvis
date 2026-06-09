@@ -81,6 +81,7 @@ python train_roi.py \
 ```
 
 The API default ROI checkpoint is pinned to `backend/models/roi-rotaug-e30-640.pt`.
+The checkpoint was refreshed on June 9, 2026 after a retrain on the 31-image ROI corpus improved browser OCR `MAE` from `388.00` to `106.83` with exact match unchanged at `11/31` and no-read unchanged at `1/31`.
 To run with a newly trained checkpoint, set `ROI_MODEL_PATH` explicitly before starting the backend.
 `train_roi.py` now enforces heavy augmentation + rotation expansion by default; weaker runs require explicit `--allow-no-augment-policy`.
 

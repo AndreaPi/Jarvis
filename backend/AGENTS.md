@@ -16,7 +16,7 @@
 - Default digit endpoint: `http://127.0.0.1:8001/digit/predict-cells`
 - Default strip-reader shadow endpoint: `http://127.0.0.1:8001/digit/predict-strip`
 - Default constrained `23xx` strip-reader shadow endpoint: `http://127.0.0.1:8001/digit/predict-strip-23xx`
-- Backend default ROI model is pinned to `backend/models/roi-rotaug-e30-640.pt` (override with `ROI_MODEL_PATH`).
+- Backend default ROI model is pinned to `backend/models/roi-rotaug-e30-640.pt` (override with `ROI_MODEL_PATH`). This checkpoint was refreshed on June 9, 2026 after the retrained ROI detector improved end-to-end OCR `MAE` without exact-match or no-read regressions.
 - Digit classifier path is `backend/models/digit_classifier.pt`.
 - Strip digit reader path is `backend/models/digit_strip_reader.pt`.
 - Constrained `23xx` strip digit reader path is `backend/models/digit_strip_reader_23xx.pt`.

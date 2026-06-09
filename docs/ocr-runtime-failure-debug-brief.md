@@ -191,3 +191,13 @@ The focused `regwin` near-misses were tested as selectable candidates through a 
 - The two June iPhone rows improved only superficially in some cases but remained wrong: `meter_20260524.JPEG` selected `1231`/`1240` instead of `2335`, and `meter_20260606.JPEG` selected `1222`/`2007` instead of `2337`.
 
 Conclusion: do not keep the `regwin` candidate family in production code. The useful signal was diagnostic crop proximity, not production selection. Next work should be a guard or geometry-quality discriminator that can reject high-confidence distractor crops before any similar future promotion attempt.
+
+## Execution Notes - 2026-06-09 ROI Retrain Promotion
+
+The ROI detector was retrained with the existing heavy-augmentation and rotation-expansion policy on the current 31-image ROI corpus, using a temporary training YAML that maps YOLO validation to the fixed test image because the canonical validation split is intentionally empty. The validation metric is diagnostic only; promotion was judged on browser OCR.
+
+- `npm run benchmark:roi-diff` produced `output/roi-checkpoint-diff/20260609-113924-neural-digit/`.
+- The challenger improved primary-path `MAE` from `388.00` to `106.83`, while exact match stayed `11/31` and no-read stayed `1/31`.
+- The largest improvements were the two recent iPhone captures: `meter_20260524.JPEG` improved from `5332` to `2305`, and `meter_20260606.JPEG` improved from `9302` to `2007`.
+- The main regression was `meter_20260603.JPEG`, from `2317` to `3332`, but visual audit showed the new detector crop still contains the expected register region; this remains a classifier/selection issue rather than a detector rejection.
+- The retrained checkpoint was promoted by refreshing `backend/models/roi-rotaug-e30-640.pt`; `npm run test:e2e` passed (`7/7`).
