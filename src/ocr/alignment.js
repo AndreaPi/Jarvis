@@ -26,6 +26,54 @@ const buildNeuralRoiCandidates = (source, debugSession, addDebugStageFn = () => 
   const candidates = [];
   let debugStripSource = null;
   const baseCandidates = [];
+
+  const roundNumber = (value, digits = 3) => (
+    Number.isFinite(value) ? Number(value.toFixed(digits)) : null
+  );
+
+  const serializeRect = (rect) => {
+    if (!rect) {
+      return null;
+    }
+    return {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height)
+    };
+  };
+
+  const buildGeometryMetadata = ({ angle, family, rotated, cropRect, edgeRect = null, extra = {} }) => {
+    const safeCropRect = serializeRect(cropRect);
+    const rotatedWidth = rotated && Number.isFinite(rotated.width) ? rotated.width : null;
+    const rotatedHeight = rotated && Number.isFinite(rotated.height) ? rotated.height : null;
+    const cropAspect = safeCropRect
+      ? roundNumber(safeCropRect.width / Math.max(1, safeCropRect.height))
+      : null;
+    const cropAreaRatio = safeCropRect && rotatedWidth && rotatedHeight
+      ? roundNumber((safeCropRect.width * safeCropRect.height) / Math.max(1, rotatedWidth * rotatedHeight))
+      : null;
+    return {
+      angle,
+      family,
+      rotatedSize: {
+        width: rotatedWidth,
+        height: rotatedHeight
+      },
+      cropRect: safeCropRect,
+      edgeRect: serializeRect(edgeRect),
+      cropAspect,
+      cropAreaRatio,
+      cropFrame: safeCropRect && rotatedWidth && rotatedHeight ? {
+        left: roundNumber(safeCropRect.x / Math.max(1, rotatedWidth)),
+        right: roundNumber((safeCropRect.x + safeCropRect.width) / Math.max(1, rotatedWidth)),
+        top: roundNumber(safeCropRect.y / Math.max(1, rotatedHeight)),
+        bottom: roundNumber((safeCropRect.y + safeCropRect.height) / Math.max(1, rotatedHeight))
+      } : null,
+      ...extra
+    };
+  };
+
   const edgeContextPaddingX = Number.isFinite(roiDeterministic.edgeContextPaddingX)
     ? Math.max(0, Math.min(0.5, roiDeterministic.edgeContextPaddingX))
     : 0.18;
@@ -130,7 +178,20 @@ const buildNeuralRoiCandidates = (source, debugSession, addDebugStageFn = () => 
       const suffix = shiftRatio === 0
         ? 'center'
         : (shiftRatio > 0 ? `right${shiftPercent}` : `left${shiftPercent}`);
-      pushCandidate(cropCanvas(rotated, rect), `roi-${angle}-edge-context-${suffix}`);
+      pushCandidate(
+        cropCanvas(rotated, rect),
+        `roi-${angle}-edge-context-${suffix}`,
+        {
+          geometry: buildGeometryMetadata({
+            angle,
+            family: 'edge-context',
+            rotated,
+            cropRect: rect,
+            edgeRect,
+            extra: { shiftRatio: Number(shiftRatio.toFixed(3)) }
+          })
+        }
+      );
     });
   };
 
@@ -189,7 +250,19 @@ const buildNeuralRoiCandidates = (source, debugSession, addDebugStageFn = () => 
             `roi-${angle}-normprobe-a${aspectToken}-h${heightToken}-${suffix}`,
             {
               diagnosticOnly: normalizationProbeShadowOnly,
-              probeKind: 'normalization'
+              probeKind: 'normalization',
+              geometry: buildGeometryMetadata({
+                angle,
+                family: 'normprobe',
+                rotated,
+                cropRect: rect,
+                edgeRect,
+                extra: {
+                  targetAspect: roundNumber(targetAspect),
+                  heightRatio: roundNumber(heightRatio),
+                  shiftRatio: roundNumber(shiftRatio)
+                }
+              })
             }
           );
         });
@@ -204,7 +277,15 @@ const buildNeuralRoiCandidates = (source, debugSession, addDebugStageFn = () => 
       const edgeRect = findDigitWindowByEdges(rotated);
       if (edgeRect) {
         const edgeCrop = cropCanvas(rotated, edgeRect);
-        pushCandidate(edgeCrop, `roi-${angle}-edge`);
+        pushCandidate(edgeCrop, `roi-${angle}-edge`, {
+          geometry: buildGeometryMetadata({
+            angle,
+            family: 'edge',
+            rotated,
+            cropRect: edgeRect,
+            edgeRect
+          })
+        });
         pushEdgeContextCandidates(rotated, edgeRect, angle);
         pushNormalizationProbeCandidates(rotated, edgeRect, angle);
       }
@@ -212,7 +293,21 @@ const buildNeuralRoiCandidates = (source, debugSession, addDebugStageFn = () => 
 
     const normalized = scaleCanvas(rotated, normalizeWidth);
     if (normalized && normalized.width >= 24 && normalized.height >= 16) {
-      baseCandidates.push({ canvas: normalized, label: `roi-${angle}-base` });
+      baseCandidates.push({
+        canvas: normalized,
+        label: `roi-${angle}-base`,
+        geometry: buildGeometryMetadata({
+          angle,
+          family: 'base',
+          rotated,
+          cropRect: {
+            x: 0,
+            y: 0,
+            width: rotated.width,
+            height: rotated.height
+          }
+        })
+      });
       if (!debugStripSource) {
         debugStripSource = rotated;
       }
@@ -225,7 +320,21 @@ const buildNeuralRoiCandidates = (source, debugSession, addDebugStageFn = () => 
 
   if (!candidates.length) {
     const fallback = scaleCanvas(source, normalizeWidth);
-    candidates.push({ canvas: fallback, label: 'roi-base-fallback' });
+    candidates.push({
+      canvas: fallback,
+      label: 'roi-base-fallback',
+      geometry: buildGeometryMetadata({
+        angle: 0,
+        family: 'base',
+        rotated: source,
+        cropRect: {
+          x: 0,
+          y: 0,
+          width: source.width,
+          height: source.height
+        }
+      })
+    });
     debugStripSource = source;
   }
 

@@ -230,9 +230,10 @@ npm run qa:strip-dataset
 npm run qa:ocr-oracle
 npm run qa:strip-runtime
 npm run qa:cell-crops
+npm run qa:roi-geometry-audit
 ```
 
-These write timestamped reports under `output/strip-dataset-qa/`, `output/ocr-candidate-oracle/`, `output/strip-runtime-qa/`, and `output/cell-crop-failure-qa/`. Use `qa:strip-dataset` after rebuilding digit windows and before retraining, so the canonical strips can be visually accepted first.
+These write timestamped reports under `output/strip-dataset-qa/`, `output/ocr-candidate-oracle/`, `output/strip-runtime-qa/`, `output/cell-crop-failure-qa/`, and `output/roi-geometry-audit/`. Use `qa:strip-dataset` after rebuilding digit windows and before retraining, so the canonical strips can be visually accepted first.
 
 CI runs these tests on every pull request and on pushes to `master`.
 

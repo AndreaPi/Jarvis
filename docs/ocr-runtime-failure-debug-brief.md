@@ -158,3 +158,36 @@ A diagnostic register-localization crop-construction experiment was implemented 
 - The production candidate generator was rolled back to avoid extra diagnostic cost. The retained improvement is QA reporting: the cell-crop report now includes non-readable candidate trace rows, source-family counts, expected-hit family counts, and `registerLocalizationHitRowCount` for future experiments.
 
 Next debugging should use the improved QA family counts before adding another crop family. The remaining `10` candidate-coverage rows still require a different upstream approach, likely earlier ROI geometry or a crop construction method that can recover expected readings on absent rows rather than adding redundant hits on already-covered rows.
+
+## Execution Notes - 2026-06-08 ROI Geometry Audit
+
+The focused upstream audit was implemented as a diagnostic-only workflow:
+
+- `src/ocr/alignment.js` now tags emitted ROI candidates with trace-only geometry metadata: candidate family, angle, rotated ROI size, crop rect, edge rect, crop aspect, area ratio, and crop-frame ratios.
+- `src/ocr/pipeline.js` now records neural ROI detector geometry and candidate geometry in `selectionLog`; this does not change candidate ranking, selection, classifier scoring, or strip-reader behavior.
+- `npm run qa:roi-geometry-audit` writes `output/roi-geometry-audit/<timestamp>/summary.json` and `roi-geometry-audit.html`, filtering to rows where production selected the wrong reading and the expected reading is absent from expanded readable candidates.
+- Latest run: `output/roi-geometry-audit/20260608-155031/` with `rowCount: 10`. The focused split is `7` `crop-family-boundary-clipped` rows and `3` `edge-window-present-normalization-insufficient` rows.
+
+Next debugging should target the `crop-family-boundary-clipped` group first. These rows suggest the edge-derived crop families are frequently pushed against a rotated ROI boundary before they ever expose the correct four-digit candidate, so a better next experiment is bounded ROI/edge expansion or earlier ROI padding/orientation handling, not another selection promotion.
+
+## Execution Notes - 2026-06-09 Rejected Regwin Diagnostic
+
+A focused upstream register-window diagnostic was temporarily implemented for the two new iPhone captures:
+
+- The temporary `regwin` candidate family emitted sliding and ink-anchored windows around the detected edge search area.
+- The temporary focused audit wrote original and rotated ROI overlay images plus a focused summary under `output/focused-roi-register-audit/<timestamp>/`.
+- Latest run: `output/focused-roi-register-audit/20260609-003251/` with `rowCount: 2`, `expectedPresentRowCount: 0`, and `regwinHitRowCount: 0`.
+- The new windows reached the register region and produced near-miss readings (`2336`/`2305` around expected `2335`, and `2307`/`2339` around expected `2337`), but still did not recover exact expected values.
+
+Treat this as diagnostic evidence, not a promotion candidate. The executable `regwin` implementation and focused audit command were removed after the failed promotion test to avoid carrying dead diagnostic code.
+
+## Execution Notes - 2026-06-09 Guarded Regwin Promotion Experiment
+
+The focused `regwin` near-misses were tested as selectable candidates through a temporary runtime override, without changing default config:
+
+- Baseline production run on the current `31` rows stayed at `MAE 388.00`, `Exact Match 11/31`, and `No-read 1/31`.
+- `regwin` selectable with the normal `maxPrimaryCandidates=4` failed the guardrails: `MAE 1345.10`, `Exact Match 9/31`, `No-read 1/31`, with `regwin` selected on `11` rows.
+- `regwin` selectable with a wide `maxPrimaryCandidates=20` also failed: `MAE 1378.67`, `Exact Match 6/31`, `No-read 1/31`, with `regwin` selected on `16` rows.
+- The two June iPhone rows improved only superficially in some cases but remained wrong: `meter_20260524.JPEG` selected `1231`/`1240` instead of `2335`, and `meter_20260606.JPEG` selected `1222`/`2007` instead of `2337`.
+
+Conclusion: do not keep the `regwin` candidate family in production code. The useful signal was diagnostic crop proximity, not production selection. Next work should be a guard or geometry-quality discriminator that can reject high-confidence distractor crops before any similar future promotion attempt.

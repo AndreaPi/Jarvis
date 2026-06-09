@@ -31,6 +31,18 @@ const resolveNeuralRoiRect = (canvas, roiDetection, roiConfig) => {
   });
 };
 
+const serializeRect = (rect) => {
+  if (!rect) {
+    return null;
+  }
+  return {
+    x: Math.round(rect.x),
+    y: Math.round(rect.y),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height)
+  };
+};
+
 const addNeuralRoiDebugStages = (debugSession, baseCanvas, roiRect, roiDetection) => {
   if (!debugSession) {
     return;
@@ -528,7 +540,8 @@ const finalizeSelection = ({
   rejectSummary = [],
   candidateTrace = [],
   stripReaderTrace = null,
-  stripReader23xxTrace = null
+  stripReader23xxTrace = null,
+  roiGeometry = null
 }) => {
   const rankedEvidence = rankSelectionEvidence(evidenceMap);
   const evidenceBest = rankedEvidence[0] || null;
@@ -725,6 +738,7 @@ const finalizeSelection = ({
     } : null,
     stripReader,
     stripReader23xx,
+    roiGeometry,
     topCandidates: buildSelectionSummary(rankedEvidence, 3),
     candidateTrace: Array.isArray(candidateTrace) ? candidateTrace : []
   });
@@ -1512,6 +1526,7 @@ const evaluateCandidateBranch = async ({
           sourceLabel: candidate.label,
           diagnosticOnly: candidate.diagnosticOnly === true,
           probeKind: candidate.probeKind || null,
+          geometry: candidate.geometry || null,
           width: candidate.canvas.width,
           height: candidate.canvas.height,
           fallbackScore: Number.isFinite(candidate.fallbackScore)
@@ -1536,6 +1551,7 @@ const evaluateCandidateBranch = async ({
           sourceLabel: candidate.label,
           diagnosticOnly: candidate.diagnosticOnly === true,
           probeKind: candidate.probeKind || null,
+          geometry: candidate.geometry || null,
           width: candidate.canvas.width,
           height: candidate.canvas.height,
           fallbackScore: Number.isFinite(candidate.fallbackScore)
@@ -1614,6 +1630,7 @@ const evaluateCandidateBranch = async ({
         sourceLabel: candidate.label,
         diagnosticOnly: candidate.diagnosticOnly === true,
         probeKind: candidate.probeKind || null,
+        geometry: candidate.geometry || null,
         width: candidate.canvas.width,
         height: candidate.canvas.height,
         fallbackScore: Number.isFinite(candidate.fallbackScore)
@@ -1789,7 +1806,34 @@ const runMeterOcr = async (file, setProgress) => {
       throw new Error(message);
     }
 
+    const rawRoiRect = normalizeRectToCanvas(baseCanvas, {
+      x: roiProbe.rect.x * baseCanvas.width,
+      y: roiProbe.rect.y * baseCanvas.height,
+      width: roiProbe.rect.width * baseCanvas.width,
+      height: roiProbe.rect.height * baseCanvas.height
+    });
     const roiRect = resolveNeuralRoiRect(baseCanvas, roiProbe, neuralRoiConfig);
+    const roiGeometry = {
+      baseSize: {
+        width: baseCanvas.width,
+        height: baseCanvas.height
+      },
+      detection: {
+        confidence: Number.isFinite(roiProbe.confidence)
+          ? Number(roiProbe.confidence.toFixed(3))
+          : null,
+        rectNorm: roiProbe.rect ? {
+          x: Number(roiProbe.rect.x.toFixed(5)),
+          y: Number(roiProbe.rect.y.toFixed(5)),
+          width: Number(roiProbe.rect.width.toFixed(5)),
+          height: Number(roiProbe.rect.height.toFixed(5))
+        } : null,
+        rect: serializeRect(rawRoiRect)
+      },
+      expandedRect: serializeRect(roiRect),
+      expandX: Number.isFinite(neuralRoiConfig.expandX) ? neuralRoiConfig.expandX : 0,
+      expandY: Number.isFinite(neuralRoiConfig.expandY) ? neuralRoiConfig.expandY : 0
+    };
     addNeuralRoiDebugStages(debugSession, baseCanvas, roiRect, roiProbe);
     const roiCrop = cropCanvas(baseCanvas, roiRect);
     addDebugStage(debugSession, '0b. neural roi crop', roiCrop);
@@ -1824,7 +1868,8 @@ const runMeterOcr = async (file, setProgress) => {
       rejectSummary: roiBranch.rejectSummary || [],
       candidateTrace: roiBranch.candidateTrace || [],
       stripReaderTrace: roiBranch.stripReaderTrace || null,
-      stripReader23xxTrace: roiBranch.stripReader23xxTrace || null
+      stripReader23xxTrace: roiBranch.stripReader23xxTrace || null,
+      roiGeometry
     });
     const stripReaderDebug = resolveStripReaderDebug(roiBranch.stripReaderTrace || null, finalSelection);
     addWinningCandidateDebugStage(

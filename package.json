@@ -14,6 +14,7 @@
     "qa:strip-runtime": "node scripts/export-strip-runtime-qa.cjs",
     "qa:ocr-oracle": "node scripts/export-ocr-candidate-oracle.cjs",
     "qa:cell-crops": "node scripts/export-cell-crop-failure-qa.cjs",
+    "qa:roi-geometry-audit": "node scripts/export-roi-geometry-audit.cjs",
     "qa:runtime-failure-dataset": "backend/.venv/bin/python backend/export_runtime_failure_dataset_qa.py",
     "qa:runtime-failure-dataset:selected": "backend/.venv/bin/python backend/export_runtime_failure_dataset_qa.py --selected-only",
     "qa:digit-classifier-cv": "backend/.venv/bin/python backend/evaluate_digit_classifier_finetune.py"
