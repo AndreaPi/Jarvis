@@ -388,6 +388,52 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
     return -0.02;
   };
 
+  const buildCellSplitProbeOffsets = () => {
+    const classifier = OCR_CONFIG.digitClassifier || {};
+    const probe = roiDeterministic.cellSplitProbe || {};
+    const diagnosticDecodeEnabled = classifier.decodeDiagnosticCandidates === true;
+    if (probe.enabled === false || !diagnosticDecodeEnabled || options.enableCellSplitProbe !== true) {
+      return [0];
+    }
+
+    const maxOffsets = Number.isFinite(probe.maxOffsetsPerVariant)
+      ? Math.max(1, Math.min(12, Math.round(probe.maxOffsetsPerVariant)))
+      : 5;
+    const configuredOffsets = Array.isArray(probe.offsetRatios) && probe.offsetRatios.length
+      ? probe.offsetRatios
+      : [-0.08, -0.04, 0, 0.04, 0.08];
+    const seen = new Set();
+    const offsets = [];
+    const pushOffset = (ratio) => {
+      if (!Number.isFinite(ratio)) {
+        return;
+      }
+      const clamped = clamp(ratio, -0.18, 0.18);
+      const quantized = Math.round(clamped * 1000) / 1000;
+      const key = quantized.toFixed(3);
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      offsets.push(quantized);
+    };
+
+    pushOffset(0);
+    configuredOffsets.forEach(pushOffset);
+    return offsets
+      .sort((a, b) => Math.abs(a) - Math.abs(b) || a - b)
+      .slice(0, maxOffsets);
+  };
+
+  const splitOffsetMode = (ratio) => {
+    if (!Number.isFinite(ratio) || Math.abs(ratio) < 0.0005) {
+      return 'equal-cells';
+    }
+    const direction = ratio > 0 ? 'right' : 'left';
+    const percent = Math.round(Math.abs(ratio) * 100);
+    return `offset-${direction}${percent}`;
+  };
+
   const measureCellTexture = (canvas) => {
     if (!canvas || !canvas.width || !canvas.height) {
       return {
@@ -721,6 +767,8 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
       cropX: Number.isFinite(metadata.cropX) ? metadata.cropX : null,
       cropWidth: Number.isFinite(metadata.cropWidth) ? metadata.cropWidth : null,
       cropRatio: Number.isFinite(metadata.cropRatio) ? metadata.cropRatio : null,
+      splitOffsetRatio: Number.isFinite(metadata.splitOffsetRatio) ? metadata.splitOffsetRatio : 0,
+      splitMode: metadata.splitMode || 'equal-cells',
       decoder: 'digit-classifier',
       classifierModel: classifierProbe.model || null
     };
@@ -766,7 +814,9 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
       cropMode: reading.cropMode || null,
       cropX: Number.isFinite(reading.cropX) ? reading.cropX : null,
       cropWidth: Number.isFinite(reading.cropWidth) ? reading.cropWidth : null,
-      cropRatio: Number.isFinite(reading.cropRatio) ? reading.cropRatio : null
+      cropRatio: Number.isFinite(reading.cropRatio) ? reading.cropRatio : null,
+      splitOffsetRatio: Number.isFinite(reading.splitOffsetRatio) ? reading.splitOffsetRatio : 0,
+      splitMode: reading.splitMode || 'equal-cells'
     };
   };
 
@@ -811,54 +861,74 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
   }
   let best = null;
   const finalizedVariants = [];
+  const cellSplitProbe = roiDeterministic.cellSplitProbe || {};
+  const splitProbeShadowOnly = cellSplitProbe.shadowOnly !== false;
+  const splitOffsets = buildCellSplitProbeOffsets();
 
   for (let i = 0; i < orientationVariants.length; i += 1) {
     const variant = orientationVariants[i];
-    const cellCanvases = splitIntoCells(variant.canvas, OCR_CONFIG.digitCellCount, overlap);
-    if (!hasValidCellGeometry(cellCanvases, {
-      mode: 'roi-deterministic',
-      overlap,
-      orientation: variant.orientation
-    })) {
-      continue;
-    }
-    const reading = await decodeCells(
-      cellCanvases,
-      {
-        variantIndex: i,
+    const variantSplitOffsets = variant.cropMode === 'full-strip' ? splitOffsets : [0];
+    for (let offsetIndex = 0; offsetIndex < variantSplitOffsets.length; offsetIndex += 1) {
+      const splitOffsetRatio = variantSplitOffsets[offsetIndex];
+      const splitMode = splitOffsetMode(splitOffsetRatio);
+      const cellCanvases = splitIntoCells(
+        variant.canvas,
+        OCR_CONFIG.digitCellCount,
+        overlap,
+        splitOffsetRatio
+      );
+      if (!hasValidCellGeometry(cellCanvases, {
+        mode: 'roi-deterministic',
         overlap,
         orientation: variant.orientation,
-        deskewAngle: roiNormalized.deskewAngle,
-        cropMode: variant.cropMode,
-        cropX: variant.cropX,
-        cropWidth: variant.cropWidth,
-        cropRatio: variant.cropRatio
-      },
-      { requireAllCells }
-    );
-    const finalized = finalizeReading(reading);
-    if (!finalized) {
-      continue;
-    }
-    const finalizedWithDecodeCanvas = {
-      ...finalized,
-      decodedStripCanvas: variant.canvas,
-      decodedCellCanvases: cellCanvases
-    };
-    finalizedVariants.push(finalizedWithDecodeCanvas);
-    const eligibleForPrimarySelection = selectRegisterVariants || variant.cropMode === 'full-strip';
-    if (!eligibleForPrimarySelection) {
-      continue;
-    }
-    if (
-      !best
-      || finalizedWithDecodeCanvas.score > best.score
-      || (
-        finalizedWithDecodeCanvas.score === best.score
-        && finalizedWithDecodeCanvas.confidence > best.confidence
-      )
-    ) {
-      best = finalizedWithDecodeCanvas;
+        splitOffsetRatio,
+        splitMode
+      })) {
+        continue;
+      }
+      const reading = await decodeCells(
+        cellCanvases,
+        {
+          variantIndex: i,
+          overlap,
+          orientation: variant.orientation,
+          deskewAngle: roiNormalized.deskewAngle,
+          cropMode: variant.cropMode,
+          cropX: variant.cropX,
+          cropWidth: variant.cropWidth,
+          cropRatio: variant.cropRatio,
+          splitOffsetRatio,
+          splitMode
+        },
+        { requireAllCells }
+      );
+      const finalized = finalizeReading(reading);
+      if (!finalized) {
+        continue;
+      }
+      const finalizedWithDecodeCanvas = {
+        ...finalized,
+        decodedStripCanvas: variant.canvas,
+        decodedCellCanvases: cellCanvases
+      };
+      finalizedVariants.push(finalizedWithDecodeCanvas);
+      const defaultSplit = Math.abs(splitOffsetRatio) < 0.0005;
+      const splitEligibleForSelection = defaultSplit || !splitProbeShadowOnly;
+      const cropEligibleForSelection = selectRegisterVariants || variant.cropMode === 'full-strip';
+      const eligibleForPrimarySelection = cropEligibleForSelection && splitEligibleForSelection;
+      if (!eligibleForPrimarySelection) {
+        continue;
+      }
+      if (
+        !best
+        || finalizedWithDecodeCanvas.score > best.score
+        || (
+          finalizedWithDecodeCanvas.score === best.score
+          && finalizedWithDecodeCanvas.confidence > best.confidence
+        )
+      ) {
+        best = finalizedWithDecodeCanvas;
+      }
     }
   }
 
@@ -883,6 +953,8 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
         cellConfidences: Array.isArray(candidate.cellConfidences) ? [...candidate.cellConfidences] : [],
         cropMode: candidate.cropMode || null,
         cropRatio: Number.isFinite(candidate.cropRatio) ? candidate.cropRatio : null,
+        splitOffsetRatio: Number.isFinite(candidate.splitOffsetRatio) ? candidate.splitOffsetRatio : 0,
+        splitMode: candidate.splitMode || 'equal-cells',
         orientation: Number.isFinite(candidate.orientation) ? candidate.orientation : null
       }))
       .sort((a, b) => (b.score ?? -1) - (a.score ?? -1))

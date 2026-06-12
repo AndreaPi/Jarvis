@@ -24,9 +24,10 @@
 
 ## Active Benchmark Baseline
 - Current UI test-set surface is `assets/meter_readings.csv`, currently `31` images after the June 2026 ROI ingestion through `meter_20260606.JPEG`.
-- Current promoted ROI + restored promoted per-cell classifier baseline, measured June 9, 2026:
+- Current promoted ROI + restored promoted per-cell classifier baseline, rechecked June 11, 2026:
   - UI checkpoint diff surface: `MAE 106.83`, `Exact Match 11/31`, `No-read 1/31`
   - Previous ROI checkpoint on the same run: `MAE 388.00`, `Exact Match 11/31`, `No-read 1/31`
+  - UI production test-set run after the diagnostic split-offset probe: `MAE 106.83`, `Exact Match 11/31`, `No-read 1/31`
   - `npm run test:e2e`: passes (`7/7`)
 - Historical restored per-cell classifier baseline with the conservative geometry ranker, measured May 29, 2026:
   - UI test set: `MAE 166.07`, `Exact Match 10/29`, `No-read 1/29`
@@ -53,7 +54,8 @@
 7. Use `npm run qa:cell-crops` to inspect candidate-family coverage before changing selection. The June 8, 2026 register-localization probe found expected readings only on already-covered rows, so it was rolled back; the retained report now includes non-readable candidates and expected-hit family counts.
 8. Use `npm run qa:roi-geometry-audit` when expected readings remain absent from expanded candidates. The June 8, 2026 focused audit of the current `10` candidate-coverage rows split them into `7` crop-family boundary-clipped rows and `3` edge-window-present normalization-insufficient rows.
 9. Do not reintroduce the June 9, 2026 `regwin` register-window crop family without a stronger guard. Its focused run produced near-miss values but no exact expected candidate recovery, and selectable experiments regressed to `MAE 1345.10` (`maxPrimaryCandidates=4`) and `MAE 1378.67` (`maxPrimaryCandidates=20`). The implementation was removed to avoid dead diagnostic code.
-10. Medium-term: evaluate YOLO OBB ROI detection only if axis-aligned ROI retrains still leave rotation or edge ambiguity.
+10. Keep `roiDeterministic.cellSplitProbe` shadow-only. The June 11, 2026 QA run found `splitProbeOnlyHitRowCount: 1` (`meter_20200701.JPEG`) and production UI metrics stayed `MAE 106.83`, `Exact Match 11/31`, `No-read 1/31`; this is diagnostic evidence for split placement, not a production promotion.
+11. Medium-term: evaluate YOLO OBB ROI detection only if axis-aligned ROI retrains still leave rotation or edge ambiguity.
 
 ## Digit Classifier Training Guardrail
 - Restore promoted checkpoints from DVC before digit experiments when local model outputs drift.

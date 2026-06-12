@@ -58,7 +58,13 @@ const OCR_CONFIG = {
     registerTargetAspect: 3.2,
     registerVerticalBandRatio: 0.68,
     registerCropRatios: [0.82, 0.72, 0.62, 0.52],
-    registerPaddingRatio: 1.02
+    registerPaddingRatio: 1.02,
+    cellSplitProbe: {
+      enabled: true,
+      shadowOnly: true,
+      offsetRatios: [-0.08, -0.04, 0, 0.04, 0.08],
+      maxOffsetsPerVariant: 5
+    }
   },
   digitClassifier: {
     enabled: true,

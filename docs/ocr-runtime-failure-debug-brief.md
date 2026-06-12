@@ -9,7 +9,7 @@ Create a focused starting point for the next OCR runtime-failure debugging pass.
 | Area | Evidence | Working read |
 | --- | --- | --- |
 | Active OCR path | Neural ROI is mandatory; digit-classifier inference is mandatory; whole-strip readers remain shadow-only. | Debugging should stay on ROI candidate selection, strip normalization, cell splits, and primary classifier inputs. |
-| Benchmark baseline | May 29, 2026 UI test set: `MAE 166.07`, `Exact Match 10/29`, `No-read 1/29`; ranker-off control: `MAE 166.57`, `Exact Match 10/29`, `No-read 1/29`. | The conservative geometry ranker is only a small tie-breaker, not a broad rejection mechanism. |
+| Benchmark baseline | Current promoted ROI + restored per-cell classifier surface, rechecked June 11, 2026: `MAE 106.83`, `Exact Match 11/31`, `No-read 1/31`. The previous ROI checkpoint on the same 31-image surface was `MAE 388.00`, `Exact Match 11/31`, `No-read 1/31`. | The June 9 ROI checkpoint promotion remains valid; remaining high-impact failures are mostly crop/split/selection problems, not ROI detection misses. |
 | Selected failure taxonomy | `right_truncated`: 5, `overwide_split`: 4, `classifier_or_local_split`: 2, plus one each of `overwide_rotated_split`, `overwide_blurry_split`, `degenerate_rotated`, and `degenerate_no_digits`. | The dominant failures are upstream geometry/cropping issues, not isolated digit-classifier misses. |
 | Debug summaries | `output/debug-stage-inspection/summary.json` covers 7 rows; selected sources are `roi-90-base-roi` for 6 rows and `roi-90-edge-roi` for 1 row. Reject summaries include `classifier-edge-candidate-selected`: 14 and `classifier-missing-cell-digit`: 1. | Candidate selection is producing rejected edge alternatives and mostly selecting base ROI variants in the inspected subset. |
 | Guardrails | `src/ocr/AGENTS.md` says to run both `npm run test:e2e` and the UI `Run test set` before treating OCR changes as promotable. | Any code change should be judged by UI-set `MAE`, with exact match and no-read as guardrails. |
@@ -63,7 +63,7 @@ Candidate checks worth testing:
 npm run test:e2e
 ```
 
-Then run the UI `Run test set` with the debug overlay enabled. Promotion requires improved `MAE` without exact-match or no-read regressions against the active 29-image baseline.
+Then run the UI `Run test set` with the debug overlay enabled. Promotion requires improved `MAE` without exact-match or no-read regressions against the active 31-image baseline.
 
 ## Open Questions
 
@@ -201,3 +201,15 @@ The ROI detector was retrained with the existing heavy-augmentation and rotation
 - The largest improvements were the two recent iPhone captures: `meter_20260524.JPEG` improved from `5332` to `2305`, and `meter_20260606.JPEG` improved from `9302` to `2007`.
 - The main regression was `meter_20260603.JPEG`, from `2317` to `3332`, but visual audit showed the new detector crop still contains the expected register region; this remains a classifier/selection issue rather than a detector rejection.
 - The retrained checkpoint was promoted by refreshing `backend/models/roi-rotaug-e30-640.pt`; `npm run test:e2e` passed (`7/7`).
+
+## Execution Notes - 2026-06-11 Cell Split-Offset Probe
+
+The reduced crop-inspection pass showed that some readable strips contain the expected digits visually, but the equal-width four-cell split cuts a digit boundary badly enough that no exact decoded candidate is produced. A diagnostic-only split-offset probe was added to measure that path without changing production selection:
+
+- `src/ocr/recognition.js` now tries configured non-zero cell-split offsets only when `digitClassifier.decodeDiagnosticCandidates=true` and `enableCellSplitProbe=true`. Non-zero split offsets are limited to full-strip variants and remain ineligible for primary selection while `roiDeterministic.cellSplitProbe.shadowOnly` is true.
+- `scripts/export-cell-crop-failure-qa.cjs` now reports split mode/offset metadata, supports `CELL_CROP_QA_FILES=...` for focused runs, and summarizes `splitProbeHitRowCount` plus `splitProbeOnlyHitRowCount`.
+- Focused priority QA on the 10 reduced-review rows produced `output/cell-crop-failure-qa/20260611-235534/`: `expectedAbsentRowCount: 3`, `splitProbeHitRowCount: 3`, and `splitProbeOnlyHitRowCount: 1`. The one new exact decode was `meter_20200701.JPEG`, expected `1784`, recovered as an internal `scan-roi` full-strip split with `offset-left8`.
+- Full QA produced `output/cell-crop-failure-qa/20260611-235607/`: `rowCount: 19`, `expectedAbsentRowCount: 9`, `expectedPresentRowCount: 10`, `splitProbeHitRowCount: 6`, and `splitProbeOnlyHitRowCount: 1`.
+- Production behavior stayed unchanged. The UI production test-set run on the current 31 images stayed at `MAE 106.83`, `Exact Match 11/31`, and `No-read 1/31`; `npm run test:e2e` passed (`7/7`).
+
+Conclusion: keep the split-offset probe as QA evidence, not as a production selector. It proves split placement can recover at least one absent expected reading, but it does not rescue the dominant remaining crop-coverage rows (`meter_20260327.JPEG`, `meter_20260603.JPEG`, `meter_20260606.JPEG`) and therefore should not displace upstream crop-normalization or selection-arbitration work.

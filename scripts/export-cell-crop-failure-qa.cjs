@@ -13,6 +13,10 @@ const BACKEND_URL = process.env.JARVIS_BACKEND_URL || 'http://127.0.0.1:8001';
 const OUTPUT_ROOT = path.join(ROOT_DIR, 'output', 'cell-crop-failure-qa');
 const MAX_PRIMARY_CANDIDATES = 20;
 const MAX_DIAGNOSTIC_CANDIDATES = 36;
+const QA_FILES = new Set(String(process.env.CELL_CROP_QA_FILES || '')
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean));
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -245,6 +249,46 @@ const countExpectedHitFamilies = (candidates, expected) => candidates.reduce((co
   return counts;
 }, {});
 
+const hasSplitProbeExpectedHit = (candidate, expected) => {
+  if (!candidate || !candidate.result) {
+    return false;
+  }
+  const result = candidate.result;
+  if (
+    result.value === expected
+    && Number.isFinite(result.splitOffsetRatio)
+    && Math.abs(result.splitOffsetRatio) > 0.0005
+  ) {
+    return true;
+  }
+  const variants = Array.isArray(result.variantCandidates) ? result.variantCandidates : [];
+  return variants.some((variant) => (
+    variant
+    && variant.value === expected
+    && Number.isFinite(variant.splitOffsetRatio)
+    && Math.abs(variant.splitOffsetRatio) > 0.0005
+  ));
+};
+
+const hasNonSplitExpectedHit = (candidate, expected) => {
+  if (!candidate || !candidate.result) {
+    return false;
+  }
+  const result = candidate.result;
+  if (
+    result.value === expected
+    && (!Number.isFinite(result.splitOffsetRatio) || Math.abs(result.splitOffsetRatio) <= 0.0005)
+  ) {
+    return true;
+  }
+  const variants = Array.isArray(result.variantCandidates) ? result.variantCandidates : [];
+  return variants.some((variant) => (
+    variant
+    && variant.value === expected
+    && (!Number.isFinite(variant.splitOffsetRatio) || Math.abs(variant.splitOffsetRatio) <= 0.0005)
+  ));
+};
+
 const formatCountMap = (counts) => {
   const entries = Object.entries(counts || {});
   if (!entries.length) {
@@ -272,6 +316,8 @@ const summarizeComparisonEntry = (entry, expected, matchKind = '') => {
     confidence: Number.isFinite(result.confidence) ? result.confidence : null,
     cropMode: result.cropMode || '',
     cropRatio: Number.isFinite(result.cropRatio) ? result.cropRatio : null,
+    splitOffsetRatio: Number.isFinite(result.splitOffsetRatio) ? result.splitOffsetRatio : 0,
+    splitMode: result.splitMode || '',
     geometryRankPenalty: Number.isFinite(result.geometryRankPenalty) ? result.geometryRankPenalty : null,
     selectionGeometryPenalty: Number.isFinite(result.selectionGeometryPenalty)
       ? result.selectionGeometryPenalty
@@ -291,6 +337,8 @@ const summarizeVariantComparisonEntry = (candidate, variant, expected) => ({
   confidence: variant && Number.isFinite(variant.confidence) ? variant.confidence : null,
   cropMode: variant && variant.cropMode ? variant.cropMode : '',
   cropRatio: variant && Number.isFinite(variant.cropRatio) ? variant.cropRatio : null,
+  splitOffsetRatio: variant && Number.isFinite(variant.splitOffsetRatio) ? variant.splitOffsetRatio : 0,
+  splitMode: variant && variant.splitMode ? variant.splitMode : '',
   geometryRankPenalty: variant && Number.isFinite(variant.geometryRankPenalty) ? variant.geometryRankPenalty : null,
   selectionGeometryPenalty: null,
   geometryRankReasons: variant && Array.isArray(variant.geometryRankReasons)
@@ -341,6 +389,10 @@ const describeSelectedVsExpected = (candidates, expected, productionSelected) =>
         : null,
       cropMode: productionSelected && productionSelected.cropMode ? productionSelected.cropMode : '',
       cropRatio: productionSelected && Number.isFinite(productionSelected.cropRatio) ? productionSelected.cropRatio : null,
+      splitOffsetRatio: productionSelected && Number.isFinite(productionSelected.splitOffsetRatio)
+        ? productionSelected.splitOffsetRatio
+        : 0,
+      splitMode: productionSelected && productionSelected.splitMode ? productionSelected.splitMode : '',
       geometryRankPenalty: productionSelected && Number.isFinite(productionSelected.geometryRankPenalty)
         ? productionSelected.geometryRankPenalty
         : null,
@@ -432,9 +484,12 @@ const comparisonText = (entry) => {
   const crop = entry.cropMode
     ? ` crop ${entry.cropMode}${Number.isFinite(entry.cropRatio) ? ` ${entry.cropRatio.toFixed(3)}` : ''}`
     : '';
+  const split = entry.splitMode
+    ? ` split ${entry.splitMode}${Number.isFinite(entry.splitOffsetRatio) ? ` ${entry.splitOffsetRatio.toFixed(3)}` : ''}`
+    : '';
   const diagnostic = entry.diagnosticOnly ? ' diagnostic' : '';
   const family = entry.sourceFamily ? ` family ${entry.sourceFamily}` : '';
-  return `${entry.value || 'no-read'} @ ${entry.sourceLabel || 'unknown'}${family}${diagnostic} score ${scoreText(entry.score)} conf ${confidenceText(entry.confidence)}${crop}${reasons}`;
+  return `${entry.value || 'no-read'} @ ${entry.sourceLabel || 'unknown'}${family}${diagnostic} score ${scoreText(entry.score)} conf ${confidenceText(entry.confidence)}${crop}${split}${reasons}`;
 };
 
 const writeCandidateImages = async (row, candidate, rowDir, index) => {
@@ -482,9 +537,12 @@ const buildReportHtml = (rows, outputDir) => {
         ? `<p class="variants"><strong>internal variants:</strong> ${result.variantCandidates.map((variant) => {
           const score = Number.isFinite(variant.score) ? variant.score.toFixed(3) : 'n/a';
           const crop = `${variant.cropMode || 'n/a'}${Number.isFinite(variant.cropRatio) ? ` ${variant.cropRatio.toFixed(3)}` : ''}`;
+          const split = variant.splitMode
+            ? ` split ${variant.splitMode}${Number.isFinite(variant.splitOffsetRatio) ? ` ${variant.splitOffsetRatio.toFixed(3)}` : ''}`
+            : '';
           const eligibility = variant.registerSelectionEligible ? ' eligible' : '';
           const marker = variant.value === row.expected ? ' *expected*' : '';
-          return `${htmlEscape(variant.value || 'no-read')} (${score}, ${htmlEscape(crop)}${eligibility})${marker}`;
+          return `${htmlEscape(variant.value || 'no-read')} (${score}, ${htmlEscape(crop)}${htmlEscape(split)}${eligibility})${marker}`;
         }).join(' | ')}</p>`
         : '';
       return `
@@ -500,6 +558,7 @@ const buildReportHtml = (rows, outputDir) => {
             <span>digits ${htmlEscape(Array.isArray(result.cellDigits) ? result.cellDigits.join(' ') : 'n/a')}</span>
             <span>cells ${htmlEscape(Array.isArray(result.cellConfidences) ? result.cellConfidences.map((v) => confidenceText(v)).join(' / ') : 'n/a')}</span>
             <span>crop ${htmlEscape(result.cropMode || 'n/a')}${Number.isFinite(result.cropRatio) ? ` ${result.cropRatio.toFixed(3)}` : ''}</span>
+            <span>split ${htmlEscape(result.splitMode || 'equal-cells')}${Number.isFinite(result.splitOffsetRatio) ? ` ${result.splitOffsetRatio.toFixed(3)}` : ''}</span>
             ${candidate.diagnosticOnly ? `<span class="pill">diagnostic ${htmlEscape(candidate.probeKind || 'candidate')}</span>` : ''}
             ${isSelected ? '<span class="pill">normal selected source</span>' : ''}
           </p>
@@ -580,7 +639,13 @@ const main = async () => {
   const outputDir = path.join(OUTPUT_ROOT, timestampId());
   const imagesDir = path.join(outputDir, 'images');
   await fsp.mkdir(imagesDir, { recursive: true });
-  const rows = parseCsv(await fsp.readFile(path.join(ROOT_DIR, 'assets', 'meter_readings.csv'), 'utf8'));
+  const allRows = parseCsv(await fsp.readFile(path.join(ROOT_DIR, 'assets', 'meter_readings.csv'), 'utf8'));
+  const rows = QA_FILES.size
+    ? allRows.filter((row) => QA_FILES.has(row.filename))
+    : allRows;
+  if (QA_FILES.size && !rows.length) {
+    throw new Error(`CELL_CROP_QA_FILES did not match any rows: ${[...QA_FILES].join(', ')}`);
+  }
   const processes = await ensureServices();
   const browser = await chromium.launch({ headless: true });
   const reportRows = [];
@@ -665,6 +730,13 @@ const main = async () => {
   const registerLocalizationHitRowCount = reportRows.filter((row) => (
     row.expectedHitFamilyCounts && row.expectedHitFamilyCounts.regloc > 0
   )).length;
+  const splitProbeHitRowCount = reportRows.filter((row) => (
+    row.candidates.some((candidate) => hasSplitProbeExpectedHit(candidate, row.expected))
+  )).length;
+  const splitProbeOnlyHitRowCount = reportRows.filter((row) => (
+    row.candidates.some((candidate) => hasSplitProbeExpectedHit(candidate, row.expected))
+    && !row.candidates.some((candidate) => hasNonSplitExpectedHit(candidate, row.expected))
+  )).length;
   const sourceFamilyExpectedHitCounts = reportRows.reduce((counts, row) => {
     Object.keys(row.expectedHitFamilyCounts || {}).forEach((family) => {
       incrementCount(counts, family);
@@ -686,6 +758,8 @@ const main = async () => {
     failureSplitCounts,
     shadowProbeHitRowCount,
     registerLocalizationHitRowCount,
+    splitProbeHitRowCount,
+    splitProbeOnlyHitRowCount,
     sourceFamilyExpectedHitCounts,
     rows: reportRows.map((row) => ({
       ...row,
@@ -721,6 +795,8 @@ const main = async () => {
     failureSplitCounts,
     shadowProbeHitRowCount,
     registerLocalizationHitRowCount,
+    splitProbeHitRowCount,
+    splitProbeOnlyHitRowCount,
     sourceFamilyExpectedHitCounts,
     rows: reportRows.map((row) => ({
       filename: row.filename,
@@ -730,6 +806,11 @@ const main = async () => {
       failureSplit: row.failureSplit ? row.failureSplit.bucket : '',
       nextAction: row.failureSplit ? row.failureSplit.nextAction : '',
       shadowProbeHit: !!(row.failureSplit && row.failureSplit.diagnosticHit),
+      splitProbeHit: row.candidates.some((candidate) => hasSplitProbeExpectedHit(candidate, row.expected)),
+      splitProbeOnlyHit: (
+        row.candidates.some((candidate) => hasSplitProbeExpectedHit(candidate, row.expected))
+        && !row.candidates.some((candidate) => hasNonSplitExpectedHit(candidate, row.expected))
+      ),
       scoreDelta: row.selectionComparison && Number.isFinite(row.selectionComparison.scoreDelta)
         ? Number(row.selectionComparison.scoreDelta.toFixed(3))
         : null,

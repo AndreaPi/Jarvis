@@ -277,6 +277,10 @@ const serializeCellVariantCandidates = (candidates) => {
     cropRatio: candidate && Number.isFinite(candidate.cropRatio)
       ? Number(candidate.cropRatio.toFixed(3))
       : null,
+    splitOffsetRatio: candidate && Number.isFinite(candidate.splitOffsetRatio)
+      ? Number(candidate.splitOffsetRatio.toFixed(3))
+      : 0,
+    splitMode: candidate && candidate.splitMode ? candidate.splitMode : null,
     orientation: candidate && Number.isFinite(candidate.orientation) ? candidate.orientation : null
   }));
 };
@@ -568,6 +572,10 @@ const finalizeSelection = ({
       angle: Number.isFinite(bestMatch.result.angle) ? bestMatch.result.angle : null,
       cellDigits: Array.isArray(bestMatch.result.cellDigits) ? bestMatch.result.cellDigits : null,
       cellConfidences: bestMatch.result.cellConfidences || null,
+      splitOffsetRatio: Number.isFinite(bestMatch.result.splitOffsetRatio)
+        ? bestMatch.result.splitOffsetRatio
+        : 0,
+      splitMode: bestMatch.result.splitMode || null,
       confidence: Number.isFinite(bestMatch.result.confidence) ? bestMatch.result.confidence : 0
     };
   };
@@ -633,7 +641,11 @@ const finalizeSelection = ({
         preprocessMode: carryMetadata && carryMetadata.preprocessMode ? carryMetadata.preprocessMode : null,
         angle: carryMetadata && Number.isFinite(carryMetadata.angle) ? carryMetadata.angle : null,
         cellDigits: carryMetadata && Array.isArray(carryMetadata.cellDigits) ? carryMetadata.cellDigits : null,
-        cellConfidences: carryMetadata ? serializeCellConfidences(carryMetadata.cellConfidences) : null
+        cellConfidences: carryMetadata ? serializeCellConfidences(carryMetadata.cellConfidences) : null,
+        splitOffsetRatio: carryMetadata && Number.isFinite(carryMetadata.splitOffsetRatio)
+          ? Number(carryMetadata.splitOffsetRatio.toFixed(3))
+          : 0,
+        splitMode: carryMetadata && carryMetadata.splitMode ? carryMetadata.splitMode : null
       };
     }
   }
@@ -734,7 +746,11 @@ const finalizeSelection = ({
       preprocessMode: finalResult.preprocessMode || null,
       angle: Number.isFinite(finalResult.angle) ? finalResult.angle : null,
       cellDigits: Array.isArray(finalResult.cellDigits) ? finalResult.cellDigits : null,
-      cellConfidences: serializeCellConfidences(finalResult.cellConfidences)
+      cellConfidences: serializeCellConfidences(finalResult.cellConfidences),
+      splitOffsetRatio: Number.isFinite(finalResult.splitOffsetRatio)
+        ? Number(finalResult.splitOffsetRatio.toFixed(3))
+        : 0,
+      splitMode: finalResult.splitMode || null
     } : null,
     stripReader,
     stripReader23xx,
@@ -1515,6 +1531,7 @@ const evaluateCandidateBranch = async ({
       const candidateRejects = [];
       const reading = await readDigitsByCells(candidate.canvas, null, {
         roiMode: true,
+        enableCellSplitProbe: stageLabel !== 'classifier-diagnostic-normalization',
         onReject: (detail) => {
           candidateRejects.push(detail);
           recordDecodeReject(candidate, detail, stageLabel);
@@ -1570,6 +1587,10 @@ const evaluateCandidateBranch = async ({
             cellConfidences: serializeCellConfidences(reading.cellConfidences),
             cropMode: reading.cropMode || null,
             cropRatio: Number.isFinite(reading.cropRatio) ? Number(reading.cropRatio.toFixed(3)) : null,
+            splitOffsetRatio: Number.isFinite(reading.splitOffsetRatio)
+              ? Number(reading.splitOffsetRatio.toFixed(3))
+              : 0,
+            splitMode: reading.splitMode || null,
             geometryRankPenalty: Number.isFinite(reading.geometryRankPenalty)
               ? Number(reading.geometryRankPenalty.toFixed(3))
               : null,
@@ -1659,6 +1680,10 @@ const evaluateCandidateBranch = async ({
           cropRatio: Number.isFinite(classifierReadingForSelection.cropRatio)
             ? Number(classifierReadingForSelection.cropRatio.toFixed(3))
             : null,
+          splitOffsetRatio: Number.isFinite(classifierReadingForSelection.splitOffsetRatio)
+            ? Number(classifierReadingForSelection.splitOffsetRatio.toFixed(3))
+            : 0,
+          splitMode: classifierReadingForSelection.splitMode || null,
           baseScore: Number.isFinite(classifierReadingForSelection.baseScore)
             ? Number(classifierReadingForSelection.baseScore.toFixed(3))
             : null,
