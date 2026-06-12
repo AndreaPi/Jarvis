@@ -9,7 +9,7 @@ Create a focused starting point for the next OCR runtime-failure debugging pass.
 | Area | Evidence | Working read |
 | --- | --- | --- |
 | Active OCR path | Neural ROI is mandatory; digit-classifier inference is mandatory; whole-strip readers remain shadow-only. | Debugging should stay on ROI candidate selection, strip normalization, cell splits, and primary classifier inputs. |
-| Benchmark baseline | Current promoted ROI + restored per-cell classifier surface, rechecked June 11, 2026: `MAE 106.83`, `Exact Match 11/31`, `No-read 1/31`. The previous ROI checkpoint on the same 31-image surface was `MAE 388.00`, `Exact Match 11/31`, `No-read 1/31`. | The June 9 ROI checkpoint promotion remains valid; remaining high-impact failures are mostly crop/split/selection problems, not ROI detection misses. |
+| Benchmark baseline | Current promoted ROI + restored per-cell classifier surface, rechecked June 12, 2026 after ingesting `meter_20260612.JPEG`: `MAE 111.75`, `Exact Match 11/33`, `No-read 1/33`. The June 9 ROI checkpoint diff surface before the June 10/12 ingestions was `MAE 106.83`, `Exact Match 11/31`, `No-read 1/31`; the previous ROI checkpoint on that 31-image surface was `MAE 388.00`, `Exact Match 11/31`, `No-read 1/31`. | The June 9 ROI checkpoint promotion remains valid; remaining high-impact failures are mostly crop/split/selection problems, not ROI detection misses. |
 | Selected failure taxonomy | `right_truncated`: 5, `overwide_split`: 4, `classifier_or_local_split`: 2, plus one each of `overwide_rotated_split`, `overwide_blurry_split`, `degenerate_rotated`, and `degenerate_no_digits`. | The dominant failures are upstream geometry/cropping issues, not isolated digit-classifier misses. |
 | Debug summaries | `output/debug-stage-inspection/summary.json` covers 7 rows; selected sources are `roi-90-base-roi` for 6 rows and `roi-90-edge-roi` for 1 row. Reject summaries include `classifier-edge-candidate-selected`: 14 and `classifier-missing-cell-digit`: 1. | Candidate selection is producing rejected edge alternatives and mostly selecting base ROI variants in the inspected subset. |
 | Guardrails | `src/ocr/AGENTS.md` says to run both `npm run test:e2e` and the UI `Run test set` before treating OCR changes as promotable. | Any code change should be judged by UI-set `MAE`, with exact match and no-read as guardrails. |
@@ -63,14 +63,14 @@ Candidate checks worth testing:
 npm run test:e2e
 ```
 
-Then run the UI `Run test set` with the debug overlay enabled. Promotion requires improved `MAE` without exact-match or no-read regressions against the active 31-image baseline.
+Then run the UI `Run test set` with the debug overlay enabled. Promotion requires improved `MAE` without exact-match or no-read regressions against the active 33-image baseline.
 
 ## Open Questions
 
 | Question | Why it matters |
 | --- | --- |
 | Are the latest QA outputs newer than the May 2026 guidance? | The brief uses existing checked-in summaries; rerunning QA may reveal drift. |
-| Which files are currently failing on the 29-image UI set? | The selected taxonomy has 15 rows and may not cover every current failure. |
+| Which files are currently failing on the latest UI set? | The selected taxonomy is historical and may not cover every current failure. |
 | Do edge candidates consistently preserve full digit coverage on right-truncated rows? | If yes, the next fix may be ranker arbitration rather than ROI crop generation. |
 
 ## Decision
@@ -105,11 +105,11 @@ Next debugging should not spend more time on tight-register selection alone. The
 
 The next pass started upstream in ROI candidate construction rather than retraining:
 
-- Pre-change `npm run qa:cell-crops` on the current local `31`-row corpus produced `output/cell-crop-failure-qa/20260608-000736/` with `rowCount: 20`, `expectedAbsentRowCount: 14`, `expectedPresentRowCount: 6`, and coverage counts of `14` absent, `5` internal-variant present, and `1` direct-candidate present.
+- Pre-change `npm run qa:cell-crops` on the then-current local `31`-row corpus produced `output/cell-crop-failure-qa/20260608-000736/` with `rowCount: 20`, `expectedAbsentRowCount: 14`, `expectedPresentRowCount: 6`, and coverage counts of `14` absent, `5` internal-variant present, and `1` direct-candidate present.
 - A first padded edge-context prototype used horizontal shifts through `+0.14`. It improved coverage to `expectedAbsentRowCount: 11` in `output/cell-crop-failure-qa/20260608-000853/`, but the far-right shift also produced wrong primary selections on some rows.
 - The retained upstream experiment narrows edge-context shifts to `[-0.08, 0, 0.08]` with `edgeContextMaxVariantsPerAngle: 3`. It preserves exact edge and base candidates while adding bounded, clamped, deduped padded edge-context crops in `src/ocr/alignment.js`.
 - The retained run `output/cell-crop-failure-qa/20260608-001015/` produced `rowCount: 19`, `expectedAbsentRowCount: 13`, `expectedPresentRowCount: 6`, and coverage counts of `13` absent, `3` internal-variant present, and `3` direct-candidate present.
-- UI `Run test set` on the same current `31` rows reported `MAE 388.00`, `Exact Match 11/31`, and `No-read 1/31`. From the pre-change cell-crop selected values, the same local surface was effectively `MAE 388.30`, `Exact Match 10/31`, and `No-read 1/31`, so this is a narrow promotable improvement on the local corpus.
+- UI `Run test set` on the same then-current `31` rows reported `MAE 388.00`, `Exact Match 11/31`, and `No-read 1/31`. From the pre-change cell-crop selected values, the same local surface was effectively `MAE 388.30`, `Exact Match 10/31`, and `No-read 1/31`, so this is a narrow promotable improvement on the local corpus.
 - `npm run qa:strip-runtime` produced `output/strip-runtime-qa/20260608-001339/`; focused primary values remained wrong on the inspected hard rows, so strip readers remain shadow-only.
 - `npm run test:e2e` passed (`7/7`).
 
@@ -133,7 +133,7 @@ The upstream follow-up implemented a shadow-only crop-normalization probe:
 - `src/ocr/pipeline.js` filters diagnostic candidates out of production selection. They are decoded only when `digitClassifier.decodeDiagnosticCandidates` is enabled, and that pass cannot update `bestResult` or production evidence.
 - `npm run qa:cell-crops` produced `output/cell-crop-failure-qa/20260608-115615/`. With diagnostic decoding enabled in the oracle pass, `expectedAbsentRowCount` fell from `13` to `10`; `shadowProbeHitRowCount` was `4`.
 - The QA split now reports `candidate-coverage`, `shadow-coverage-gain`, and `selection-arbitration`. The retained run split was `10` candidate-coverage rows, `4` shadow-coverage-gain rows, and `5` selection-arbitration rows.
-- A production-path UI test-set run on the current `31` rows stayed at `MAE 388.00`, `Exact Match 11/31`, and `No-read 1/31`, because diagnostic candidates remain shadow-only by default.
+- A production-path UI test-set run on the then-current `31` rows stayed at `MAE 388.00`, `Exact Match 11/31`, and `No-read 1/31`, because diagnostic candidates remain shadow-only by default.
 
 This made one narrow normalization family, the repeated winning probe shape `a24-h116-center`, the next guarded promotion experiment to try.
 
@@ -185,7 +185,7 @@ Treat this as diagnostic evidence, not a promotion candidate. The executable `re
 
 The focused `regwin` near-misses were tested as selectable candidates through a temporary runtime override, without changing default config:
 
-- Baseline production run on the current `31` rows stayed at `MAE 388.00`, `Exact Match 11/31`, and `No-read 1/31`.
+- Baseline production run on the then-current `31` rows stayed at `MAE 388.00`, `Exact Match 11/31`, and `No-read 1/31`.
 - `regwin` selectable with the normal `maxPrimaryCandidates=4` failed the guardrails: `MAE 1345.10`, `Exact Match 9/31`, `No-read 1/31`, with `regwin` selected on `11` rows.
 - `regwin` selectable with a wide `maxPrimaryCandidates=20` also failed: `MAE 1378.67`, `Exact Match 6/31`, `No-read 1/31`, with `regwin` selected on `16` rows.
 - The two June iPhone rows improved only superficially in some cases but remained wrong: `meter_20260524.JPEG` selected `1231`/`1240` instead of `2335`, and `meter_20260606.JPEG` selected `1222`/`2007` instead of `2337`.
@@ -194,7 +194,7 @@ Conclusion: do not keep the `regwin` candidate family in production code. The us
 
 ## Execution Notes - 2026-06-09 ROI Retrain Promotion
 
-The ROI detector was retrained with the existing heavy-augmentation and rotation-expansion policy on the current 31-image ROI corpus, using a temporary training YAML that maps YOLO validation to the fixed test image because the canonical validation split is intentionally empty. The validation metric is diagnostic only; promotion was judged on browser OCR.
+The ROI detector was retrained with the existing heavy-augmentation and rotation-expansion policy on the then-current 31-image ROI corpus, using a temporary training YAML that maps YOLO validation to the fixed test image because the canonical validation split is intentionally empty. The validation metric is diagnostic only; promotion was judged on browser OCR.
 
 - `npm run benchmark:roi-diff` produced `output/roi-checkpoint-diff/20260609-113924-neural-digit/`.
 - The challenger improved primary-path `MAE` from `388.00` to `106.83`, while exact match stayed `11/31` and no-read stayed `1/31`.
@@ -213,3 +213,12 @@ The reduced crop-inspection pass showed that some readable strips contain the ex
 - Production behavior stayed unchanged. The UI production test-set run on the current 31 images stayed at `MAE 106.83`, `Exact Match 11/31`, and `No-read 1/31`; `npm run test:e2e` passed (`7/7`).
 
 Conclusion: keep the split-offset probe as QA evidence, not as a production selector. It proves split placement can recover at least one absent expected reading, but it does not rescue the dominant remaining crop-coverage rows (`meter_20260327.JPEG`, `meter_20260603.JPEG`, `meter_20260606.JPEG`) and therefore should not displace upstream crop-normalization or selection-arbitration work.
+
+## Execution Notes - 2026-06-12 ROI Dataset Ingestion
+
+The June 12 iPhone HEIC capture was converted to canonical `assets/meter_20260612.JPEG`, labeled manually, added to `assets/meter_readings.csv` as expected `2339`, and synced into the ROI dataset train split. The generated ROI preview was manually approved before DVC refresh.
+
+- ROI dataset rebuild produced `33` rows (`train=32`, `val=0`, `test=1`) with `meter_20260612.JPEG` assigned to train.
+- DVC push via `scripts/dvc-push-safe.sh` published the updated ROI images directory and the new canonical asset.
+- UI `Run test set` on the current 33-image surface reported `MAE 111.75`, `Exact Match 11/33`, and `No-read 1/33`.
+- The new row remains a classifier/selection miss: expected `2339`, selected `2304` from `roi-90-base-roi` (absolute error `35`).

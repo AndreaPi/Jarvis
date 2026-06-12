@@ -7,9 +7,9 @@ Current baseline policy:
 - Use the latest UI **Run test set** histogram as source of truth (`window.__jarvisLastTestSetHistogram`).
 - Treat fixed numeric snapshots as historical only; they go stale quickly as thresholds/ranking change.
 - Evaluation uses `MAE` as the primary promotion signal; `Exact Match` and `No-read` are guardrails.
-- The active local test-set CSV is `assets/meter_readings.csv`, currently `29` images after the May 2026 ROI ingestion through `meter_20260524.JPEG`.
-- Current restored promoted digit-classifier baseline with the conservative geometry ranker, measured May 29, 2026: `MAE 166.07`, `Exact Match 10/29`, `No-read 1/29`.
-- Same-corpus May 29, 2026 ranker-off control: `MAE 166.57`, `Exact Match 10/29`, `No-read 1/29`. The ranker remains enabled because it slightly improves `MAE` without worsening guardrails.
+- The active local test-set CSV is `assets/meter_readings.csv`, currently `33` images after the June 2026 ROI ingestion through `meter_20260612.JPEG`.
+- Current promoted ROI + restored promoted per-cell classifier baseline, measured June 12, 2026: `MAE 111.75`, `Exact Match 11/33`, `No-read 1/33`.
+- Historical May 29, 2026 ranker-on/ranker-off control on the then-29-image corpus: ranker-on `MAE 166.07`, `Exact Match 10/29`, `No-read 1/29`; ranker-off `MAE 166.57`, `Exact Match 10/29`, `No-read 1/29`. The ranker remains enabled because it slightly improved `MAE` without worsening guardrails on that corpus.
 - Re-run the UI `Run test set` before treating any metric as the current promotion target.
 - `meter_20260112.JPEG`, `meter_20260113.jpg`, and `meter_20260219.JPEG` are intentionally removed from the active raw/test/training corpus because their visible readings are ambiguous.
 
@@ -164,7 +164,7 @@ May 27, 2026 split policy: grouped cross-validation by source image is now the d
 
 May 24, 2026 UI-selected runtime-failure review: the dominant failure mode is upstream strip/cell geometry, not pure digit classification. The tracked taxonomy lives in `docs/ocr-runtime-failure-selected-taxonomy.csv` and is rendered by `qa:runtime-failure-dataset`. Among the 15 UI-selected failure candidates, 13 are structurally invalid before classification: six have over-wide strips where cells 1 and 4 contain no digits while cells 2 and 3 contain two digits each (`meter_20200701.JPEG`, `meter_20260216.JPEG`, `meter_20260420.JPEG`, `meter_20260423.JPEG`, `meter_20260427.JPEG`, `meter_20260507.JPEG`), five are truncated on the right with two digits missing (`meter_20260401.JPEG`, `meter_20260409.JPEG`, `meter_20260512.JPEG`, `meter_20260515.JPEG`, `meter_20260518.JPEG`), and two are degenerate/rotated captures with one or zero usable digits (`meter_20260214.JPEG`, `meter_20260416.JPEG`). Only two reviewed failures looked like classifier or local split misses on otherwise usable strips (`meter_20260413.JPEG`, `meter_20260521.JPEG`). Prioritize candidate geometry/ranking fixes before spending more effort on digit-classifier fine-tuning.
 
-May 29, 2026 selector follow-up: the conservative candidate geometry ranker is deliberately a ranking tie-breaker, not a hard gate. It measures per-cell texture to detect sparse edge cells plus crowded middle cells, then applies only a tiny score penalty when compatible same-prefix edge evidence exists. Stronger penalties and low-texture gates regressed earlier UI benchmarks, so keep the ranker conservative unless a future UI Run test set proves otherwise. On the current 29-image corpus, ranker-on measured `MAE 166.07`, `Exact Match 10/29`, `No-read 1/29`; ranker-off measured `MAE 166.57`, `Exact Match 10/29`, `No-read 1/29`.
+May 29, 2026 selector follow-up: the conservative candidate geometry ranker is deliberately a ranking tie-breaker, not a hard gate. It measures per-cell texture to detect sparse edge cells plus crowded middle cells, then applies only a tiny score penalty when compatible same-prefix edge evidence exists. Stronger penalties and low-texture gates regressed earlier UI benchmarks, so keep the ranker conservative unless a future UI Run test set proves otherwise. On the then-current 29-image corpus, ranker-on measured `MAE 166.07`, `Exact Match 10/29`, `No-read 1/29`; ranker-off measured `MAE 166.57`, `Exact Match 10/29`, `No-read 1/29`.
 
 ## Checkpoint Promotion Gates
 

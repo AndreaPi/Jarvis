@@ -23,11 +23,12 @@
 - Diff artifacts and benchmark reports should use the last `6. OCR input candidate` frame as the selected OCR input snapshot.
 
 ## Active Benchmark Baseline
-- Current UI test-set surface is `assets/meter_readings.csv`, currently `31` images after the June 2026 ROI ingestion through `meter_20260606.JPEG`.
-- Current promoted ROI + restored promoted per-cell classifier baseline, rechecked June 11, 2026:
-  - UI checkpoint diff surface: `MAE 106.83`, `Exact Match 11/31`, `No-read 1/31`
-  - Previous ROI checkpoint on the same run: `MAE 388.00`, `Exact Match 11/31`, `No-read 1/31`
-  - UI production test-set run after the diagnostic split-offset probe: `MAE 106.83`, `Exact Match 11/31`, `No-read 1/31`
+- Current UI test-set surface is `assets/meter_readings.csv`, currently `33` images after the June 2026 ROI ingestion through `meter_20260612.JPEG`.
+- Current promoted ROI + restored promoted per-cell classifier baseline, rechecked June 12, 2026:
+  - UI production test-set run: `MAE 111.75`, `Exact Match 11/33`, `No-read 1/33`
+  - New `meter_20260612.JPEG` row: expected `2339`, selected `2304` from `roi-90-base-roi` (absolute error `35`)
+  - Previous 31-image ROI checkpoint diff surface before the June 10/12 ingestions: `MAE 106.83`, `Exact Match 11/31`, `No-read 1/31`
+  - Previous ROI checkpoint on that 31-image run: `MAE 388.00`, `Exact Match 11/31`, `No-read 1/31`
   - `npm run test:e2e`: passes (`7/7`)
 - Historical restored per-cell classifier baseline with the conservative geometry ranker, measured May 29, 2026:
   - UI test set: `MAE 166.07`, `Exact Match 10/29`, `No-read 1/29`
@@ -65,7 +66,7 @@
 - May 27, 2026 split policy: the digit dataset has no validation split. `meter_20260323.JPEG` is train, while `meter_20260327.JPEG` remains a fixed hard test holdout. Grouped CV by source image is the default experiment evaluator, and sibling cells/crops from the same meter photo must never leak across folds.
 - Write challengers under `backend/runs/...`; do not overwrite `backend/models/digit_classifier.pt` until the challenger improves UI `MAE` without worsening exact match or no-read count.
 - May 24, 2026 runtime-failure review found most selected failures were upstream strip/cell geometry problems, not standalone digit-classifier misses. Prioritize candidate geometry/ranking fixes before more digit fine-tuning.
-- May 29, 2026 conservative geometry ranker is a tiny tie-breaker, not a hard reject: it penalizes suspicious full-strip cell splits only when coherent same-prefix edge evidence already exists. Stronger geometry penalties regressed earlier UI benchmarks. On the current 29-image corpus, ranker-on measured `MAE 166.07`, `Exact Match 10/29`, `No-read 1/29`; ranker-off measured `MAE 166.57`, `Exact Match 10/29`, `No-read 1/29`, so the ranker stays enabled as a small same-corpus MAE improvement.
+- May 29, 2026 conservative geometry ranker is a tiny tie-breaker, not a hard reject: it penalizes suspicious full-strip cell splits only when coherent same-prefix edge evidence already exists. Stronger geometry penalties regressed earlier UI benchmarks. On the then-current 29-image corpus, ranker-on measured `MAE 166.07`, `Exact Match 10/29`, `No-read 1/29`; ranker-off measured `MAE 166.57`, `Exact Match 10/29`, `No-read 1/29`, so the ranker stays enabled as a small same-corpus MAE improvement.
 - May 24, 2026 curated-runtime fine-tune from the promoted checkpoint fixed some reviewed classifier/local-split misses (`meter_20260413.JPEG`) but broadly damaged previously-correct rows. Grouped CV improved, but the UI gate rejected the challenger, so keep runtime-failure fine-tuning as an experiment only until a full UI run improves `MAE` without guardrail regressions.
 
 ## House-Specific `23xx` Assumption
