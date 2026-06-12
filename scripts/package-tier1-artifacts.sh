@@ -63,8 +63,14 @@ cd "$REPO_ROOT"
   if [[ -d backend/data/roi_dataset/labels ]]; then
     find backend/data/roi_dataset/labels -type f | sort
   fi
+  if [[ -f backend/data/roi_dataset/splits.json ]]; then
+    printf '%s\n' backend/data/roi_dataset/splits.json
+  fi
   if [[ -d backend/data/digit_dataset/manifests ]]; then
     find backend/data/digit_dataset/manifests -type f | sort
+  fi
+  if [[ -d backend/data/digit_dataset/sections_synthetic/manifests ]]; then
+    find backend/data/digit_dataset/sections_synthetic/manifests -type f | sort
   fi
   if compgen -G 'backend/models/*.pt' > /dev/null; then
     printf '%s\n' backend/models/*.pt | sort
