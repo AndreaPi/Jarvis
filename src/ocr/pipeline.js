@@ -261,8 +261,8 @@ const serializeCellVariantCandidates = (candidates) => {
     baseScore: candidate && Number.isFinite(candidate.baseScore)
       ? Number(candidate.baseScore.toFixed(3))
       : null,
-    geometryScoreAdjustment: candidate && Number.isFinite(candidate.geometryScoreAdjustment)
-      ? Number(candidate.geometryScoreAdjustment.toFixed(3))
+    diagnosticGeometryScoreAdjustment: candidate && Number.isFinite(candidate.diagnosticGeometryScoreAdjustment)
+      ? Number(candidate.diagnosticGeometryScoreAdjustment.toFixed(3))
       : null,
     geometryRankPenalty: candidate && Number.isFinite(candidate.geometryRankPenalty)
       ? Number(candidate.geometryRankPenalty.toFixed(3))
@@ -1687,8 +1687,8 @@ const evaluateCandidateBranch = async ({
           baseScore: Number.isFinite(classifierReadingForSelection.baseScore)
             ? Number(classifierReadingForSelection.baseScore.toFixed(3))
             : null,
-          geometryScoreAdjustment: Number.isFinite(classifierReadingForSelection.geometryScoreAdjustment)
-            ? Number(classifierReadingForSelection.geometryScoreAdjustment.toFixed(3))
+          diagnosticGeometryScoreAdjustment: Number.isFinite(classifierReadingForSelection.diagnosticGeometryScoreAdjustment)
+            ? Number(classifierReadingForSelection.diagnosticGeometryScoreAdjustment.toFixed(3))
             : null,
           geometryRankPenalty: Number.isFinite(classifierReadingForSelection.geometryRankPenalty)
             ? Number(classifierReadingForSelection.geometryRankPenalty.toFixed(3))

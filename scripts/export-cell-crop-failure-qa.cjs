@@ -553,7 +553,7 @@ const buildReportHtml = (rows, outputDir) => {
             <span>value <b>${htmlEscape(candidate.value || 'no-read')}</b></span>
             <span>score ${Number.isFinite(result.score) ? result.score.toFixed(3) : 'n/a'}</span>
             <span>base ${Number.isFinite(result.baseScore) ? result.baseScore.toFixed(3) : 'n/a'}</span>
-            <span>geom ${Number.isFinite(result.geometryScoreAdjustment) ? result.geometryScoreAdjustment.toFixed(3) : 'n/a'}</span>
+            <span>diag geom ${Number.isFinite(result.diagnosticGeometryScoreAdjustment) ? result.diagnosticGeometryScoreAdjustment.toFixed(3) : 'n/a'}</span>
             <span>confidence ${confidenceText(result.confidence)}</span>
             <span>digits ${htmlEscape(Array.isArray(result.cellDigits) ? result.cellDigits.join(' ') : 'n/a')}</span>
             <span>cells ${htmlEscape(Array.isArray(result.cellConfidences) ? result.cellConfidences.map((v) => confidenceText(v)).join(' / ') : 'n/a')}</span>

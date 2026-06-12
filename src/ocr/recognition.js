@@ -367,7 +367,7 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
     return variants;
   };
 
-  const getGeometryScoreAdjustment = (reading) => {
+  const getDiagnosticGeometryScoreAdjustment = (reading) => {
     if (!reading) {
       return 0;
     }
@@ -786,7 +786,7 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
     const tunedConfidence = clamp(reading.averageConfidence + reading.foundRatio * 20, 0, 100);
     const normalizedConfidence = clamp(tunedConfidence / 100, 0, 1);
     const baseScore = clamp(0.42 + normalizedConfidence * 0.46 + (reading.foundRatio === 1 ? 0.08 : 0.02), 0, 0.99);
-    const geometryScoreAdjustment = getGeometryScoreAdjustment(reading);
+    const diagnosticGeometryScoreAdjustment = getDiagnosticGeometryScoreAdjustment(reading);
     const splitGeometry = reading.splitGeometry || null;
 
     return {
@@ -795,7 +795,7 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
       areaRatio: 0.28,
       score: baseScore,
       baseScore,
-      geometryScoreAdjustment,
+      diagnosticGeometryScoreAdjustment,
       geometryRankPenalty: splitGeometry && Number.isFinite(splitGeometry.penalty)
         ? splitGeometry.penalty
         : 0,
@@ -938,8 +938,8 @@ const readDigitsByCells = async (source, setProgress, options = {}) => {
         value: candidate.value,
         score: Number.isFinite(candidate.score) ? candidate.score : null,
         baseScore: Number.isFinite(candidate.baseScore) ? candidate.baseScore : null,
-        geometryScoreAdjustment: Number.isFinite(candidate.geometryScoreAdjustment)
-          ? candidate.geometryScoreAdjustment
+        diagnosticGeometryScoreAdjustment: Number.isFinite(candidate.diagnosticGeometryScoreAdjustment)
+          ? candidate.diagnosticGeometryScoreAdjustment
           : null,
         geometryRankPenalty: Number.isFinite(candidate.geometryRankPenalty)
           ? candidate.geometryRankPenalty
