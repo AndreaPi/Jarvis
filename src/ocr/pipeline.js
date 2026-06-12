@@ -1750,7 +1750,12 @@ const evaluateCandidateBranch = async ({
       }
 
     }
-    return false;
+    return !!(
+      allowSelection
+      && bestResult
+      && isEdgeSourceLabel(bestResult.sourceLabel)
+      && (bestResult.score ?? 0) >= OCR_CONFIG.earlyStopScore
+    );
   };
 
   const edgeWonEarly = await runCandidatePass(selectedCandidates, 'classifier-primary');
