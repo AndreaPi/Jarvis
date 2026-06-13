@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import argparse
 import csv
+import filecmp
 import json
 import shutil
 from pathlib import Path
+
+VALID_SPLITS = ("train", "val", "test")
 
 
 def parse_args() -> argparse.Namespace:
@@ -35,6 +38,17 @@ def parse_args() -> argparse.Namespace:
     "--preview-dir",
     default="data/roi_dataset/previews",
     help="Directory for visual QA previews (relative to backend/ by default)."
+  )
+  parser.add_argument(
+    "--splits-json",
+    default="data/roi_dataset/splits.json",
+    help="Path to persistent split assignment manifest (relative to backend/ by default)."
+  )
+  parser.add_argument(
+    "--new-split",
+    choices=VALID_SPLITS,
+    default="train",
+    help="Split assigned to newly added rows after the split manifest has been bootstrapped."
   )
   return parser.parse_args()
 
@@ -110,10 +124,155 @@ def split_for_index(index: int, total: int) -> str:
   return "test"
 
 
+def read_split_map(split_json_path: Path) -> dict[str, str]:
+  payload = json.loads(split_json_path.read_text(encoding="utf-8"))
+
+  if isinstance(payload, dict) and isinstance(payload.get("assignments"), dict):
+    raw_map = payload["assignments"]
+  elif isinstance(payload, dict):
+    raw_map = payload
+  else:
+    raise ValueError(f"Invalid split manifest format: {split_json_path}")
+
+  split_map: dict[str, str] = {}
+  for filename, split in raw_map.items():
+    if not isinstance(filename, str) or not isinstance(split, str):
+      continue
+    normalized = split.strip().lower()
+    if normalized not in VALID_SPLITS:
+      raise ValueError(f"Invalid split '{split}' for {filename} in {split_json_path}")
+    split_map[filename] = normalized
+  return split_map
+
+
+def write_split_map(split_json_path: Path, split_map: dict[str, str]) -> None:
+  split_json_path.parent.mkdir(parents=True, exist_ok=True)
+  payload = {
+    "version": 1,
+    "assignments": {filename: split_map[filename] for filename in sorted(split_map)},
+  }
+  write_text_if_changed(
+    split_json_path,
+    json.dumps(payload, indent=2) + "\n",
+  )
+
+
+def write_text_if_changed(path: Path, content: str) -> bool:
+  if path.exists() and path.read_text(encoding="utf-8") == content:
+    return False
+  path.parent.mkdir(parents=True, exist_ok=True)
+  path.write_text(content, encoding="utf-8")
+  return True
+
+
+def copy_file_if_changed(source_path: Path, target_path: Path) -> bool:
+  if target_path.exists() and filecmp.cmp(source_path, target_path, shallow=False):
+    return False
+  target_path.parent.mkdir(parents=True, exist_ok=True)
+  shutil.copy2(source_path, target_path)
+  return True
+
+
+def bootstrap_split_map(rows: list[dict[str, str]], out_dir: Path) -> dict[str, str]:
+  filename_by_stem = {Path(row["filename"]).stem: row["filename"] for row in rows}
+  split_map: dict[str, str] = {}
+
+  for split in VALID_SPLITS:
+    image_dir = out_dir / "images" / split
+    if image_dir.is_dir():
+      for image_path in sorted(path for path in image_dir.iterdir() if path.is_file()):
+        filename = image_path.name
+        previous = split_map.get(filename)
+        if previous and previous != split:
+          raise ValueError(f"Conflicting split assignments for {filename}: {previous}, {split}")
+        split_map[filename] = split
+
+    label_dir = out_dir / "labels" / split
+    if label_dir.is_dir():
+      for label_path in sorted(label_dir.glob("*.txt")):
+        filename = filename_by_stem.get(label_path.stem)
+        if not filename:
+          continue
+        previous = split_map.get(filename)
+        if previous and previous != split:
+          raise ValueError(f"Conflicting split assignments for {filename}: {previous}, {split}")
+        split_map[filename] = split
+
+  return split_map
+
+
+def resolve_split_map(
+  rows: list[dict[str, str]],
+  out_dir: Path,
+  split_json_path: Path,
+  new_split: str,
+) -> tuple[dict[str, str], bool]:
+  row_filenames = [row["filename"] for row in rows]
+  known_filenames = set(row_filenames)
+  bootstrapped = False
+
+  if split_json_path.exists():
+    split_map = read_split_map(split_json_path)
+  else:
+    split_map = bootstrap_split_map(rows, out_dir)
+    if not split_map:
+      split_map = {
+        row["filename"]: split_for_index(index, len(rows))
+        for index, row in enumerate(rows)
+      }
+    bootstrapped = True
+
+  resolved = {
+    filename: split
+    for filename, split in split_map.items()
+    if filename in known_filenames
+  }
+
+  for filename in row_filenames:
+    if filename not in resolved:
+      resolved[filename] = new_split
+
+  return resolved, bootstrapped
+
+
 def ensure_dataset_dirs(root: Path) -> None:
-  for split in ("train", "val", "test"):
+  for split in VALID_SPLITS:
     (root / "images" / split).mkdir(parents=True, exist_ok=True)
     (root / "labels" / split).mkdir(parents=True, exist_ok=True)
+
+
+def prune_stale_outputs(
+  out_dir: Path,
+  preview_dir: Path,
+  desired_split_map: dict[str, str],
+) -> None:
+  desired_by_split = {
+    split: {filename for filename, assigned in desired_split_map.items() if assigned == split}
+    for split in VALID_SPLITS
+  }
+  desired_stems_by_split = {
+    split: {Path(filename).stem for filename in desired_by_split[split]}
+    for split in VALID_SPLITS
+  }
+  desired_preview_names = {f"{Path(filename).stem}_bbox.jpg" for filename in desired_split_map}
+
+  for split in VALID_SPLITS:
+    image_dir = out_dir / "images" / split
+    if image_dir.is_dir():
+      for image_path in image_dir.iterdir():
+        if image_path.is_file() and image_path.name not in desired_by_split[split]:
+          image_path.unlink()
+
+    label_dir = out_dir / "labels" / split
+    if label_dir.is_dir():
+      for label_path in label_dir.glob("*.txt"):
+        if label_path.stem not in desired_stems_by_split[split]:
+          label_path.unlink()
+
+  if preview_dir.is_dir():
+    for preview_path in preview_dir.glob("*_bbox.jpg"):
+      if preview_path.name not in desired_preview_names:
+        preview_path.unlink()
 
 
 def write_preview(preview_path: Path, image_path: Path, rect_norm: dict) -> None:
@@ -143,6 +302,7 @@ def main() -> None:
   assets_dir = resolve(base_dir, args.assets_dir)
   out_dir = resolve(base_dir, args.out_dir)
   preview_dir = resolve(base_dir, args.preview_dir)
+  split_json_path = resolve(base_dir, args.splits_json)
 
   if not csv_path.exists():
     raise FileNotFoundError(f"CSV not found: {csv_path}")
@@ -156,10 +316,10 @@ def main() -> None:
     raise RuntimeError(f"No dataset rows found in CSV: {csv_path}")
 
   roi_map = read_roi_map(roi_json_path)
-  ensure_dataset_dirs(out_dir)
+  split_map, bootstrapped = resolve_split_map(rows, out_dir, split_json_path, args.new_split)
 
-  created = []
-  for index, row in enumerate(rows):
+  planned = []
+  for row in rows:
     filename = row["filename"]
     source_image = assets_dir / filename
     if not source_image.exists():
@@ -167,21 +327,33 @@ def main() -> None:
     if filename not in roi_map:
       raise KeyError(f"Missing ROI entry for {filename} in {roi_json_path}")
 
-    split = split_for_index(index, len(rows))
+    split = split_map[filename]
+    xc, yc, width, height = normalize_yolo(roi_map[filename])
+    planned.append((filename, split, source_image, xc, yc, width, height, roi_map[filename]))
+
+  ensure_dataset_dirs(out_dir)
+  preview_dir.mkdir(parents=True, exist_ok=True)
+  prune_stale_outputs(out_dir, preview_dir, split_map)
+
+  created = []
+  for filename, split, source_image, xc, yc, width, height, rect_norm in planned:
     target_image = out_dir / "images" / split / filename
     target_label = out_dir / "labels" / split / f"{Path(filename).stem}.txt"
 
-    shutil.copy2(source_image, target_image)
-
-    xc, yc, width, height = normalize_yolo(roi_map[filename])
-    target_label.write_text(f"0 {xc:.6f} {yc:.6f} {width:.6f} {height:.6f}\n", encoding="utf-8")
+    image_changed = copy_file_if_changed(source_image, target_image)
+    label_changed = write_text_if_changed(
+      target_label,
+      f"0 {xc:.6f} {yc:.6f} {width:.6f} {height:.6f}\n",
+    )
 
     preview_path = preview_dir / f"{Path(filename).stem}_bbox.jpg"
-    write_preview(preview_path, source_image, roi_map[filename])
+    if image_changed or label_changed or not preview_path.exists():
+      write_preview(preview_path, source_image, rect_norm)
     created.append((filename, split, target_image, target_label, preview_path))
 
   manifest_target = out_dir / "roi_boxes.json"
-  shutil.copy2(roi_json_path, manifest_target)
+  copy_file_if_changed(roi_json_path, manifest_target)
+  write_split_map(split_json_path, split_map)
 
   split_counts = {"train": 0, "val": 0, "test": 0}
   for _, split, *_ in created:
@@ -190,6 +362,7 @@ def main() -> None:
   print(f"Built ROI dataset at: {out_dir}")
   print(f"Rows: {len(created)} (train={split_counts['train']}, val={split_counts['val']}, test={split_counts['test']})")
   print(f"ROI manifest copied to: {manifest_target}")
+  print(f"Split manifest: {split_json_path}{' (bootstrapped)' if bootstrapped else ''}")
   print(f"Preview images: {preview_dir}")
 
 

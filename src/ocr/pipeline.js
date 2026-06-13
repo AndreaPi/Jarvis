@@ -4,17 +4,15 @@ import {
   loadImageBitmap,
   drawImageToCanvas,
   preprocessCanvas,
-  scaleCanvas,
   cropCanvas,
-  splitIntoCells,
   normalizeRectToCanvas,
   drawOverlayCanvas,
   normalizeAngle
 } from './canvas-utils.js';
 import { buildDigitCandidates } from './alignment.js';
-import { getWorker, selectBestReading, readDigitsByCells } from './recognition.js';
-import { predictDigitCells } from './digit-classifier.js';
+import { readDigitsByCells } from './recognition.js';
 import { detectNeuralRoi } from './neural-roi.js';
+import { predictDigitStrip, predictDigitStrip23xx } from './digit-classifier.js';
 
 const resolveNeuralRoiRect = (canvas, roiDetection, roiConfig) => {
   const rawRect = normalizeRectToCanvas(canvas, {
@@ -31,6 +29,18 @@ const resolveNeuralRoiRect = (canvas, roiDetection, roiConfig) => {
     width: rawRect.width * (1 + expandX * 2),
     height: rawRect.height * (1 + expandY * 2)
   });
+};
+
+const serializeRect = (rect) => {
+  if (!rect) {
+    return null;
+  }
+  return {
+    x: Math.round(rect.x),
+    y: Math.round(rect.y),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height)
+  };
 };
 
 const addNeuralRoiDebugStages = (debugSession, baseCanvas, roiRect, roiDetection) => {
@@ -86,6 +96,12 @@ const formatNeuralRoiMissReason = (probe) => {
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const isEdgeSourceLabel = (sourceLabel) => (
   typeof sourceLabel === 'string' && sourceLabel.includes('-edge')
+);
+const isClassifierAvailabilityReject = (detail) => (
+  !!detail && (
+    detail.reason === 'classifier-unavailable'
+    || detail.reason === 'classifier-disabled'
+  )
 );
 
 const recordSelectionEvidence = (
@@ -230,23 +246,379 @@ const serializeCellConfidences = (confidences) => {
   });
 };
 
-const finalizeSelection = ({ debugLabel, roiUsed, bestResult, evidenceMap, branchUsed, rejectSummary = [] }) => {
+const serializeCellVariantCandidates = (candidates) => {
+  if (!Array.isArray(candidates) || !candidates.length) {
+    return [];
+  }
+  return candidates.map((candidate) => ({
+    value: candidate && candidate.value ? candidate.value : null,
+    confidence: candidate && Number.isFinite(candidate.confidence)
+      ? Number(candidate.confidence.toFixed(1))
+      : null,
+    score: candidate && Number.isFinite(candidate.score)
+      ? Number(candidate.score.toFixed(3))
+      : null,
+    baseScore: candidate && Number.isFinite(candidate.baseScore)
+      ? Number(candidate.baseScore.toFixed(3))
+      : null,
+    diagnosticGeometryScoreAdjustment: candidate && Number.isFinite(candidate.diagnosticGeometryScoreAdjustment)
+      ? Number(candidate.diagnosticGeometryScoreAdjustment.toFixed(3))
+      : null,
+    geometryRankPenalty: candidate && Number.isFinite(candidate.geometryRankPenalty)
+      ? Number(candidate.geometryRankPenalty.toFixed(3))
+      : null,
+    geometryRankReasons: candidate && Array.isArray(candidate.geometryRankReasons)
+      ? [...candidate.geometryRankReasons]
+      : [],
+    splitGeometry: candidate && candidate.splitGeometry ? candidate.splitGeometry : null,
+    cellDigits: candidate && Array.isArray(candidate.cellDigits) ? [...candidate.cellDigits] : null,
+    cellConfidences: serializeCellConfidences(candidate ? candidate.cellConfidences : null),
+    cropMode: candidate && candidate.cropMode ? candidate.cropMode : null,
+    cropRatio: candidate && Number.isFinite(candidate.cropRatio)
+      ? Number(candidate.cropRatio.toFixed(3))
+      : null,
+    splitOffsetRatio: candidate && Number.isFinite(candidate.splitOffsetRatio)
+      ? Number(candidate.splitOffsetRatio.toFixed(3))
+      : 0,
+    splitMode: candidate && candidate.splitMode ? candidate.splitMode : null,
+    orientation: candidate && Number.isFinite(candidate.orientation) ? candidate.orientation : null
+  }));
+};
+
+const serializeStripConfidence = (value) => {
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  const percent = value <= 1 ? value * 100 : value;
+  return Number(clamp(percent, 0, 100).toFixed(1));
+};
+
+const serializeStripConfidences = (confidences) => {
+  if (!Array.isArray(confidences)) {
+    return null;
+  }
+  return confidences.map((value) => serializeStripConfidence(value));
+};
+
+const isRepeatedDigitReading = (value) => {
+  if (typeof value !== 'string' || value.length !== OCR_CONFIG.preferredDigits) {
+    return false;
+  }
+  return new Set(value.split('')).size === 1;
+};
+
+const compareStripReaderConfidence = (a, b) => {
+  const confidenceA = a && Number.isFinite(a.rawConfidence) ? a.rawConfidence : -1;
+  const confidenceB = b && Number.isFinite(b.rawConfidence) ? b.rawConfidence : -1;
+  return confidenceB - confidenceA;
+};
+
+const cloneStripReaderProbe = (probe) => {
+  if (!probe || typeof probe !== 'object') {
+    return null;
+  }
+  return {
+    ...probe,
+    digits: Array.isArray(probe.digits) ? [...probe.digits] : probe.digits,
+    digitConfidences: Array.isArray(probe.digitConfidences)
+      ? [...probe.digitConfidences]
+      : probe.digitConfidences,
+    topKByPosition: Array.isArray(probe.topKByPosition)
+      ? probe.topKByPosition.map((entries) => (
+        Array.isArray(entries)
+          ? entries.map((entry) => ({ ...entry }))
+          : entries
+      ))
+      : probe.topKByPosition
+  };
+};
+
+const cloneStripReader23xxProbe = (probe) => {
+  if (!probe || typeof probe !== 'object') {
+    return null;
+  }
+  return {
+    ...probe,
+    prefixGuard: probe.prefixGuard && typeof probe.prefixGuard === 'object'
+      ? { ...probe.prefixGuard }
+      : probe.prefixGuard,
+    suffixDigits: Array.isArray(probe.suffixDigits) ? [...probe.suffixDigits] : probe.suffixDigits,
+    suffixConfidences: Array.isArray(probe.suffixConfidences)
+      ? [...probe.suffixConfidences]
+      : probe.suffixConfidences,
+    topKByPosition: Array.isArray(probe.topKByPosition)
+      ? probe.topKByPosition.map((entries) => (
+        Array.isArray(entries)
+          ? entries.map((entry) => ({ ...entry }))
+          : entries
+      ))
+      : probe.topKByPosition
+  };
+};
+
+const summarizeStripReaderBySource = (candidates, selectedSourceLabel = null) => {
+  const sourceMap = new Map();
+  candidates.forEach((candidate) => {
+    if (!candidate) {
+      return;
+    }
+    const sourceLabel = candidate.sourceLabel || 'unknown';
+    const existing = sourceMap.get(sourceLabel) || {
+      sourceLabel,
+      attempts: 0,
+      okCount: 0,
+      matchesSelectedSource: !!selectedSourceLabel && sourceLabel === selectedSourceLabel,
+      best: null,
+      values: []
+    };
+    existing.attempts += 1;
+    if (candidate.ok) {
+      existing.okCount += 1;
+      existing.values.push({
+        value: candidate.value || candidate.predictedValue || null,
+        accepted: typeof candidate.accepted === 'boolean' ? candidate.accepted : undefined,
+        confidence: Number.isFinite(candidate.confidence) ? candidate.confidence : null,
+        rawConfidence: Number.isFinite(candidate.rawConfidence) ? candidate.rawConfidence : null,
+        stage: candidate.stage || null
+      });
+      if (!existing.best || compareStripReaderConfidence(existing.best, candidate) > 0) {
+        existing.best = candidate;
+      }
+    }
+    sourceMap.set(sourceLabel, existing);
+  });
+
+  return [...sourceMap.values()]
+    .map((entry) => ({
+      sourceLabel: entry.sourceLabel,
+      attempts: entry.attempts,
+      okCount: entry.okCount,
+      matchesSelectedSource: entry.matchesSelectedSource,
+      bestValue: entry.best && (entry.best.value || entry.best.predictedValue)
+        ? (entry.best.value || entry.best.predictedValue)
+        : null,
+      bestConfidence: entry.best && Number.isFinite(entry.best.confidence) ? entry.best.confidence : null,
+      bestRawConfidence: entry.best && Number.isFinite(entry.best.rawConfidence) ? entry.best.rawConfidence : null,
+      values: entry.values
+    }))
+    .sort((a, b) => (
+      (b.matchesSelectedSource ? 1 : 0) - (a.matchesSelectedSource ? 1 : 0)
+      || b.okCount - a.okCount
+      || (b.bestRawConfidence ?? -1) - (a.bestRawConfidence ?? -1)
+      || String(a.sourceLabel).localeCompare(String(b.sourceLabel))
+    ));
+};
+
+const buildStripReaderSummary = (stripReaderTrace, finalResult) => {
+  const rawCandidates = stripReaderTrace && Array.isArray(stripReaderTrace.candidates)
+    ? stripReaderTrace.candidates
+    : [];
+  const candidates = rawCandidates
+    .map((candidate) => cloneStripReaderProbe(candidate))
+    .filter(Boolean);
+  if (!candidates.length) {
+    return null;
+  }
+
+  const selectedSourceLabel = finalResult && finalResult.sourceLabel ? finalResult.sourceLabel : null;
+  const okCandidates = candidates.filter((candidate) => candidate.ok);
+  const confidenceBest = okCandidates.length
+    ? cloneStripReaderProbe([...okCandidates].sort(compareStripReaderConfidence)[0])
+    : null;
+  const selectedSourceCandidate = selectedSourceLabel
+    ? cloneStripReaderProbe(
+      okCandidates
+        .filter((candidate) => candidate.sourceLabel === selectedSourceLabel)
+        .sort(compareStripReaderConfidence)[0] || null
+    )
+    : null;
+  const headline = selectedSourceCandidate || confidenceBest;
+  if (!headline) {
+    return {
+      ok: false,
+      reason: 'strip-reader-no-successful-candidate',
+      preferredSourceLabel: selectedSourceLabel,
+      selectionRule: 'selected-source-first-then-confidence',
+      headlineReason: 'no-successful-candidate',
+      confidenceBest: null,
+      selectedSourceCandidate: null,
+      bySource: summarizeStripReaderBySource(candidates, selectedSourceLabel),
+      candidates
+    };
+  }
+
+  return {
+    ...headline,
+    preferredSourceLabel: selectedSourceLabel,
+    selectionRule: 'selected-source-first-then-confidence',
+    headlineReason: selectedSourceCandidate ? 'selected-source' : 'highest-confidence',
+    confidenceBest,
+    selectedSourceCandidate,
+    bySource: summarizeStripReaderBySource(candidates, selectedSourceLabel),
+    candidates
+  };
+};
+
+const buildStripReader23xxSummary = (stripReaderTrace, finalResult) => {
+  const rawCandidates = stripReaderTrace && Array.isArray(stripReaderTrace.candidates)
+    ? stripReaderTrace.candidates
+    : [];
+  const candidates = rawCandidates
+    .map((candidate) => cloneStripReader23xxProbe(candidate))
+    .filter(Boolean);
+  if (!candidates.length) {
+    return null;
+  }
+
+  const selectedSourceLabel = finalResult && finalResult.sourceLabel ? finalResult.sourceLabel : null;
+  const okCandidates = candidates.filter((candidate) => candidate.ok);
+  const acceptedCandidates = okCandidates.filter((candidate) => candidate.accepted);
+  const confidenceBest = okCandidates.length
+    ? cloneStripReader23xxProbe([...okCandidates].sort(compareStripReaderConfidence)[0])
+    : null;
+  const acceptedBest = acceptedCandidates.length
+    ? cloneStripReader23xxProbe([...acceptedCandidates].sort(compareStripReaderConfidence)[0])
+    : null;
+  const selectedSourceCandidate = selectedSourceLabel
+    ? cloneStripReader23xxProbe(
+      okCandidates
+        .filter((candidate) => candidate.sourceLabel === selectedSourceLabel)
+        .sort(compareStripReaderConfidence)[0] || null
+    )
+    : null;
+  const headline = selectedSourceCandidate || acceptedBest || confidenceBest;
+  if (!headline) {
+    return {
+      ok: false,
+      reason: 'strip-reader-23xx-no-successful-candidate',
+      preferredSourceLabel: selectedSourceLabel,
+      selectionRule: 'selected-source-then-accepted-then-confidence',
+      headlineReason: 'no-successful-candidate',
+      acceptedBest: null,
+      confidenceBest: null,
+      selectedSourceCandidate: null,
+      bySource: summarizeStripReaderBySource(candidates, selectedSourceLabel),
+      candidates
+    };
+  }
+
+  return {
+    ...headline,
+    preferredSourceLabel: selectedSourceLabel,
+    selectionRule: 'selected-source-then-accepted-then-confidence',
+    headlineReason: selectedSourceCandidate
+      ? 'selected-source'
+      : (acceptedBest ? 'accepted-highest-confidence' : 'highest-confidence-diagnostic'),
+    acceptedBest,
+    confidenceBest,
+    selectedSourceCandidate,
+    bySource: summarizeStripReaderBySource(candidates, selectedSourceLabel),
+    candidates
+  };
+};
+
+const resolveStripReaderDebug = (stripReaderTrace, finalResult) => {
+  if (!stripReaderTrace) {
+    return null;
+  }
+  const selectedSourceLabel = finalResult && finalResult.sourceLabel ? finalResult.sourceLabel : null;
+  if (
+    selectedSourceLabel
+    && stripReaderTrace.debugBySource
+    && typeof stripReaderTrace.debugBySource.get === 'function'
+  ) {
+    const selectedSourceDebug = stripReaderTrace.debugBySource.get(selectedSourceLabel);
+    if (selectedSourceDebug && selectedSourceDebug.canvas) {
+      return selectedSourceDebug;
+    }
+  }
+  return stripReaderTrace.confidenceBestDebug || null;
+};
+
+const finalizeSelection = ({
+  debugLabel,
+  roiUsed,
+  bestResult,
+  evidenceMap,
+  branchUsed,
+  rejectSummary = [],
+  candidateTrace = [],
+  stripReaderTrace = null,
+  stripReader23xxTrace = null,
+  roiGeometry = null
+}) => {
   const rankedEvidence = rankSelectionEvidence(evidenceMap);
   const evidenceBest = rankedEvidence[0] || null;
-  const roiDeterministic = OCR_CONFIG.roiDeterministic || {};
   const classifierConfig = OCR_CONFIG.digitClassifier || {};
-  const minWordPassHits = Number.isFinite(roiDeterministic.minWordPassHits)
-    ? Math.max(1, Math.round(roiDeterministic.minWordPassHits))
-    : 2;
   let finalResult = bestResult;
   let finalRejectReason = null;
   let finalRejectDetail = null;
+  const carryMetadataFromTrace = (value) => {
+    if (!value) {
+      return null;
+    }
+    const matches = candidateTrace
+      .filter((entry) => entry && entry.result && entry.result.value === value)
+      .sort((a, b) => (b.result.score ?? 0) - (a.result.score ?? 0));
+    if (!matches.length) {
+      return null;
+    }
+    const bestMatch = matches[0];
+    return {
+      branch: branchUsed,
+      method: bestMatch.result.method || null,
+      sourceLabel: bestMatch.sourceLabel || null,
+      preprocessMode: 'raw',
+      angle: Number.isFinite(bestMatch.result.angle) ? bestMatch.result.angle : null,
+      cellDigits: Array.isArray(bestMatch.result.cellDigits) ? bestMatch.result.cellDigits : null,
+      cellConfidences: bestMatch.result.cellConfidences || null,
+      splitOffsetRatio: Number.isFinite(bestMatch.result.splitOffsetRatio)
+        ? bestMatch.result.splitOffsetRatio
+        : 0,
+      splitMode: bestMatch.result.splitMode || null,
+      confidence: Number.isFinite(bestMatch.result.confidence) ? bestMatch.result.confidence : 0
+    };
+  };
 
   if (evidenceBest) {
+    const currentFinalSupport = finalResult
+      ? rankedEvidence.find((entry) => entry.value === finalResult.value) || null
+      : null;
+    const lowDiversityEdgeResult = !!(
+      finalResult
+      && isEdgeSourceLabel(finalResult.sourceLabel)
+      && typeof finalResult.value === 'string'
+      && finalResult.value.length === OCR_CONFIG.preferredDigits
+      && new Set(finalResult.value.split('')).size <= 2
+    );
+    const shouldPromoteLowDiversityEdgeFallback = !!(
+      finalResult
+      && evidenceBest.value !== finalResult.value
+      && evidenceBest.nonEdgeHits >= 1
+      && lowDiversityEdgeResult
+      && evidenceBest.score >= (finalResult.score ?? -1) - 0.06
+      && evidenceBest.bestConfidence >= 75
+    );
+    const preserveAgreedEdgeConsensus = !!(
+      finalResult
+      && currentFinalSupport
+      && evidenceBest.value !== finalResult.value
+      && isEdgeSourceLabel(finalResult.sourceLabel)
+      && currentFinalSupport.topHits >= 2
+      && currentFinalSupport.edgeTopHits >= 2
+      && currentFinalSupport.nonEdgeHits === 0
+      && evidenceBest.nonEdgeHits >= 1
+      && evidenceBest.topHits === 1
+      && evidenceBest.score <= (finalResult.score ?? 0) + 0.03
+    );
     const shouldPromoteEvidence = (
-      !finalResult
-      || evidenceBest.score >= (finalResult.score ?? -1) - 0.03
-      || evidenceBest.topHits >= 2
+      (
+        !finalResult
+        || evidenceBest.score >= (finalResult.score ?? -1) - 0.03
+        || evidenceBest.topHits >= 2
+      )
+      && !preserveAgreedEdgeConsensus
+      || shouldPromoteLowDiversityEdgeFallback
     );
 
     if (shouldPromoteEvidence) {
@@ -255,7 +627,7 @@ const finalizeSelection = ({ debugLabel, roiUsed, bestResult, evidenceMap, branc
         : 0;
       const carryMetadata = finalResult && finalResult.value === evidenceBest.value
         ? finalResult
-        : null;
+        : carryMetadataFromTrace(evidenceBest.value);
       finalResult = {
         value: evidenceBest.value,
         confidence: Math.max(evidenceBest.bestConfidence, confidenceFromBest),
@@ -269,29 +641,12 @@ const finalizeSelection = ({ debugLabel, roiUsed, bestResult, evidenceMap, branc
         preprocessMode: carryMetadata && carryMetadata.preprocessMode ? carryMetadata.preprocessMode : null,
         angle: carryMetadata && Number.isFinite(carryMetadata.angle) ? carryMetadata.angle : null,
         cellDigits: carryMetadata && Array.isArray(carryMetadata.cellDigits) ? carryMetadata.cellDigits : null,
-        cellConfidences: carryMetadata ? serializeCellConfidences(carryMetadata.cellConfidences) : null
+        cellConfidences: carryMetadata ? serializeCellConfidences(carryMetadata.cellConfidences) : null,
+        splitOffsetRatio: carryMetadata && Number.isFinite(carryMetadata.splitOffsetRatio)
+          ? Number(carryMetadata.splitOffsetRatio.toFixed(3))
+          : 0,
+        splitMode: carryMetadata && carryMetadata.splitMode ? carryMetadata.splitMode : null
       };
-    }
-  }
-
-  if (finalResult && finalResult.method === 'word-pass') {
-    const support = rankedEvidence.find((entry) => entry.value === finalResult.value) || null;
-    const confirmed = !!support && (
-      support.hits >= minWordPassHits
-      || support.topHits >= minWordPassHits
-    );
-    if (!confirmed) {
-      finalRejectReason = 'word-pass-unconfirmed-finalize';
-      finalRejectDetail = {
-        stage: 'selection-finalize',
-        method: finalResult.method || null,
-        sourceLabel: finalResult.sourceLabel || null,
-        value: finalResult.value || null,
-        requiredHits: minWordPassHits,
-        supportHits: support ? support.hits : 0,
-        supportTopHits: support ? support.topHits : 0
-      };
-      finalResult = null;
     }
   }
 
@@ -311,9 +666,9 @@ const finalizeSelection = ({ debugLabel, roiUsed, bestResult, evidenceMap, branc
     const minCellConfidence = cellConfidences.length
       ? Math.min(...cellConfidences)
       : 0;
-    const isClassifierFallback = String(finalResult.method || '').startsWith('digit-classifier-fallback');
+    const isClassifierResult = String(finalResult.method || '').startsWith('digit-classifier');
 
-    if (isClassifierFallback) {
+    if (isClassifierResult) {
       const fallbackEdgeMinAverageConfidence = Number.isFinite(classifierConfig.fallbackEdgeMinAverageConfidence)
         ? clamp(classifierConfig.fallbackEdgeMinAverageConfidence, 0, 100)
         : 65;
@@ -371,6 +726,9 @@ const finalizeSelection = ({ debugLabel, roiUsed, bestResult, evidenceMap, branc
     prependRejectSummary(rejectSummary, finalRejectReason, finalRejectDetail || {});
   }
 
+  const stripReader = buildStripReaderSummary(stripReaderTrace, finalResult);
+  const stripReader23xx = buildStripReader23xxSummary(stripReader23xxTrace, finalResult);
+
   pushSelectionLog({
     image: debugLabel,
     roiUsed,
@@ -388,9 +746,17 @@ const finalizeSelection = ({ debugLabel, roiUsed, bestResult, evidenceMap, branc
       preprocessMode: finalResult.preprocessMode || null,
       angle: Number.isFinite(finalResult.angle) ? finalResult.angle : null,
       cellDigits: Array.isArray(finalResult.cellDigits) ? finalResult.cellDigits : null,
-      cellConfidences: serializeCellConfidences(finalResult.cellConfidences)
+      cellConfidences: serializeCellConfidences(finalResult.cellConfidences),
+      splitOffsetRatio: Number.isFinite(finalResult.splitOffsetRatio)
+        ? Number(finalResult.splitOffsetRatio.toFixed(3))
+        : 0,
+      splitMode: finalResult.splitMode || null
     } : null,
-    topCandidates: buildSelectionSummary(rankedEvidence, 3)
+    stripReader,
+    stripReader23xx,
+    roiGeometry,
+    topCandidates: buildSelectionSummary(rankedEvidence, 3),
+    candidateTrace: Array.isArray(candidateTrace) ? candidateTrace : []
   });
 
   return finalResult;
@@ -414,8 +780,173 @@ const extractCandidateAngle = (label) => {
   return Number.NaN;
 };
 
-const addWinningCandidateDebugStage = (debugSession, candidates, finalSelection) => {
+const resolveWinningDecodeCanvas = (decodeCanvasBySource, finalSelection) => {
+  if (
+    !(decodeCanvasBySource instanceof Map)
+    || !finalSelection
+    || typeof finalSelection.sourceLabel !== 'string'
+  ) {
+    return null;
+  }
+  const entries = decodeCanvasBySource.get(finalSelection.sourceLabel);
+  if (!Array.isArray(entries) || !entries.length) {
+    return null;
+  }
+  const targetAngle = Number.isFinite(finalSelection.angle) ? normalizeAngle(finalSelection.angle) : null;
+  if (targetAngle === null) {
+    return entries[0].canvas || null;
+  }
+  const exactMatch = entries.find((entry) => entry && entry.angle === targetAngle && entry.canvas);
+  if (exactMatch) {
+    return exactMatch.canvas;
+  }
+  const neutralMatch = entries.find((entry) => entry && entry.angle === null && entry.canvas);
+  if (neutralMatch) {
+    return neutralMatch.canvas;
+  }
+  return entries[0].canvas || null;
+};
+
+const resolveWinningDecodeCells = (decodeCanvasBySource, finalSelection) => {
+  if (
+    !(decodeCanvasBySource instanceof Map)
+    || !finalSelection
+    || typeof finalSelection.sourceLabel !== 'string'
+  ) {
+    return null;
+  }
+  const entries = decodeCanvasBySource.get(finalSelection.sourceLabel);
+  if (!Array.isArray(entries) || !entries.length) {
+    return null;
+  }
+  const targetAngle = Number.isFinite(finalSelection.angle) ? normalizeAngle(finalSelection.angle) : null;
+  const exactMatch = entries.find((entry) => entry && entry.angle === targetAngle && Array.isArray(entry.cells));
+  if (exactMatch) {
+    return exactMatch.cells;
+  }
+  const neutralMatch = entries.find((entry) => entry && entry.angle === null && Array.isArray(entry.cells));
+  if (neutralMatch) {
+    return neutralMatch.cells;
+  }
+  const fallback = entries.find((entry) => entry && Array.isArray(entry.cells));
+  return fallback ? fallback.cells : null;
+};
+
+const buildCellDebugCanvas = (cellCanvases) => {
+  if (!Array.isArray(cellCanvases) || !cellCanvases.length) {
+    return null;
+  }
+  const validCells = cellCanvases.filter((cell) => !!(cell && cell.width > 0 && cell.height > 0));
+  if (!validCells.length) {
+    return null;
+  }
+  const gap = 8;
+  const pad = 8;
+  const labelHeight = 18;
+  const width = validCells.reduce((sum, cell) => sum + cell.width, 0) + gap * (validCells.length - 1) + pad * 2;
+  const height = Math.max(...validCells.map((cell) => cell.height)) + pad * 2 + labelHeight;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#111827';
+  ctx.fillRect(0, 0, width, height);
+  ctx.font = '12px sans-serif';
+  ctx.textBaseline = 'top';
+  let x = pad;
+  validCells.forEach((cell, index) => {
+    ctx.fillStyle = '#e5e7eb';
+    ctx.fillText(`cell ${index + 1}`, x, pad);
+    ctx.drawImage(cell, x, pad + labelHeight);
+    ctx.strokeStyle = '#f97316';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, pad + labelHeight, cell.width, cell.height);
+    x += cell.width + gap;
+  });
+  return canvas;
+};
+
+const shouldExportCandidateDebugImages = () => (
+  typeof window !== 'undefined' && window.__JARVIS_EXPORT_CANDIDATE_IMAGES__ === true
+);
+
+const canvasToDebugDataUrl = (canvas) => {
+  if (!canvas || typeof canvas.toDataURL !== 'function') {
+    return '';
+  }
+  try {
+    return canvas.toDataURL('image/png');
+  } catch {
+    return '';
+  }
+};
+
+const buildCandidateDebugImages = (stripCanvas, cellCanvases) => {
+  if (!shouldExportCandidateDebugImages()) {
+    return null;
+  }
+  const cells = Array.isArray(cellCanvases) ? cellCanvases : [];
+  return {
+    strip: canvasToDebugDataUrl(stripCanvas),
+    cells: cells.map((cell) => canvasToDebugDataUrl(cell)),
+    cellSheet: canvasToDebugDataUrl(buildCellDebugCanvas(cells))
+  };
+};
+
+const buildStripReaderDebugCanvas = (stripCanvas, stripReaderResult) => {
+  if (!stripCanvas || stripCanvas.width <= 0 || stripCanvas.height <= 0) {
+    return null;
+  }
+  const headerHeight = 42;
+  const width = Math.max(stripCanvas.width, 360);
+  const height = stripCanvas.height + headerHeight;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#111827';
+  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = '#e5e7eb';
+  ctx.font = '13px sans-serif';
+  ctx.textBaseline = 'top';
+  const value = stripReaderResult && stripReaderResult.value ? stripReaderResult.value : 'n/a';
+  const confidence = stripReaderResult && Number.isFinite(stripReaderResult.confidence)
+    ? `${stripReaderResult.confidence.toFixed(1)}%`
+    : 'n/a';
+  const source = stripReaderResult && stripReaderResult.sourceLabel ? stripReaderResult.sourceLabel : 'unknown';
+  ctx.fillText(`strip reader: ${value} (${confidence})`, 8, 6);
+  ctx.fillText(`source: ${source}`, 8, 23);
+  const x = Math.round((width - stripCanvas.width) / 2);
+  ctx.drawImage(stripCanvas, x, headerHeight);
+  return canvas;
+};
+
+const addWinningCandidateDebugStage = (
+  debugSession,
+  candidates,
+  finalSelection,
+  decodeCanvasBySource = null,
+  stripReaderDebug = null
+) => {
   if (!debugSession || !Array.isArray(candidates) || !finalSelection || !finalSelection.sourceLabel) {
+    return;
+  }
+  const winningDecodeCanvas = resolveWinningDecodeCanvas(decodeCanvasBySource, finalSelection);
+  if (winningDecodeCanvas) {
+    addDebugStage(debugSession, '6. OCR input candidate', winningDecodeCanvas);
+  }
+  const winningDecodeCells = resolveWinningDecodeCells(decodeCanvasBySource, finalSelection);
+  const cellDebugCanvas = buildCellDebugCanvas(winningDecodeCells);
+  if (cellDebugCanvas) {
+    addDebugStage(debugSession, '7. classifier cell crops', cellDebugCanvas);
+  }
+  if (stripReaderDebug && stripReaderDebug.canvas) {
+    const stripReaderCanvas = buildStripReaderDebugCanvas(stripReaderDebug.canvas, stripReaderDebug.result);
+    if (stripReaderCanvas) {
+      addDebugStage(debugSession, '8. strip reader input', stripReaderCanvas);
+    }
+  }
+  if (winningDecodeCanvas) {
     return;
   }
   const selectedCandidate = candidates.find((candidate) => (
@@ -477,37 +1008,43 @@ const prependRejectSummary = (rejectSummary, reason, detail = {}) => {
 
 const evaluateCandidateBranch = async ({
   candidates,
-  worker,
   setProgress,
-  useWordPass = true,
-  allowSparseScan = false,
   scanCanvas = null
 }) => {
-  const activeCandidates = Array.isArray(candidates) && candidates.length
-    ? candidates
-    : [{ canvas: scanCanvas, label: 'raw-fallback-roi' }];
+  const allCandidates = Array.isArray(candidates)
+    ? candidates.filter((candidate) => !!(candidate && candidate.canvas))
+    : [];
+  const activeCandidates = allCandidates
+    .filter((candidate) => candidate.diagnosticOnly !== true);
+  const diagnosticCandidates = allCandidates
+    .filter((candidate) => candidate.diagnosticOnly === true);
+  if (!activeCandidates.length && scanCanvas) {
+    activeCandidates.push({ canvas: scanCanvas, label: 'raw-fallback-roi' });
+  }
+  if (scanCanvas) {
+    activeCandidates.push({ canvas: scanCanvas, label: 'scan-roi' });
+  }
+
   let bestResult = null;
   const valueEvidence = new Map();
+  const decodeCanvasBySource = new Map();
+  const candidateTrace = [];
   const roiDeterministic = OCR_CONFIG.roiDeterministic || {};
-  const configuredModes = Array.isArray(roiDeterministic.wordPassModes)
-    ? roiDeterministic.wordPassModes
-    : [];
-  const modes = (configuredModes.length ? configuredModes : ['raw'])
-    .filter((mode) => mode === 'soft' || mode === 'binary' || mode === 'raw');
-  if (!modes.length) {
-    modes.push('raw');
-  }
-  let pass = 0;
-  const expectedPasses = Math.max(1, activeCandidates.length * modes.length);
+  const classifierConfig = OCR_CONFIG.digitClassifier || {};
+  const stripReaderConfig = OCR_CONFIG.digitStripReader || {};
+  const stripReader23xxConfig = OCR_CONFIG.digitStripReader23xx || {};
   const branchLabel = 'roi';
   const geometryConfig = OCR_CONFIG.geometry || {};
   const minCandidateWidth = Number.isFinite(geometryConfig.minCandidateWidth) ? geometryConfig.minCandidateWidth : 120;
   const minCandidateHeight = Number.isFinite(geometryConfig.minCandidateHeight) ? geometryConfig.minCandidateHeight : 28;
   const minCandidateAspect = Number.isFinite(geometryConfig.minCandidateAspect) ? geometryConfig.minCandidateAspect : 0.12;
   const maxCandidateAspect = Number.isFinite(geometryConfig.maxCandidateAspect) ? geometryConfig.maxCandidateAspect : 18;
-  const minCellWidth = Number.isFinite(geometryConfig.minCellWidth) ? geometryConfig.minCellWidth : 20;
-  const minCellHeight = Number.isFinite(geometryConfig.minCellHeight) ? geometryConfig.minCellHeight : 24;
   const rejectMap = new Map();
+  let bestStripReaderRawConfidence = -1;
+  let stripReaderConfidenceBestDebug = null;
+  const stripReaderCandidates = [];
+  const stripReaderDebugBySource = new Map();
+  const stripReader23xxCandidates = [];
 
   const recordReject = (reason, detail = {}) => {
     const key = reason || 'unknown';
@@ -593,169 +1130,82 @@ const evaluateCandidateBranch = async ({
     }
   };
 
-  const hasValidCellGeometry = (cellCanvases, stage, extra = {}) => {
-    for (let i = 0; i < cellCanvases.length; i += 1) {
-      const cell = cellCanvases[i];
-      if (!cell || cell.width < minCellWidth || cell.height < minCellHeight) {
-        recordReject('cell-too-small', {
-          stage,
-          index: i,
-          sourceLabel: extra.sourceLabel || null,
-          width: cell ? cell.width : 0,
-          height: cell ? cell.height : 0
-        });
-        return false;
-      }
-    }
-    return true;
-  };
-
-  const pickSingleDigit = (data) => {
-    const symbolDigits = (data && Array.isArray(data.symbols) ? data.symbols : [])
-      .map((item) => ({
-        digit: (item && item.text ? String(item.text) : '').replace(/\D/g, '').slice(0, 1),
-        confidence: Number.isFinite(item && item.confidence) ? item.confidence : (Number.isFinite(data && data.confidence) ? data.confidence : 0)
-      }))
-      .filter((item) => item.digit);
-    const bestSymbol = symbolDigits.sort((a, b) => b.confidence - a.confidence)[0];
-    if (bestSymbol) {
-      return bestSymbol;
-    }
-    const textDigits = (data && data.text ? String(data.text) : '').replace(/\D/g, '');
-    if (textDigits) {
-      return {
-        digit: textDigits[0],
-        confidence: Number.isFinite(data && data.confidence) ? data.confidence : 0
-      };
-    }
-    return null;
-  };
-
-  const refineSingleCellWithTesseract = async ({ cellCanvases, index, sourceLabel }) => {
-    if (!Array.isArray(cellCanvases) || !cellCanvases[index]) {
-      return null;
-    }
-    const modes = ['binary', 'soft', 'raw'];
-    let best = null;
-    for (const mode of modes) {
-      const processed = mode === 'raw'
-        ? cellCanvases[index]
-        : preprocessCanvas(cellCanvases[index], mode);
-      const scaled = scaleCanvas(processed, OCR_CONFIG.minDigitWidth);
-      const { data } = await worker.recognize(scaled);
-      const picked = pickSingleDigit(data);
-      if (!picked) {
-        continue;
-      }
-      const confidence = Number.isFinite(picked.confidence)
-        ? clamp(picked.confidence, 0, 100)
-        : 0;
-      if (!best || confidence > best.confidence) {
-        best = {
-          digit: picked.digit,
-          confidence,
-          mode
-        };
-      }
-    }
-    if (!best) {
-      recordReject('classifier-single-cell-refine-no-digit', {
-        stage: 'classifier-fallback',
-        sourceLabel,
-        index
-      });
-      return null;
-    }
-    return best;
-  };
-
-  const verifyEdgeWordPassCandidate = async ({ candidate, mode, reading }) => {
-    if (!reading || !candidate || !candidate.label || mode !== 'raw' || !candidate.label.includes('-edge')) {
-      return {
-        reading,
-        method: 'word-pass'
-      };
+  const applyGeometryRankPenalty = (reading, candidate, stage) => {
+    const ranker = (classifierConfig && classifierConfig.geometryRanker) || {};
+    if (
+      ranker.enabled === false
+      || !reading
+      || !Number.isFinite(reading.geometryRankPenalty)
+      || reading.geometryRankPenalty <= 0
+    ) {
+      return reading;
     }
 
-    const verified = await readDigitsByCells(worker, candidate.canvas, null, {
-      roiMode: true,
-      onReject: (detail) => {
-        recordReject('edge-word-pass-cell-reject', {
-          stage: 'word-pass',
-          sourceLabel: candidate.label,
-          mode,
-          reason: detail && detail.reason ? detail.reason : null
+    const cropRatio = Number.isFinite(reading.cropRatio) ? reading.cropRatio : 1;
+    const cropMode = typeof reading.cropMode === 'string' ? reading.cropMode : '';
+    const fullStripMinCropRatio = Number.isFinite(ranker.fullStripMinCropRatio)
+      ? ranker.fullStripMinCropRatio
+      : 0.92;
+    if (cropMode && cropMode !== 'full-strip' && cropRatio < fullStripMinCropRatio) {
+      return reading;
+    }
+
+    const edgeMultiplier = Number.isFinite(ranker.edgePenaltyMultiplier)
+      ? clamp(ranker.edgePenaltyMultiplier, 0, 1)
+      : 0.55;
+    const maxPenalty = Number.isFinite(ranker.maxPenalty) ? ranker.maxPenalty : 0.18;
+    const sourceLabel = reading.sourceLabel || (candidate && candidate.label) || null;
+    const rankReasons = Array.isArray(reading.geometryRankReasons) ? reading.geometryRankReasons : [];
+    if (!isEdgeSourceLabel(sourceLabel)) {
+      const prefix = typeof reading.value === 'string' ? reading.value.slice(0, 2) : '';
+      let samePrefixEdgeBest = -1;
+      let conflictingPrefixEdgeBest = -1;
+      if (prefix) {
+        [...valueEvidence.values()].forEach((entry) => {
+          if (!entry || entry.edgeHits <= 0 || typeof entry.value !== 'string') {
+            return;
+          }
+          const bestScore = Number.isFinite(entry.bestScore) ? entry.bestScore : -1;
+          if (entry.value.startsWith(prefix)) {
+            samePrefixEdgeBest = Math.max(samePrefixEdgeBest, bestScore);
+          } else {
+            conflictingPrefixEdgeBest = Math.max(conflictingPrefixEdgeBest, bestScore);
+          }
         });
       }
+      if (
+        samePrefixEdgeBest < 0
+        || samePrefixEdgeBest < conflictingPrefixEdgeBest - 0.02
+      ) {
+        return reading;
+      }
+    }
+    const multiplier = isEdgeSourceLabel(sourceLabel) ? edgeMultiplier : 1;
+    const penalty = clamp(reading.geometryRankPenalty * multiplier, 0, maxPenalty);
+    if (penalty <= 0) {
+      return reading;
+    }
+
+    const rawScore = Number.isFinite(reading.score) ? reading.score : 0;
+    reading.unpenalizedScore = rawScore;
+    reading.selectionGeometryPenalty = penalty;
+    reading.score = clamp(rawScore - penalty, 0, 0.99);
+    recordReject('classifier-geometry-rank-penalty', {
+      stage,
+      sourceLabel,
+      value: reading.value || null,
+      rawScore: Number(rawScore.toFixed(3)),
+      score: Number(reading.score.toFixed(3)),
+      penalty: Number(penalty.toFixed(3)),
+      reasons: [...rankReasons]
     });
-
-    if (!verified || !isPreferredLengthReading(verified)) {
-      recordReject('edge-word-pass-unverified', {
-        stage: 'word-pass',
-        sourceLabel: candidate.label,
-        mode,
-        value: reading.value || null
-      });
-      return {
-        reading: null,
-        method: 'word-pass'
-      };
-    }
-
-    if (verified.value !== reading.value) {
-      const wordDigits = String(reading.value || '').replace(/\D/g, '');
-      const cellDigits = String(verified.value || '').replace(/\D/g, '');
-      const wordUniqueDigits = new Set(wordDigits.split('').filter(Boolean)).size;
-      const cellUniqueDigits = new Set(cellDigits.split('').filter(Boolean)).size;
-      if (cellUniqueDigits === 1 && wordUniqueDigits > 1) {
-        recordReject('edge-word-pass-cell-collapse', {
-          stage: 'word-pass',
-          sourceLabel: candidate.label,
-          mode,
-          wordPassValue: reading.value || null,
-          cellValue: verified.value || null
-        });
-        return {
-          reading: {
-            ...reading,
-            preprocessMode: mode
-          },
-          method: 'word-pass'
-        };
-      }
-      recordReject('edge-word-pass-cell-mismatch', {
-        stage: 'word-pass',
-        sourceLabel: candidate.label,
-        mode,
-        wordPassValue: reading.value || null,
-        cellValue: verified.value || null
-      });
-      return {
-        reading: {
-          ...verified,
-          preprocessMode: mode
-        },
-        method: 'cell-verify'
-      };
-    }
-
-    return {
-      reading: {
-        ...reading,
-        preprocessMode: mode,
-        cellDigits: Array.isArray(verified.cellDigits) ? verified.cellDigits : (reading.cellDigits || null),
-        cellConfidences: Array.isArray(verified.cellConfidences) ? verified.cellConfidences : (reading.cellConfidences || null)
-      },
-      method: 'word-pass'
-    };
+    return reading;
   };
 
-  const rankClassifierFallbackCandidates = (rawCandidates) => {
+  const rankClassifierCandidates = (rawCandidates) => {
     if (!Array.isArray(rawCandidates) || !rawCandidates.length) {
       return [];
     }
-    const classifierConfig = OCR_CONFIG.digitClassifier || {};
-    const fallbackPreferNonEdge = classifierConfig.fallbackPreferNonEdge !== false;
     const fallbackTargetAspect = Number.isFinite(classifierConfig.fallbackTargetAspect)
       ? Math.max(0.4, classifierConfig.fallbackTargetAspect)
       : 2.6;
@@ -763,7 +1213,7 @@ const evaluateCandidateBranch = async ({
     const maxStripAspect = Number.isFinite(roiDeterministic.maxStripAspect) ? roiDeterministic.maxStripAspect : 8.2;
 
     return rawCandidates
-      .filter((candidate) => hasValidCandidateGeometry(candidate, 'classifier-fallback'))
+      .filter((candidate) => hasValidCandidateGeometry(candidate, 'classifier-primary'))
       .map((candidate) => {
         const width = candidate.canvas.width;
         const height = candidate.canvas.height;
@@ -779,9 +1229,7 @@ const evaluateCandidateBranch = async ({
         fallbackScore += inStripRange ? 0.75 : -0.4;
         fallbackScore += aspectCloseness * 0.5;
         fallbackScore += heightCloseness * 0.2;
-        if (fallbackPreferNonEdge) {
-          fallbackScore += isEdge ? -0.35 : 0.35;
-        }
+        fallbackScore += isEdge ? 0.35 : -0.2;
         if (Number.isFinite(angle) && (angle === 90 || angle === 270)) {
           fallbackScore += 0.1;
         }
@@ -798,302 +1246,563 @@ const evaluateCandidateBranch = async ({
       })
       .sort((a, b) => (
         b.fallbackScore - a.fallbackScore
-        || ((isEdgeSourceLabel(a.label) ? 1 : 0) - (isEdgeSourceLabel(b.label) ? 1 : 0))
+        || ((isEdgeSourceLabel(b.label) ? 1 : 0) - (isEdgeSourceLabel(a.label) ? 1 : 0))
         || (b.canvas.width - a.canvas.width)
       ));
   };
 
-  const tryClassifierFallback = async () => {
-    if (bestResult) {
-      return null;
-    }
-
-    const classifierConfig = OCR_CONFIG.digitClassifier || {};
-    if (!classifierConfig.enabled) {
-      return null;
-    }
-
-    const fallbackOnNoDigitsOnly = classifierConfig.fallbackOnNoDigitsOnly !== false;
-    const noDigitsRejects = rejectMap.get('ocr-no-digits');
-    if (fallbackOnNoDigitsOnly && !(noDigitsRejects && noDigitsRejects.count > 0)) {
-      return null;
-    }
-
-    const fallbackCandidates = [...activeCandidates];
-    if (scanCanvas) {
-      fallbackCandidates.push({ canvas: scanCanvas, label: 'scan-roi' });
-    }
-
-    const rankedFallbackCandidates = rankClassifierFallbackCandidates(fallbackCandidates);
-    const fallbackCandidate = rankedFallbackCandidates[0] || null;
-    if (!fallbackCandidate) {
-      recordReject('classifier-no-candidate', {
-        stage: 'classifier-fallback'
-      });
-      return null;
-    }
-    if (isEdgeSourceLabel(fallbackCandidate.label)) {
-      recordReject('classifier-fallback-edge-selected', {
-        stage: 'classifier-fallback',
-        sourceLabel: fallbackCandidate.label,
-        score: Number(fallbackCandidate.fallbackScore.toFixed(3)),
-        aspect: Number(fallbackCandidate.fallbackAspect.toFixed(3)),
-        nonEdgeAlternative: rankedFallbackCandidates.some((candidate) => !isEdgeSourceLabel(candidate.label))
-      });
-    }
-
-    const overlap = Number.isFinite(roiDeterministic.cellOverlap) ? roiDeterministic.cellOverlap : 0.03;
-    const cellCanvases = splitIntoCells(fallbackCandidate.canvas, OCR_CONFIG.digitCellCount, overlap);
-    if (!hasValidCellGeometry(cellCanvases, 'classifier-fallback', { sourceLabel: fallbackCandidate.label })) {
-      return null;
-    }
-
-    if (setProgress) {
-      setProgress('Fallback: classifier check...');
-    }
-    const classifierProbe = await predictDigitCells(cellCanvases, classifierConfig);
-    if (!classifierProbe.ok) {
-      if (classifierProbe.reason !== 'disabled') {
-        recordReject('classifier-unavailable', {
-          stage: 'classifier-fallback',
-          sourceLabel: fallbackCandidate.label,
-          reason: classifierProbe.reason
-        });
-      }
-      return null;
-    }
-
-    const minAcceptedCells = Number.isFinite(classifierConfig.fallbackMinAcceptedCells)
-      ? Math.max(1, Math.min(OCR_CONFIG.digitCellCount, Math.round(classifierConfig.fallbackMinAcceptedCells)))
-      : OCR_CONFIG.digitCellCount;
-    const digits = classifierProbe.predictions.map((item) => (item && item.accepted ? item.digit : ''));
-    const rawCellConfidences = classifierProbe.predictions.map((item) => {
-      if (!item || !Number.isFinite(item.confidence)) {
-        return 0;
-      }
-      return clamp(item.confidence, 0, 1);
-    });
-    const cellConfidences = classifierProbe.predictions.map((item) => {
-      if (!item || !item.accepted || !Number.isFinite(item.confidence)) {
-        return 0;
-      }
-      return clamp(item.confidence * 100, 0, 100);
-    });
-    let acceptedCount = digits.filter(Boolean).length;
-
-    const singleCellRefineEnabled = classifierConfig.singleCellRefine !== false;
-    const lowConfidenceThresholdRaw = Number.isFinite(classifierConfig.singleCellLowConfidence)
-      ? classifierConfig.singleCellLowConfidence
-      : (
-        Number.isFinite(classifierConfig.minCellConfidence)
-          ? classifierConfig.minCellConfidence + 0.2
-          : 0.55
-      );
-    const lowConfidenceThreshold = clamp(lowConfidenceThresholdRaw, 0, 1);
-    const singleCellRefineMinConfidence = Number.isFinite(classifierConfig.singleCellRefineMinConfidence)
-      ? clamp(classifierConfig.singleCellRefineMinConfidence, 0, 100)
-      : 42;
-    const singleCellRefineSwitchMargin = Number.isFinite(classifierConfig.singleCellRefineSwitchMargin)
-      ? Math.max(0, classifierConfig.singleCellRefineSwitchMargin)
-      : 4;
-    const lowConfidenceIndices = classifierProbe.predictions
-      .map((item, index) => {
-        const accepted = !!(item && item.accepted && item.digit);
-        const confidence = rawCellConfidences[index];
-        return (!accepted || confidence < lowConfidenceThreshold) ? index : -1;
-      })
-      .filter((index) => index >= 0);
-    let refinedCellIndex = null;
-
-    if (
-      singleCellRefineEnabled
-      && lowConfidenceIndices.length === 1
-      && acceptedCount >= Math.max(0, minAcceptedCells - 1)
-    ) {
-      const targetIndex = lowConfidenceIndices[0];
-      if (setProgress) {
-        setProgress('Fallback: refining one low-confidence section...');
-      }
-      const refined = await refineSingleCellWithTesseract({
-        cellCanvases,
-        index: targetIndex,
-        sourceLabel: fallbackCandidate.label
-      });
-      if (refined && refined.digit) {
-        const previousDigit = digits[targetIndex] || '';
-        const previousConfidence = cellConfidences[targetIndex] || 0;
-        const shouldApply = !previousDigit
-          ? refined.confidence >= singleCellRefineMinConfidence
-          : (
-            refined.digit === previousDigit
-            || refined.confidence >= (previousConfidence + singleCellRefineSwitchMargin)
-          );
-        if (shouldApply) {
-          digits[targetIndex] = refined.digit;
-          cellConfidences[targetIndex] = Math.max(previousConfidence, refined.confidence);
-          acceptedCount = digits.filter(Boolean).length;
-          refinedCellIndex = targetIndex;
-        } else {
-          recordReject('classifier-single-cell-refine-skipped', {
-            stage: 'classifier-fallback',
-            sourceLabel: fallbackCandidate.label,
-            index: targetIndex,
-            classifierDigit: previousDigit || null,
-            classifierConfidence: Number(previousConfidence.toFixed(1)),
-            refinedDigit: refined.digit,
-            refinedConfidence: Number(refined.confidence.toFixed(1))
-          });
+  const recordDecodeReject = (candidate, detail = {}, stage = 'classifier-primary') => {
+    const reason = detail && detail.reason ? detail.reason : 'classifier-reject';
+    const payload = {
+      stage,
+      sourceLabel: candidate && candidate.label ? candidate.label : null
+    };
+    if (detail && typeof detail === 'object') {
+      Object.keys(detail).forEach((key) => {
+        if (key !== 'reason') {
+          payload[key] = detail[key];
         }
-      }
-    }
-
-    if (acceptedCount < minAcceptedCells) {
-      recordReject('classifier-insufficient-cell-digits', {
-        stage: 'classifier-fallback',
-        sourceLabel: fallbackCandidate.label,
-        accepted: acceptedCount,
-        required: minAcceptedCells
       });
-      return null;
     }
-
-    const value = digits.join('');
-    if (!value || value.length !== OCR_CONFIG.preferredDigits) {
-      recordReject('classifier-non4-reading', {
-        stage: 'classifier-fallback',
-        sourceLabel: fallbackCandidate.label,
-        value
-      });
-      return null;
-    }
-
-    const confidenceSum = cellConfidences.reduce((sum, score) => sum + score, 0);
-    const averageConfidence = confidenceSum / Math.max(acceptedCount, 1);
-    const normalizedConfidence = clamp(averageConfidence / 100, 0, 1);
-    const score = clamp(0.42 + normalizedConfidence * 0.46, 0, 0.94);
-
-    const fallbackReading = applyReadingMetadata({
-      value,
-      confidence: averageConfidence,
-      areaRatio: 0.28,
-      score,
-      decoder: refinedCellIndex === null ? 'digit-classifier' : 'digit-classifier-single-cell-refine',
-      cellDigits: digits,
-      cellConfidences,
-      refinedCellIndex
-    }, fallbackCandidate, 'digit-classifier-fallback');
-    if (!fallbackReading) {
-      return null;
-    }
-    recordCandidateReadings(fallbackReading, `${fallbackCandidate.label}:classifier`);
-    return fallbackReading;
+    recordReject(reason, payload);
   };
 
-  if (useWordPass) {
-    await worker.setParameters({
-      tessedit_pageseg_mode: Tesseract.PSM.SINGLE_WORD,
-      tessedit_char_whitelist: '0123456789',
-      classify_bln_numeric_mode: 1
+  const recordDecodeCanvas = (sourceLabel, angle, canvas, cells = null) => {
+    if (!sourceLabel || !canvas) {
+      return;
+    }
+    const normalizedAngle = Number.isFinite(angle) ? normalizeAngle(angle) : null;
+    const entries = decodeCanvasBySource.get(sourceLabel) || [];
+    const existingIndex = entries.findIndex((entry) => entry && entry.angle === normalizedAngle);
+    const nextEntry = {
+      angle: normalizedAngle,
+      canvas,
+      cells: Array.isArray(cells) ? cells : null
+    };
+    if (existingIndex >= 0) {
+      entries[existingIndex] = nextEntry;
+    } else {
+      entries.push(nextEntry);
+    }
+    decodeCanvasBySource.set(sourceLabel, entries);
+  };
+
+  const serializeStripReaderProbe = (probe, candidate, stage) => {
+    const sourceLabel = candidate && candidate.label ? candidate.label : null;
+    const width = candidate && candidate.canvas ? candidate.canvas.width : null;
+    const height = candidate && candidate.canvas ? candidate.canvas.height : null;
+    if (!probe || !probe.ok) {
+      return {
+        ok: false,
+        reason: probe && probe.reason ? probe.reason : 'strip-reader-miss',
+        stage,
+        sourceLabel,
+        width,
+        height
+      };
+    }
+    const rawConfidence = Number.isFinite(probe.confidence) ? probe.confidence : 0;
+    return {
+      ok: true,
+      stage,
+      sourceLabel,
+      width,
+      height,
+      method: 'digit-strip-reader-shadow',
+      value: probe.value || null,
+      confidence: serializeStripConfidence(rawConfidence),
+      rawConfidence: Number(rawConfidence.toFixed(4)),
+      digits: Array.isArray(probe.digits) ? [...probe.digits] : null,
+      digitConfidences: serializeStripConfidences(probe.digitConfidences),
+      topKByPosition: Array.isArray(probe.topKByPosition) ? probe.topKByPosition : [],
+      model: probe.model || null,
+      device: probe.device || null
+    };
+  };
+
+  const serializeStripReader23xxProbe = (probe, candidate, stage) => {
+    const sourceLabel = candidate && candidate.label ? candidate.label : null;
+    const width = candidate && candidate.canvas ? candidate.canvas.width : null;
+    const height = candidate && candidate.canvas ? candidate.canvas.height : null;
+    if (!probe || !probe.ok) {
+      return {
+        ok: false,
+        reason: probe && probe.reason ? probe.reason : 'strip-reader-23xx-miss',
+        stage,
+        sourceLabel,
+        width,
+        height
+      };
+    }
+    const rawConfidence = Number.isFinite(probe.confidence) ? probe.confidence : 0;
+    return {
+      ok: true,
+      accepted: probe.accepted === true,
+      stage,
+      sourceLabel,
+      width,
+      height,
+      method: 'digit-strip-reader-23xx-shadow',
+      value: probe.value || null,
+      predictedValue: probe.predictedValue || null,
+      fixedPrefix: probe.fixedPrefix || '23',
+      confidence: serializeStripConfidence(rawConfidence),
+      rawConfidence: Number(rawConfidence.toFixed(4)),
+      guardConfidence: serializeStripConfidence(probe.guardConfidence),
+      rawGuardConfidence: Number.isFinite(probe.guardConfidence)
+        ? Number(probe.guardConfidence.toFixed(4))
+        : null,
+      guardThreshold: Number.isFinite(probe.guardThreshold) ? probe.guardThreshold : null,
+      prefixGuard: probe.prefixGuard || null,
+      suffixDigits: Array.isArray(probe.suffixDigits) ? [...probe.suffixDigits] : null,
+      suffixConfidences: serializeStripConfidences(probe.suffixConfidences),
+      topKByPosition: Array.isArray(probe.topKByPosition) ? probe.topKByPosition : [],
+      model: probe.model || null,
+      device: probe.device || null
+    };
+  };
+
+  const runStripReaderShadow = async (candidate, stage) => {
+    if (!stripReaderConfig.enabled || !stripReaderConfig.endpoint || !candidate || !candidate.canvas) {
+      return null;
+    }
+    const probe = await predictDigitStrip(candidate.canvas, stripReaderConfig);
+    const serialized = serializeStripReaderProbe(probe, candidate, stage);
+    if (serialized) {
+      stripReaderCandidates.push(serialized);
+    }
+    if (serialized && serialized.ok) {
+      const rawConfidence = Number.isFinite(serialized.rawConfidence) ? serialized.rawConfidence : 0;
+      const debugEntry = {
+        canvas: candidate.canvas,
+        result: serialized
+      };
+      if (serialized.sourceLabel && !stripReaderDebugBySource.has(serialized.sourceLabel)) {
+        stripReaderDebugBySource.set(serialized.sourceLabel, debugEntry);
+      }
+      if (rawConfidence > bestStripReaderRawConfidence) {
+        bestStripReaderRawConfidence = rawConfidence;
+        stripReaderConfidenceBestDebug = debugEntry;
+      }
+    }
+    return serialized;
+  };
+
+  const runStripReader23xxShadow = async (candidate, stage) => {
+    if (!stripReader23xxConfig.enabled || !stripReader23xxConfig.endpoint || !candidate || !candidate.canvas) {
+      return null;
+    }
+    const probe = await predictDigitStrip23xx(candidate.canvas, stripReader23xxConfig);
+    const serialized = serializeStripReader23xxProbe(probe, candidate, stage);
+    if (serialized) {
+      stripReader23xxCandidates.push(serialized);
+    }
+    return serialized;
+  };
+
+  const buildStripReaderTrace = () => ({
+    candidates: stripReaderCandidates,
+    debugBySource: stripReaderDebugBySource,
+    confidenceBestDebug: stripReaderConfidenceBestDebug
+  });
+
+  const buildStripReader23xxTrace = () => ({
+    candidates: stripReader23xxCandidates
+  });
+
+  if (!classifierConfig.enabled || !classifierConfig.endpoint) {
+    recordReject('classifier-disabled', {
+      stage: 'classifier-primary'
     });
-    for (const candidate of activeCandidates) {
-      if (!hasValidCandidateGeometry(candidate, 'word-pass')) {
+    return {
+      bestResult: null,
+      evidenceMap: valueEvidence,
+      rejectSummary: summarizeRejectMap(rejectMap),
+      decodeCanvasBySource,
+      candidateTrace,
+      stripReaderTrace: buildStripReaderTrace(),
+      stripReader23xxTrace: buildStripReader23xxTrace()
+    };
+  }
+
+  const rankedCandidates = rankClassifierCandidates(activeCandidates);
+  const maxPrimaryCandidates = Number.isFinite(classifierConfig.maxPrimaryCandidates)
+    ? Math.max(1, Math.min(20, Math.round(classifierConfig.maxPrimaryCandidates)))
+    : (
+      Number.isFinite(OCR_CONFIG.fallbackCandidates)
+        ? Math.max(1, Math.min(20, Math.round(OCR_CONFIG.fallbackCandidates)))
+        : 6
+    );
+  const rankedEdgeCandidates = rankedCandidates.filter((candidate) => isEdgeSourceLabel(candidate.label));
+  const rankedBaseCandidates = rankedCandidates.filter((candidate) => !isEdgeSourceLabel(candidate.label));
+  let selectedCandidates;
+  if (rankedEdgeCandidates.length && rankedBaseCandidates.length && maxPrimaryCandidates > 1) {
+    const selectedSet = new Set();
+    const reserveBaseSlots = Math.min(
+      rankedBaseCandidates.length,
+      Math.min(2, Math.max(1, maxPrimaryCandidates - 1))
+    );
+    const primaryCandidates = [
+      ...rankedEdgeCandidates.slice(0, Math.max(1, maxPrimaryCandidates - reserveBaseSlots)),
+      ...rankedBaseCandidates.slice(0, reserveBaseSlots)
+    ];
+
+    primaryCandidates.forEach((candidate) => {
+      if (!selectedSet.has(candidate.label)) {
+        selectedSet.add(candidate.label);
+      }
+    });
+    selectedCandidates = [...selectedSet].map((label) => (
+      rankedCandidates.find((candidate) => candidate.label === label)
+    )).filter(Boolean);
+
+    if (selectedCandidates.length < maxPrimaryCandidates) {
+      rankedCandidates.forEach((candidate) => {
+        if (selectedCandidates.length >= maxPrimaryCandidates || selectedSet.has(candidate.label)) {
+          return;
+        }
+        selectedSet.add(candidate.label);
+        selectedCandidates.push(candidate);
+      });
+    }
+  } else {
+    selectedCandidates = rankedEdgeCandidates.length
+      ? rankedEdgeCandidates.slice(0, maxPrimaryCandidates)
+      : rankedBaseCandidates.slice(0, maxPrimaryCandidates);
+  }
+  if (classifierConfig.forceInitialPreviewCandidate === true) {
+    const initialCandidate = activeCandidates.find((candidate) => (
+      hasValidCandidateGeometry(candidate, 'classifier-primary-force-initial')
+    ));
+    selectedCandidates = initialCandidate ? [initialCandidate] : [];
+  }
+  const primaryIncludesBaseCandidates = selectedCandidates.some((candidate) => !isEdgeSourceLabel(candidate.label));
+  if (!selectedCandidates.length) {
+    recordReject('classifier-no-candidate', {
+      stage: 'classifier-primary'
+    });
+    return {
+      bestResult: null,
+      evidenceMap: valueEvidence,
+      rejectSummary: summarizeRejectMap(rejectMap),
+      decodeCanvasBySource,
+      candidateTrace,
+      stripReaderTrace: buildStripReaderTrace(),
+      stripReader23xxTrace: buildStripReader23xxTrace()
+    };
+  }
+
+  const runCandidatePass = async (candidates, stageLabel, options = {}) => {
+    const allowSelection = options.allowSelection !== false;
+    const recordEvidence = options.recordEvidence !== false;
+    const nonEdgeAvailable = candidates.some((candidate) => !isEdgeSourceLabel(candidate.label));
+    let pass = 0;
+    const expectedPasses = candidates.length;
+
+    for (const candidate of candidates) {
+      pass += 1;
+      if (setProgress) {
+        setProgress(`Classifying digits (${pass}/${expectedPasses})`);
+      }
+
+      const stripReaderProbe = await runStripReaderShadow(candidate, stageLabel);
+      const stripReader23xxProbe = await runStripReader23xxShadow(candidate, stageLabel);
+
+      if (isEdgeSourceLabel(candidate.label)) {
+        const fallbackScore = Number.isFinite(candidate.fallbackScore)
+          ? Number(candidate.fallbackScore.toFixed(3))
+          : null;
+        const fallbackAspect = Number.isFinite(candidate.fallbackAspect)
+          ? Number(candidate.fallbackAspect.toFixed(3))
+          : (
+            candidate.canvas
+              ? Number((candidate.canvas.width / Math.max(1, candidate.canvas.height)).toFixed(3))
+              : null
+          );
+        recordReject('classifier-edge-candidate-selected', {
+          stage: stageLabel,
+          sourceLabel: candidate.label,
+          score: fallbackScore,
+          aspect: fallbackAspect,
+          nonEdgeAlternative: nonEdgeAvailable
+        });
+      }
+
+      const candidateRejects = [];
+      const reading = await readDigitsByCells(candidate.canvas, null, {
+        roiMode: true,
+        enableCellSplitProbe: stageLabel !== 'classifier-diagnostic-normalization',
+        onReject: (detail) => {
+          candidateRejects.push(detail);
+          recordDecodeReject(candidate, detail, stageLabel);
+        }
+      });
+      if (!reading) {
+        candidateTrace.push({
+          stage: stageLabel,
+          sourceLabel: candidate.label,
+          diagnosticOnly: candidate.diagnosticOnly === true,
+          probeKind: candidate.probeKind || null,
+          geometry: candidate.geometry || null,
+          width: candidate.canvas.width,
+          height: candidate.canvas.height,
+          fallbackScore: Number.isFinite(candidate.fallbackScore)
+            ? Number(candidate.fallbackScore.toFixed(3))
+            : null,
+          fallbackAspect: Number.isFinite(candidate.fallbackAspect)
+            ? Number(candidate.fallbackAspect.toFixed(3))
+            : null,
+          stripReader: stripReaderProbe,
+          stripReader23xx: stripReader23xxProbe,
+          result: null,
+          rejects: candidateRejects
+        });
+        if (candidateRejects.some((detail) => isClassifierAvailabilityReject(detail))) {
+          break;
+        }
         continue;
       }
-      for (const mode of modes) {
-        pass += 1;
-        if (setProgress) {
-          setProgress(`Analyzing meter (${pass}/${expectedPasses})`);
-        }
-        const processed = mode === 'raw'
-          ? candidate.canvas
-          : preprocessCanvas(candidate.canvas, mode);
-        const { data } = await worker.recognize(processed);
-        const candidateRawBest = selectBestReading(data, processed);
-        let candidateBest = candidateRawBest;
-        let candidateMethod = 'word-pass';
-        if (!candidateRawBest) {
-          recordReject('ocr-no-digits', {
-            stage: 'word-pass',
-            sourceLabel: candidate.label,
-            mode
-          });
-        } else if (!isPreferredLengthReading(candidateRawBest)) {
-          recordReject('ocr-non4-reading', {
-            stage: 'word-pass',
-            sourceLabel: candidate.label,
-            mode,
-            value: candidateRawBest.value || null
-          });
-          candidateBest = null;
-        }
-        if (candidateBest) {
-          const verified = await verifyEdgeWordPassCandidate({
-            candidate,
-            mode,
-            reading: {
-              ...candidateBest,
-              preprocessMode: mode
-            }
-          });
-          candidateBest = verified.reading;
-          candidateMethod = verified.method;
-        }
-        candidateBest = applyReadingMetadata(candidateBest, candidate, candidateMethod);
-        if (candidateBest && (!bestResult || candidateBest.score > bestResult.score)) {
-          bestResult = candidateBest;
-        }
-        if (candidateBest) {
-          recordCandidateReadings(candidateBest, candidate.label);
-        }
+      if (!isPreferredLengthReading(reading)) {
+        candidateTrace.push({
+          stage: stageLabel,
+          sourceLabel: candidate.label,
+          diagnosticOnly: candidate.diagnosticOnly === true,
+          probeKind: candidate.probeKind || null,
+          geometry: candidate.geometry || null,
+          width: candidate.canvas.width,
+          height: candidate.canvas.height,
+          fallbackScore: Number.isFinite(candidate.fallbackScore)
+            ? Number(candidate.fallbackScore.toFixed(3))
+            : null,
+          fallbackAspect: Number.isFinite(candidate.fallbackAspect)
+            ? Number(candidate.fallbackAspect.toFixed(3))
+            : null,
+          stripReader: stripReaderProbe,
+          stripReader23xx: stripReader23xxProbe,
+          result: {
+            value: reading.value || null,
+            confidence: Number.isFinite(reading.confidence) ? Number(reading.confidence.toFixed(1)) : null,
+            score: Number.isFinite(reading.score) ? Number(reading.score.toFixed(3)) : null,
+            cellDigits: Array.isArray(reading.cellDigits) ? [...reading.cellDigits] : null,
+            cellConfidences: serializeCellConfidences(reading.cellConfidences),
+            cropMode: reading.cropMode || null,
+            cropRatio: Number.isFinite(reading.cropRatio) ? Number(reading.cropRatio.toFixed(3)) : null,
+            splitOffsetRatio: Number.isFinite(reading.splitOffsetRatio)
+              ? Number(reading.splitOffsetRatio.toFixed(3))
+              : 0,
+            splitMode: reading.splitMode || null,
+            geometryRankPenalty: Number.isFinite(reading.geometryRankPenalty)
+              ? Number(reading.geometryRankPenalty.toFixed(3))
+              : null,
+            geometryRankReasons: Array.isArray(reading.geometryRankReasons)
+              ? [...reading.geometryRankReasons]
+              : [],
+            splitGeometry: reading.splitGeometry || null,
+            variantCandidates: serializeCellVariantCandidates(reading.diagnosticVariants)
+          },
+          rejects: candidateRejects
+        });
+        recordReject('classifier-non4-reading', {
+          stage: stageLabel,
+          sourceLabel: candidate.label,
+          value: reading.value || null
+        });
+        continue;
       }
-    }
-  }
 
-  if (!bestResult && allowSparseScan && scanCanvas) {
-    if (setProgress) {
-      setProgress('Scanning full image...');
-    }
-    await worker.setParameters({
-      tessedit_pageseg_mode: Tesseract.PSM.SPARSE_TEXT,
-      tessedit_char_whitelist: '0123456789'
-    });
-    const softened = preprocessCanvas(scanCanvas, 'soft');
-    const { data } = await worker.recognize(softened);
-    const sparseRawCandidate = selectBestReading(data, softened);
-    let fullCandidate = sparseRawCandidate;
-    if (!sparseRawCandidate) {
-      recordReject('ocr-no-digits', {
-        stage: 'sparse-scan',
-        sourceLabel: 'scan-roi',
-        mode: 'soft'
-      });
-    } else if (!isPreferredLengthReading(sparseRawCandidate)) {
-      recordReject('ocr-non4-reading', {
-        stage: 'sparse-scan',
-        sourceLabel: 'scan-roi',
-        mode: 'soft',
-        value: sparseRawCandidate.value || null
-      });
-      fullCandidate = null;
-    }
-    fullCandidate = applyReadingMetadata(fullCandidate, { label: 'scan-roi' }, 'sparse-scan');
-    if (fullCandidate) {
-      bestResult = fullCandidate;
-      recordCandidateReadings(fullCandidate, 'scan-roi');
-    }
-  }
+      const classifierReading = applyReadingMetadata({
+        ...reading,
+        preprocessMode: 'raw'
+      }, candidate, 'digit-classifier-primary');
+      if (!classifierReading) {
+        continue;
+      }
+      if (
+        !isEdgeSourceLabel(classifierReading.sourceLabel)
+        && String(classifierReading.method || '').startsWith('digit-classifier')
+        && isRepeatedDigitReading(classifierReading.value)
+      ) {
+        classifierReading.score = Math.max(0, (classifierReading.score ?? 0) - 0.22);
+        recordReject('classifier-repeated-digit-penalty', {
+          stage: stageLabel,
+          sourceLabel: classifierReading.sourceLabel,
+          value: classifierReading.value,
+          penalty: 0.22
+        });
+      }
+      applyGeometryRankPenalty(classifierReading, candidate, stageLabel);
+      if (classifierReading.sourceLabel && classifierReading.decodedStripCanvas) {
+        recordDecodeCanvas(
+          classifierReading.sourceLabel,
+          classifierReading.angle,
+          classifierReading.decodedStripCanvas,
+          classifierReading.decodedCellCanvases
+        );
+      }
+      const classifierReadingForSelection = { ...classifierReading };
+      const candidateDebugImages = buildCandidateDebugImages(
+        classifierReadingForSelection.decodedStripCanvas,
+        classifierReadingForSelection.decodedCellCanvases
+      );
+      delete classifierReadingForSelection.decodedStripCanvas;
+      delete classifierReadingForSelection.decodedCellCanvases;
+      const traceEntry = {
+        stage: stageLabel,
+        sourceLabel: candidate.label,
+        diagnosticOnly: candidate.diagnosticOnly === true,
+        probeKind: candidate.probeKind || null,
+        geometry: candidate.geometry || null,
+        width: candidate.canvas.width,
+        height: candidate.canvas.height,
+        fallbackScore: Number.isFinite(candidate.fallbackScore)
+          ? Number(candidate.fallbackScore.toFixed(3))
+          : null,
+        fallbackAspect: Number.isFinite(candidate.fallbackAspect)
+          ? Number(candidate.fallbackAspect.toFixed(3))
+          : null,
+        result: {
+          value: classifierReadingForSelection.value || null,
+          confidence: Number.isFinite(classifierReadingForSelection.confidence)
+            ? Number(classifierReadingForSelection.confidence.toFixed(1))
+            : null,
+          score: Number.isFinite(classifierReadingForSelection.score)
+            ? Number(classifierReadingForSelection.score.toFixed(3))
+            : null,
+          angle: Number.isFinite(classifierReadingForSelection.angle)
+            ? classifierReadingForSelection.angle
+            : null,
+          method: classifierReadingForSelection.method || null,
+          cellDigits: Array.isArray(classifierReadingForSelection.cellDigits)
+            ? [...classifierReadingForSelection.cellDigits]
+            : null,
+          cellConfidences: serializeCellConfidences(classifierReadingForSelection.cellConfidences),
+          cropMode: classifierReadingForSelection.cropMode || null,
+          cropRatio: Number.isFinite(classifierReadingForSelection.cropRatio)
+            ? Number(classifierReadingForSelection.cropRatio.toFixed(3))
+            : null,
+          splitOffsetRatio: Number.isFinite(classifierReadingForSelection.splitOffsetRatio)
+            ? Number(classifierReadingForSelection.splitOffsetRatio.toFixed(3))
+            : 0,
+          splitMode: classifierReadingForSelection.splitMode || null,
+          baseScore: Number.isFinite(classifierReadingForSelection.baseScore)
+            ? Number(classifierReadingForSelection.baseScore.toFixed(3))
+            : null,
+          diagnosticGeometryScoreAdjustment: Number.isFinite(classifierReadingForSelection.diagnosticGeometryScoreAdjustment)
+            ? Number(classifierReadingForSelection.diagnosticGeometryScoreAdjustment.toFixed(3))
+            : null,
+          geometryRankPenalty: Number.isFinite(classifierReadingForSelection.geometryRankPenalty)
+            ? Number(classifierReadingForSelection.geometryRankPenalty.toFixed(3))
+            : null,
+          selectionGeometryPenalty: Number.isFinite(classifierReadingForSelection.selectionGeometryPenalty)
+            ? Number(classifierReadingForSelection.selectionGeometryPenalty.toFixed(3))
+            : null,
+          unpenalizedScore: Number.isFinite(classifierReadingForSelection.unpenalizedScore)
+            ? Number(classifierReadingForSelection.unpenalizedScore.toFixed(3))
+            : null,
+          geometryRankReasons: Array.isArray(classifierReadingForSelection.geometryRankReasons)
+            ? [...classifierReadingForSelection.geometryRankReasons]
+            : [],
+          splitGeometry: classifierReadingForSelection.splitGeometry || null,
+          variantCandidates: serializeCellVariantCandidates(classifierReadingForSelection.diagnosticVariants)
+        },
+        stripReader: stripReaderProbe,
+        stripReader23xx: stripReader23xxProbe,
+        rejects: candidateRejects
+      };
+      if (candidateDebugImages) {
+        traceEntry.debugImages = candidateDebugImages;
+      }
+      candidateTrace.push(traceEntry);
 
-  if (!bestResult) {
-    const classifierFallback = await tryClassifierFallback();
-    if (classifierFallback) {
-      bestResult = classifierFallback;
+      const rankedEvidenceBeforeCurrentReading = rankSelectionEvidence(valueEvidence);
+      const preserveAgreedEdgeResult = !!(
+        stageLabel === 'classifier-fallback-base'
+        && bestResult
+        && isEdgeSourceLabel(bestResult.sourceLabel)
+        && rankedEvidenceBeforeCurrentReading.some((entry) => (
+          entry.value === bestResult.value
+          && entry.topHits >= 2
+          && entry.edgeTopHits >= 2
+          && entry.nonEdgeHits === 0
+        ))
+      );
+      if (
+        allowSelection
+        && (
+          !bestResult
+          || (
+            classifierReadingForSelection.score > bestResult.score
+            && (
+              !preserveAgreedEdgeResult
+              || classifierReadingForSelection.score > (bestResult.score + 0.03)
+            )
+          )
+          || (
+            classifierReadingForSelection.score === bestResult.score
+            && (classifierReadingForSelection.confidence ?? 0) > (bestResult.confidence ?? 0)
+          )
+        )
+      ) {
+        bestResult = classifierReadingForSelection;
+      }
+      if (recordEvidence) {
+        recordCandidateReadings(classifierReadingForSelection, `${candidate.label}:classifier`);
+      }
+
+    }
+    return !!(
+      allowSelection
+      && bestResult
+      && isEdgeSourceLabel(bestResult.sourceLabel)
+      && (bestResult.score ?? 0) >= OCR_CONFIG.earlyStopScore
+    );
+  };
+
+  const edgeWonEarly = await runCandidatePass(selectedCandidates, 'classifier-primary');
+  const rankedEvidenceAfterPrimary = rankSelectionEvidence(valueEvidence);
+  const primaryTopEvidence = rankedEvidenceAfterPrimary[0] || null;
+  const shouldReopenBaseFallback = !!(
+    rankedEdgeCandidates.length > 0
+    && primaryTopEvidence
+    && primaryTopEvidence.nonEdgeSourceCount === 0
+    && primaryTopEvidence.topHits < 2
+  );
+  if (
+    !edgeWonEarly
+    && rankedBaseCandidates.length
+    && !primaryIncludesBaseCandidates
+    && (
+      !bestResult
+      || shouldReopenBaseFallback
+    )
+  ) {
+    selectedCandidates = rankedBaseCandidates.slice(0, Math.min(2, maxPrimaryCandidates));
+    await runCandidatePass(selectedCandidates, 'classifier-fallback-base');
+  }
+  if (classifierConfig.decodeDiagnosticCandidates === true && diagnosticCandidates.length) {
+    const maxDiagnosticCandidates = Number.isFinite(classifierConfig.maxDiagnosticCandidates)
+      ? Math.max(0, Math.min(80, Math.round(classifierConfig.maxDiagnosticCandidates)))
+      : 36;
+    if (maxDiagnosticCandidates > 0) {
+      const rankedDiagnosticCandidates = rankClassifierCandidates(diagnosticCandidates)
+        .slice(0, maxDiagnosticCandidates);
+      if (rankedDiagnosticCandidates.length) {
+        await runCandidatePass(rankedDiagnosticCandidates, 'classifier-diagnostic-normalization', {
+          allowSelection: false,
+          recordEvidence: false
+        });
+      }
     }
   }
 
   return {
     bestResult,
     evidenceMap: valueEvidence,
-    rejectSummary: summarizeRejectMap(rejectMap)
+    rejectSummary: summarizeRejectMap(rejectMap),
+    decodeCanvasBySource,
+    candidateTrace,
+    stripReaderTrace: buildStripReaderTrace(),
+    stripReader23xxTrace: buildStripReader23xxTrace()
   };
 };
 
@@ -1127,7 +1836,34 @@ const runMeterOcr = async (file, setProgress) => {
       throw new Error(message);
     }
 
+    const rawRoiRect = normalizeRectToCanvas(baseCanvas, {
+      x: roiProbe.rect.x * baseCanvas.width,
+      y: roiProbe.rect.y * baseCanvas.height,
+      width: roiProbe.rect.width * baseCanvas.width,
+      height: roiProbe.rect.height * baseCanvas.height
+    });
     const roiRect = resolveNeuralRoiRect(baseCanvas, roiProbe, neuralRoiConfig);
+    const roiGeometry = {
+      baseSize: {
+        width: baseCanvas.width,
+        height: baseCanvas.height
+      },
+      detection: {
+        confidence: Number.isFinite(roiProbe.confidence)
+          ? Number(roiProbe.confidence.toFixed(3))
+          : null,
+        rectNorm: roiProbe.rect ? {
+          x: Number(roiProbe.rect.x.toFixed(5)),
+          y: Number(roiProbe.rect.y.toFixed(5)),
+          width: Number(roiProbe.rect.width.toFixed(5)),
+          height: Number(roiProbe.rect.height.toFixed(5))
+        } : null,
+        rect: serializeRect(rawRoiRect)
+      },
+      expandedRect: serializeRect(roiRect),
+      expandX: Number.isFinite(neuralRoiConfig.expandX) ? neuralRoiConfig.expandX : 0,
+      expandY: Number.isFinite(neuralRoiConfig.expandY) ? neuralRoiConfig.expandY : 0
+    };
     addNeuralRoiDebugStages(debugSession, baseCanvas, roiRect, roiProbe);
     const roiCrop = cropCanvas(baseCanvas, roiRect);
     addDebugStage(debugSession, '0b. neural roi crop', roiCrop);
@@ -1139,7 +1875,6 @@ const runMeterOcr = async (file, setProgress) => {
       }))
       : [];
 
-    const worker = await getWorker();
     if (!roiCandidates.length) {
       const message = 'Neural ROI crop did not produce OCR candidates. Enter the measurement manually.';
       if (setProgress) {
@@ -1150,10 +1885,7 @@ const runMeterOcr = async (file, setProgress) => {
 
     const roiBranch = await evaluateCandidateBranch({
       candidates: roiCandidates,
-      worker,
       setProgress,
-      useWordPass: true,
-      allowSparseScan: true,
       scanCanvas: roiCrop
     });
 
@@ -1163,9 +1895,20 @@ const runMeterOcr = async (file, setProgress) => {
       bestResult: roiBranch.bestResult,
       evidenceMap: roiBranch.evidenceMap,
       branchUsed: isPreferredLengthReading(roiBranch.bestResult) ? 'roi-accepted' : 'roi-uncertain',
-      rejectSummary: roiBranch.rejectSummary || []
+      rejectSummary: roiBranch.rejectSummary || [],
+      candidateTrace: roiBranch.candidateTrace || [],
+      stripReaderTrace: roiBranch.stripReaderTrace || null,
+      stripReader23xxTrace: roiBranch.stripReader23xxTrace || null,
+      roiGeometry
     });
-    addWinningCandidateDebugStage(debugSession, roiCandidates, finalSelection);
+    const stripReaderDebug = resolveStripReaderDebug(roiBranch.stripReaderTrace || null, finalSelection);
+    addWinningCandidateDebugStage(
+      debugSession,
+      roiCandidates,
+      finalSelection,
+      roiBranch.decodeCanvasBySource,
+      stripReaderDebug
+    );
 
     if (setProgress) {
       if (finalSelection && finalSelection.value) {

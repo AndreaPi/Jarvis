@@ -1,20 +1,20 @@
 # ROI Backend
 
-Python service for neural ROI detection (digit window) plus optional per-cell digit-classifier inference.
+Python service for neural ROI detection (digit window), per-cell digit-classifier inference, and whole-strip shadow-reader inference.
 
 ## 1) Install
 
 ```bash
 cd backend
-python3 -m venv .venv
+uv venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 ```
 
 For CPU-only environments (for example Vercel), install:
 
 ```bash
-pip install -r requirements-cpu.txt
+uv pip install -r requirements-cpu.txt
 ```
 
 ## 2) Fine-tune on your dataset
@@ -22,6 +22,10 @@ pip install -r requirements-cpu.txt
 Prepare a YOLO dataset and YAML file. A template is available at `data/roi_dataset.example.yaml`.
 
 Expected labels: one class (`digit_window`) with normalized YOLO boxes.
+
+`build_roi_dataset.py` now keeps a persistent split manifest at `data/roi_dataset/splits.json`.
+Existing samples keep their assigned split on rebuild, and newly ingested images default to `train`
+unless you explicitly edit `splits.json`.
 
 ```bash
 cd backend
@@ -41,25 +45,72 @@ python train_roi.py --data data/roi_dataset.yaml --base-model yolov8n.pt --allow
 
 After training, best weights are copied to `backend/models/roi.pt`.
 The API default is pinned to `backend/models/roi-rotaug-e30-640.pt`; use `ROI_MODEL_PATH` to explicitly test/use `roi.pt` or another checkpoint.
+The default checkpoint was refreshed on June 9, 2026 after the retrained ROI detector improved browser OCR `MAE` from `388.00` to `106.83` with exact match unchanged at `11/31` and no-read unchanged at `1/31`.
+
+Promoted checkpoints in `backend/models/*.pt` are Tier 1 artifacts. Track them with DVC and push them to your configured DVC remote:
+
+```bash
+cd ..
+uv pip install --python backend/.venv/bin/python "dvc[s3]"
+dvc add backend/models/*.pt
+scripts/dvc-push-safe.sh backend/models/*.pt
+```
+
+If your remote is not configured yet, add one once. For Backblaze B2, use its S3-compatible endpoint:
+
+```bash
+source backend/.venv/bin/activate
+dvc remote add -d b2 s3://<bucket-name>/jarvis-dvc
+dvc remote modify b2 endpointurl https://s3.<region>.backblazeb2.com
+dvc remote modify --local b2 access_key_id <key-id>
+dvc remote modify --local b2 secret_access_key <application-key>
+```
 
 ## Build a digit OCR dataset from ROI labels
 
-This creates:
-- strip crops + sequence labels (`data/digit_dataset/strips`, `data/digit_dataset/strip_labels`)
-- per-cell crops grouped by digit class (`data/digit_dataset/cells`)
-- manifests and QA previews (`data/digit_dataset/manifests`, `data/digit_dataset/qa_previews`)
+Current recommended flow:
+
+1. Extract ROI windows by split.
+2. Canonicalize orientation and split each window into 4 equispaced sections.
+3. Label each section from the 4-digit reading string.
 
 ```bash
 cd backend
 source .venv/bin/activate
-python build_digit_dataset.py --clean
+python extract_digit_windows.py --clean
+python split_digit_windows.py --clean
+python label_digit_sections.py --clean
 ```
 
-Validate manifest/file consistency and QA preview coverage:
+This creates:
+
+- `data/digit_dataset/windows/{train,val,test}`
+- `data/digit_dataset/windows_canonical/{train,val,test}`
+- `data/digit_dataset/sections/{train,val,test}`
+- `data/digit_dataset/sections_labeled/{train,val,test}/{0..9}`
+- manifests under `data/digit_dataset/manifests`
+
+`split_digit_windows.py` also reads optional per-image canonical strip corrections from
+`data/digit_dataset/manifests/canonical_overrides.csv`. Use that manifest for small,
+reviewed dataset-generation fixes such as trimming excess side padding, retaining a little
+more top/bottom context from the source ROI window, or applying an extra deskew correction.
+After changing canonical overrides, regenerate sections, labels, synthetic train sections,
+and the strip QA page before retraining.
+
+Keep `data/digit_dataset/manifests/**` in Git. The bulk image trees above are DVC-managed via:
+
+- `data/digit_dataset/windows.dvc`
+- `data/digit_dataset/windows_canonical.dvc`
+- `data/digit_dataset/sections.dvc`
+- `data/digit_dataset/sections_labeled.dvc`
+
+Validate the current windows/canonical/sections dataset:
 
 ```bash
 python validate_digit_dataset.py
 ```
+
+`build_digit_dataset.py` is deprecated and writes the retired strips/cells dataset shape.
 
 Generate a prioritized capture checklist for underrepresented digits:
 
@@ -79,6 +130,96 @@ source .venv/bin/activate
 python train_digit_classifier.py --device cpu
 ```
 
+### Recover and fine-tune the promoted digit classifier safely
+
+`backend/models/digit_classifier.pt` is the safety baseline for the primary OCR path. Do not overwrite it with a scratch retrain unless the challenger beats the restored checkpoint on the UI **Run test set**. The current clean canonical section dataset is small and imbalanced, and a clean/synthetic scratch retrain regressed badly on browser runtime crops.
+
+Restore the promoted checkpoints before experiments:
+
+```bash
+cd ..
+env DVC_SITE_CACHE_DIR=/tmp/dvc-site-cache \
+  backend/.venv/bin/python -m dvc checkout --force \
+  backend/models/digit_classifier.pt.dvc \
+  backend/models/digit_strip_reader.pt.dvc
+env DVC_SITE_CACHE_DIR=/tmp/dvc-site-cache \
+  backend/.venv/bin/python -m dvc status \
+  backend/models/digit_classifier.pt.dvc \
+  backend/models/digit_strip_reader.pt.dvc
+```
+
+To reconstruct the runtime-failure crop dataset from the restored classifier and current ROI model:
+
+```bash
+cd backend
+source .venv/bin/activate
+python export_runtime_digit_failure_set.py
+cd ..
+npm run qa:runtime-failure-dataset
+npm run qa:runtime-failure-dataset:selected
+```
+
+The runtime-failure dataset is generated under `backend/data/runtime_failure_dataset/` and is intentionally train-only. It is ignored by Git unless a future promoted recipe explicitly decides to DVC-track it. Use the selected-only QA view when reviewing the candidates the UI actually chose; the full QA view is mainly for comparing alternate candidates.
+
+Use grouped CV before training a challenger:
+
+```bash
+npm run qa:digit-classifier-cv
+```
+
+The CV folds are grouped by source image filename to avoid sibling-cell leakage. By default, CV uses the train pool only; `meter_20260327.JPEG` remains a fixed hard test holdout. It compares the restored checkpoint, clean-cell fine-tuning, and clean + runtime-failure fine-tuning. This is evidence for candidate recipes, not a promotion gate by itself.
+
+As of May 27, 2026, the digit dataset intentionally has no one-image validation split: `meter_20260323.JPEG` moved into train because a single validation image was too noisy to guide model selection. If `train_digit_classifier.py` sees no validation samples, checkpoint selection falls back to train loss; judge recipes with grouped CV and the UI **Run test set** before promotion.
+
+Write challengers outside `backend/models/`:
+
+```bash
+cd backend
+source .venv/bin/activate
+python train_digit_classifier.py \
+  --device cpu \
+  --init-checkpoint models/digit_classifier.pt \
+  --extra-train-root data/runtime_failure_dataset/sections_labeled \
+  --synthetic-root data/digit_dataset/sections_synthetic \
+  --synthetic-target-ratio 2.0 \
+  --synthetic-selection-strategy balanced \
+  --project runs \
+  --name digit-classifier-finetune-runtime \
+  --copy-to runs/digit-classifier-finetune-runtime/digit_classifier.pt
+```
+
+May 24, 2026 recovery result: grouped CV improved from restored baseline `51.8%` per-cell accuracy to clean-only `61.6%` and clean + curated-runtime-failure `66.1%`, but the final challenger failed the then-28-image UI promotion gate (`3/28` exact, `MAE 139.11`, `1` no-read) versus the restored checkpoint with the conservative geometry ranker (`10/28` exact, `MAE 61.22`, `1` no-read). The promoted checkpoint therefore remains `backend/models/digit_classifier.pt`. The current May 29, 2026 29-image UI baseline is tracked in `src/ocr/AGENTS.md` and `docs/ocr-tuning-playbook.md`.
+
+## Train the whole-strip shadow reader
+
+This trains a fixed four-head CNN on canonical ROI windows (`data/digit_dataset/windows_canonical`) and writes:
+
+- weights: `backend/models/digit_strip_reader.pt`
+- training summary: `backend/runs/strip-digit-reader/strip_digit_reader_summary.json`
+
+```bash
+cd backend
+source .venv/bin/activate
+python train_strip_digit_reader.py --device cpu
+```
+
+The trainer letterboxes canonical windows to `520x160` so horizontal digit geometry is preserved. When validation has too few samples for reliable checkpoint selection, the default `--selection-split auto` falls back to train-set selection and leaves the UI test set as the promotion gate.
+
+## Train the guarded `23xx` shadow reader
+
+This trains a house-specific constrained CNN on canonical ROI windows. It uses a binary guard for whether the second digit is `3`, then predicts only the final two suffix digits. It writes:
+
+- weights: `backend/models/digit_strip_reader_23xx.pt`
+- training summary: `backend/runs/strip-digit-reader-23xx/strip_digit_reader_23xx_summary.json`
+
+```bash
+cd backend
+source .venv/bin/activate
+python train_strip_digit_reader_23xx.py --device cpu
+```
+
+House-specific constrained-reader assumption: for this local water meter, the fixed prefix `23` is an intentional shortcut based on the expectation that the meter will remain below `2400` cubic meters while this project is used in this home. Review the assumption at least yearly or whenever readings approach `2390`. The reader stays shadow-only and only accepts a forced `23xx` value when its second-digit-is-`3` guard reaches the configured threshold. The first checkpoint is diagnostic-only: cross-validation looked conservative (`0` guard false positives, `19` guard false negatives), but runtime QA still found accepted wrong predictions. Lowering the guard from `0.98` to `0.80` accepted more wrong values, so threshold tuning is not enough.
+
 Optional: generate synthetic **train-only** sections from real train patches, then mix real + synthetic in training.
 Val/test remain strictly real-only.
 
@@ -93,6 +234,10 @@ python train_digit_classifier.py \
   --name digit-classifier-synth-v1
 ```
 
+Keep `data/digit_dataset/sections_synthetic/manifests/**` in Git and track the synthetic image tree with `data/digit_dataset/sections_synthetic/train.dvc`.
+
+After promoting a new ROI or digit checkpoint, run `dvc add` for the changed artifacts, push with `scripts/dvc-push-safe.sh`, then package Tier 1 artifacts and publish them as Release assets so the raw photos, labels, manifests, and promoted weights are recoverable off-machine.
+
 ## 3) Start the API
 
 ```bash
@@ -100,6 +245,8 @@ cd backend
 source .venv/bin/activate
 uvicorn app:app --host 127.0.0.1 --port 8001 --reload
 ```
+
+In the Codex/DevTools environment, starting `uvicorn` inside the sandbox may leave the service unreachable from the browser even when shell `curl` works. If browser requests to `127.0.0.1:8001` fail with `ERR_CONNECTION_REFUSED` or `Failed to fetch`, restart the backend outside the sandbox with escalated permissions.
 
 Readiness check:
 
@@ -109,15 +256,19 @@ curl -s http://127.0.0.1:8001/health
 
 ## 4) Endpoints
 
-- `GET /health`: model readiness (`ready`, `roi_ready`, `digit_ready`) + effective model/device config.
+- `GET /health`: model readiness (`ready`, `roi_ready`, `digit_ready`, `strip_digit_ready`, `strip_digit_23xx_ready`) + effective model/device config.
 - `POST /roi/detect`: multipart upload (`image`) and returns normalized bbox + confidence.
 - `POST /digit/predict`: multipart upload (`image`) and returns the predicted digit + confidence.
 - `POST /digit/predict-cells`: multipart upload (`images`, repeated field) for batch cell decoding.
+- `POST /digit/predict-strip`: multipart upload (`image`) for direct fixed-length 4-digit strip decoding.
+- `POST /digit/predict-strip-23xx`: multipart upload (`image`) for guarded house-specific `23xx` suffix decoding.
 
 Frontend integration defaults:
 - ROI detection path is `http://127.0.0.1:8001/roi/detect` and is required for OCR.
 - Digit classifier path is `http://127.0.0.1:8001/digit/predict-cells` and is only used when `OCR_CONFIG.digitClassifier.enabled=true`.
-- Frontend ROI OCR currently uses conservative acceptance guards (`minWordPassHits` plus edge-candidate corroboration/cell-verification gates) to avoid high-confidence false positives.
+- Strip reader path is `http://127.0.0.1:8001/digit/predict-strip`; frontend OCR runs it shadow-only via `OCR_CONFIG.digitStripReader.shadowOnly=true` and logs results without changing final selection.
+- Constrained `23xx` strip reader path is `http://127.0.0.1:8001/digit/predict-strip-23xx`; frontend OCR runs it shadow-only via `OCR_CONFIG.digitStripReader23xx.shadowOnly=true` and logs accepted/abstained diagnostics without changing final selection.
+- Frontend ROI OCR prioritizes `90/270` edge candidates, but the primary pass also evaluates top base-strip rotations when present. A narrow `scan-roi` / base fallback rerun is only used when base candidates were not already evaluated and the edge evidence remains weak. Final confidence gates can still reject weak edge-only reads.
 
 ## Environment Variables
 
@@ -134,13 +285,21 @@ Frontend integration defaults:
 - `DIGIT_DEVICE`: inference device for digit classifier (default follows `ROI_DEVICE`)
 - `DIGIT_MIN_CONFIDENCE`: minimum accepted confidence for digit predictions (default: `0.0`)
 - `DIGIT_TOP_K`: number of top classes returned by digit endpoints (default: `3`)
+- `STRIP_DIGIT_MODEL_PATH`: path to strip reader checkpoint (default: `backend/models/digit_strip_reader.pt`)
+- `STRIP_DIGIT_DEVICE`: inference device for strip reader (default follows `DIGIT_DEVICE`)
+- `STRIP_DIGIT_MIN_CONFIDENCE`: minimum accepted average confidence for strip predictions (default: `0.0`)
+- `STRIP_DIGIT_TOP_K`: number of top classes returned per strip position (default: `3`)
+- `STRIP_DIGIT_23XX_MODEL_PATH`: path to constrained strip reader checkpoint (default: `backend/models/digit_strip_reader_23xx.pt`)
+- `STRIP_DIGIT_23XX_DEVICE`: inference device for constrained strip reader (default follows `STRIP_DIGIT_DEVICE`)
+- `STRIP_DIGIT_23XX_GUARD_THRESHOLD`: minimum second-digit-is-`3` guard confidence before accepting a forced `23xx` value (default: `0.98`)
+- `STRIP_DIGIT_23XX_TOP_K`: number of top classes returned per constrained strip position (default: `3`)
 
 ## CPU-only vs GPU
 
 - CPU-only install (recommended for Vercel/serverless):
-  - `pip install -r requirements-cpu.txt`
+  - `uv pip install -r requirements-cpu.txt`
 - GPU-capable install:
-  - install a CUDA-enabled PyTorch build, then `pip install -r requirements.txt`.
+  - install a CUDA-enabled PyTorch build, then `uv pip install -r requirements.txt`.
 
 Training can also be pinned with `--device`:
 

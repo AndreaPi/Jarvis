@@ -12,7 +12,6 @@ const OUTPUT_ROOT = path.join(ROOT_DIR, 'output', 'roi-checkpoint-diff');
 const FRONTEND_URL = process.env.JARVIS_FRONTEND_URL || 'http://127.0.0.1:8000';
 const BACKEND_URL = process.env.JARVIS_BACKEND_URL || 'http://127.0.0.1:8001';
 const BACKEND_HEALTH_URL = `${BACKEND_URL}/health`;
-const ENABLE_DIGIT_FALLBACK = process.env.JARVIS_DIGIT_FALLBACK === '1';
 
 const parseHttpUrl = (raw, fallbackRaw) => {
   try {
@@ -48,6 +47,7 @@ const MODEL_RUNS = [
     modelPath: path.join(ROOT_DIR, 'backend', 'models', 'roi.pt')
   }
 ];
+const DIGIT_MODEL_PATH = path.join(ROOT_DIR, 'backend', 'models', 'digit_classifier.pt');
 
 const STAGE_NAMES = {
   strip: '5. detected strip crop',
@@ -216,11 +216,14 @@ const waitForBackendReady = async (expectedModelPath, timeoutMs, trackedBackend)
     try {
       const health = await requestJson(BACKEND_HEALTH_URL);
       const modelPath = typeof health.model_path === 'string' ? path.resolve(health.model_path) : null;
-      const ready = !!health.roi_ready;
+      const ready = !!health.roi_ready && !!health.digit_ready;
       if (ready && modelPath === expectedResolved) {
         return health;
       }
-      lastError = new Error(`health not ready for expected model (${modelPath || 'unknown'})`);
+      lastError = new Error(
+        `health not ready for expected model (${modelPath || 'unknown'}): ` +
+        `roi_ready=${!!health.roi_ready} digit_ready=${!!health.digit_ready}`
+      );
     } catch (error) {
       lastError = error;
     }
@@ -299,16 +302,13 @@ const runUiTestSet = async () => {
   const page = await browser.newPage();
 
   try {
-    if (ENABLE_DIGIT_FALLBACK) {
-      await page.addInitScript(() => {
-        window.__JARVIS_OCR_CONFIG_OVERRIDE__ = {
-          digitClassifier: {
-            enabled: true,
-            fallbackOnNoDigitsOnly: true
-          }
-        };
-      });
-    }
+    await page.addInitScript(() => {
+      window.__JARVIS_OCR_CONFIG_OVERRIDE__ = {
+        digitClassifier: {
+          enabled: true
+        }
+      };
+    });
     await page.goto(FRONTEND_URL, { waitUntil: 'networkidle' });
     await page.waitForSelector('#run-test-btn', { timeout: 30000 });
     await page.evaluate(() => {
@@ -661,7 +661,6 @@ const buildComparison = (baselineRun, challengerRun) => {
 
 const renderMarkdownReport = ({
   generatedAt,
-  fallbackEnabled,
   baselineRun,
   challengerRun,
   baselineMetrics,
@@ -677,7 +676,7 @@ const renderMarkdownReport = ({
   lines.push(`- Generated: ${generatedAt}`);
   lines.push(`- Baseline model: \`${baselineRun.model.label}\` (\`${baselineRun.health.model_path}\`)`);
   lines.push(`- Challenger model: \`${challengerRun.model.label}\` (\`${challengerRun.health.model_path}\`)`);
-  lines.push(`- Digit classifier fallback: \`${fallbackEnabled ? 'enabled' : 'disabled'}\``);
+  lines.push('- Digit decoder: `neural classifier (backend /digit/predict-cells)`');
   lines.push(`- Output directory: \`${toRelativeFromRoot(outputDir)}\``);
   lines.push('');
   lines.push('## Summary');
@@ -806,6 +805,11 @@ const writeJson = async (filePath, value) => {
 
 const ensureModelFilesExist = () => {
   const missing = MODEL_RUNS.filter((run) => !fs.existsSync(run.modelPath));
+  if (!fs.existsSync(DIGIT_MODEL_PATH)) {
+    missing.push({
+      modelPath: DIGIT_MODEL_PATH
+    });
+  }
   if (!missing.length) {
     return;
   }
@@ -816,7 +820,7 @@ const ensureModelFilesExist = () => {
 const run = async () => {
   ensureModelFilesExist();
   const runId = timestampId();
-  const modeSuffix = ENABLE_DIGIT_FALLBACK ? 'fallback-on' : 'fallback-off';
+  const modeSuffix = 'neural-digit';
   const outputDir = path.join(OUTPUT_ROOT, `${runId}-${modeSuffix}`);
   await fsp.mkdir(outputDir, { recursive: true });
 
@@ -838,7 +842,7 @@ const run = async () => {
     const generatedAt = new Date().toISOString();
     const reportJson = {
       generatedAt,
-      fallbackEnabled: ENABLE_DIGIT_FALLBACK,
+      digitDecoder: 'neural-classifier',
       outputDir: toRelativeFromRoot(outputDir),
       baseline: {
         model: baselineRun.model,
@@ -863,7 +867,6 @@ const run = async () => {
 
     const markdown = renderMarkdownReport({
       generatedAt,
-      fallbackEnabled: ENABLE_DIGIT_FALLBACK,
       baselineRun,
       challengerRun,
       baselineMetrics,
@@ -881,7 +884,7 @@ const run = async () => {
 
     const consoleSummary = {
       outputDir: toRelativeFromRoot(outputDir),
-      fallbackEnabled: ENABLE_DIGIT_FALLBACK,
+      digitDecoder: 'neural-classifier',
       markdownReport: toRelativeFromRoot(mdPath),
       jsonReport: toRelativeFromRoot(jsonPath),
       baselinePrimary: {

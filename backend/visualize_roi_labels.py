@@ -77,24 +77,26 @@ def draw_preview(image_path: Path, labels: list[tuple[int, float, float, float, 
   except ImportError as error:
     raise RuntimeError("Pillow is required. Install backend/requirements.txt first.") from error
 
-  with Image.open(image_path).convert("RGB") as image:
-    width, height = image.size
-    draw = ImageDraw.Draw(image)
-    line_width = max(2, width // 350)
+  with Image.open(image_path) as source_image:
+    image = source_image.convert("RGB")
 
-    for class_id, xc, yc, box_w, box_h in labels:
-      pixel_w = box_w * width
-      pixel_h = box_h * height
-      x1 = (xc * width) - (pixel_w * 0.5)
-      y1 = (yc * height) - (pixel_h * 0.5)
-      x2 = x1 + pixel_w
-      y2 = y1 + pixel_h
+  width, height = image.size
+  draw = ImageDraw.Draw(image)
+  line_width = max(2, width // 350)
 
-      draw.rectangle((x1, y1, x2, y2), outline=(0, 255, 255), width=line_width)
-      draw.text((x1 + 4, max(2, y1 - 14)), f"class {class_id}", fill=(0, 255, 255))
+  for class_id, xc, yc, box_w, box_h in labels:
+    pixel_w = box_w * width
+    pixel_h = box_h * height
+    x1 = (xc * width) - (pixel_w * 0.5)
+    y1 = (yc * height) - (pixel_h * 0.5)
+    x2 = x1 + pixel_w
+    y2 = y1 + pixel_h
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    image.save(out_path, quality=95)
+    draw.rectangle((x1, y1, x2, y2), outline=(0, 255, 255), width=line_width)
+    draw.text((x1 + 4, max(2, y1 - 14)), f"class {class_id}", fill=(0, 255, 255))
+
+  out_path.parent.mkdir(parents=True, exist_ok=True)
+  image.save(out_path, quality=95)
 
 
 def build_contact_sheet(previews: list[RenderedPreview], output_path: Path) -> None:
@@ -124,12 +126,14 @@ def build_contact_sheet(previews: list[RenderedPreview], output_path: Path) -> N
     x = padding + column * (thumb_width + padding)
     y = padding + row * (thumb_height + label_height + padding)
 
-    with Image.open(preview.preview_path).convert("RGB") as image:
-      thumb = ImageOps.contain(image, (thumb_width, thumb_height))
-      frame = Image.new("RGB", (thumb_width, thumb_height), (40, 40, 44))
-      offset_x = (thumb_width - thumb.width) // 2
-      offset_y = (thumb_height - thumb.height) // 2
-      frame.paste(thumb, (offset_x, offset_y))
+    with Image.open(preview.preview_path) as source_image:
+      image = source_image.convert("RGB")
+
+    thumb = ImageOps.contain(image, (thumb_width, thumb_height))
+    frame = Image.new("RGB", (thumb_width, thumb_height), (40, 40, 44))
+    offset_x = (thumb_width - thumb.width) // 2
+    offset_y = (thumb_height - thumb.height) // 2
+    frame.paste(thumb, (offset_x, offset_y))
 
     canvas.paste(frame, (x, y))
     label = f"{preview.split}/{preview.image_path.name}"

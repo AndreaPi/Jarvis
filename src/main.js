@@ -101,11 +101,6 @@ readBtn.addEventListener('click', async () => {
     return;
   }
 
-  if (!window.Tesseract) {
-    setStatus('OCR library not available. Check your connection and try again.');
-    return;
-  }
-
   readBtn.disabled = true;
   setStatus('Reading image...');
 

@@ -379,6 +379,7 @@ def main() -> None:
   with manifest_path.open("w", newline="", encoding="utf-8") as manifest_file:
     writer = csv.DictWriter(
       manifest_file,
+      lineterminator="\n",
       fieldnames=[
         "kind",
         "digit",

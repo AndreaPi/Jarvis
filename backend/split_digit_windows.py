@@ -8,6 +8,27 @@ from pathlib import Path
 
 from PIL import Image
 
+AUTO_DIRECTION_MIN_DELTA = 0.015
+
+try:
+  from .runtime_digit_pipeline import (
+    DATASET_TIGHTEN_INK_RATIO,
+    build_cell_rects,
+    normalize_roi_strip,
+    resize_to_width,
+    rotate_image,
+    tighten_crop_by_ink,
+  )
+except ImportError:
+  from runtime_digit_pipeline import (
+    DATASET_TIGHTEN_INK_RATIO,
+    build_cell_rects,
+    normalize_roi_strip,
+    resize_to_width,
+    rotate_image,
+    tighten_crop_by_ink,
+  )
+
 
 def parse_args() -> argparse.Namespace:
   parser = argparse.ArgumentParser(
@@ -35,6 +56,16 @@ def parse_args() -> argparse.Namespace:
     help="Optional CSV with filename,flip180 (0/1) to override reading-direction flips."
   )
   parser.add_argument(
+    "--section-overrides",
+    default="manifests/section_overrides.csv",
+    help="Optional CSV with filename,x_offset_px to shift cell extraction horizontally."
+  )
+  parser.add_argument(
+    "--canonical-overrides",
+    default="manifests/canonical_overrides.csv",
+    help="Optional CSV with per-file canonical strip crop/rotation corrections."
+  )
+  parser.add_argument(
     "--clean",
     action="store_true",
     help="Delete existing sections and canonical windows output before writing."
@@ -60,28 +91,13 @@ def ensure_dirs(dataset_dir: Path) -> None:
 
 def write_csv(path: Path, rows: list[dict[str, str]], headers: list[str]) -> None:
   with path.open("w", encoding="utf-8", newline="") as handle:
-    writer = csv.DictWriter(handle, fieldnames=headers)
+    writer = csv.DictWriter(handle, fieldnames=headers, lineterminator="\n")
     writer.writeheader()
     writer.writerows(rows)
 
 
-def section_bounds(length: int, count: int, index: int) -> tuple[int, int]:
-  start = int(round(index * length / count))
-  end = int(round((index + 1) * length / count))
-  if end <= start:
-    end = min(length, start + 1)
-  return start, end
-
-
 def major_axis(width: int, height: int) -> str:
   return "x" if width >= height else "y"
-
-
-def rotate_right_angle(image: Image.Image, angle: int) -> Image.Image:
-  normalized = angle % 360
-  if normalized == 0:
-    return image.copy()
-  return image.rotate(normalized, expand=True)
 
 
 def ink_lowerness_score(image: Image.Image) -> float:
@@ -127,41 +143,128 @@ def load_direction_overrides(path: Path) -> dict[str, bool]:
   return mapping
 
 
-def canonicalize_window_orientation(
+def load_section_overrides(path: Path, section_count: int) -> dict[str, list[float]]:
+  if not path.exists():
+    return {}
+  mapping: dict[str, list[float]] = {}
+  with path.open("r", encoding="utf-8") as handle:
+    reader = csv.DictReader(handle)
+    for row in reader:
+      filename = (row.get("filename") or "").strip()
+      if not filename:
+        continue
+      raw = (row.get("x_offset_px") or "").strip()
+      base_offset = 0.0
+      if raw:
+        try:
+          base_offset = float(raw)
+        except ValueError:
+          base_offset = 0.0
+      offsets = [base_offset] * section_count
+      has_override = bool(raw)
+      for index in range(section_count):
+        token = (row.get(f"s{index}_x_offset_px") or "").strip()
+        if not token:
+          continue
+        has_override = True
+        try:
+          offsets[index] = float(token)
+        except ValueError:
+          continue
+      if not has_override:
+        continue
+      try:
+        mapping[filename] = offsets
+      except ValueError:
+        continue
+  return mapping
+
+
+def parse_float_token(raw: str | None) -> float:
+  value = (raw or "").strip()
+  if not value:
+    return 0.0
+  try:
+    return float(value)
+  except ValueError:
+    return 0.0
+
+
+def load_canonical_overrides(path: Path) -> dict[str, dict[str, float]]:
+  if not path.exists():
+    return {}
+  mapping: dict[str, dict[str, float]] = {}
+  with path.open("r", encoding="utf-8") as handle:
+    reader = csv.DictReader(handle)
+    for row in reader:
+      filename = (row.get("filename") or "").strip()
+      if not filename:
+        continue
+      override = {
+        "crop_left_px": parse_float_token(row.get("crop_left_px")),
+        "crop_right_px": parse_float_token(row.get("crop_right_px")),
+        "crop_top_px": parse_float_token(row.get("crop_top_px")),
+        "crop_bottom_px": parse_float_token(row.get("crop_bottom_px")),
+        # Pillow-compatible convention: positive is counter-clockwise.
+        "rotate_degrees": parse_float_token(row.get("rotate_degrees")),
+        "use_source_window": 1.0 if parse_bool_token(row.get("use_source_window") or "") else 0.0,
+        "source_crop_left_px": parse_float_token(row.get("source_crop_left_px")),
+        "source_crop_right_px": parse_float_token(row.get("source_crop_right_px")),
+        "source_crop_top_px": parse_float_token(row.get("source_crop_top_px")),
+        "source_crop_bottom_px": parse_float_token(row.get("source_crop_bottom_px")),
+      }
+      if any(abs(value) > 0.0001 for value in override.values()):
+        mapping[filename] = override
+  return mapping
+
+
+def apply_canonical_override(
+  image: Image.Image,
+  override: dict[str, float] | None
+) -> Image.Image:
+  if not override:
+    return image
+  target_width = image.width
+  target_height = image.height
+  crop_left = max(0, int(round(override.get("crop_left_px", 0.0))))
+  crop_right = max(0, int(round(override.get("crop_right_px", 0.0))))
+  crop_top = max(0, int(round(override.get("crop_top_px", 0.0))))
+  crop_bottom = max(0, int(round(override.get("crop_bottom_px", 0.0))))
+  if crop_left or crop_right or crop_top or crop_bottom:
+    left = min(crop_left, image.width - 2)
+    top = min(crop_top, image.height - 2)
+    right = max(left + 1, image.width - crop_right)
+    bottom = max(top + 1, image.height - crop_bottom)
+    image = image.crop((left, top, right, bottom))
+    image = image.resize((target_width, target_height), Image.Resampling.BILINEAR)
+
+  rotate_degrees = int(round(override.get("rotate_degrees", 0.0)))
+  if rotate_degrees:
+    image = rotate_image(image, rotate_degrees)
+    image = tighten_crop_by_ink(image, DATASET_TIGHTEN_INK_RATIO)
+    image = resize_to_width(image, target_width)
+  return image
+
+
+def build_source_window_canonical(
   source: Image.Image,
-  filename: str,
-  direction_overrides: dict[str, bool]
-) -> tuple[Image.Image, dict[str, str]]:
-  source_major_axis = major_axis(source.width, source.height)
-  # For vertical windows, rotate clockwise to horizontal first.
-  axis_rotation = 0 if source_major_axis == "x" else 270
-
-  primary = rotate_right_angle(source, axis_rotation)
-  flipped = rotate_right_angle(primary, 180)
-
-  primary_score = ink_lowerness_score(primary)
-  flipped_score = ink_lowerness_score(flipped)
-
-  direction_flip = bool(direction_overrides.get(filename, False))
-  direction_source = "override" if filename in direction_overrides else "default"
-  if direction_flip:
-    canonical = flipped
-    applied_rotation = (axis_rotation + 180) % 360
-  else:
-    canonical = primary
-    applied_rotation = axis_rotation
-
-  metadata = {
-    "source_major_axis": source_major_axis,
-    "canonical_major_axis": major_axis(canonical.width, canonical.height),
-    "axis_rotation": str(axis_rotation),
-    "direction_flip": "1" if direction_flip else "0",
-    "direction_source": direction_source,
-    "applied_rotation": str(applied_rotation),
-    "primary_lowerness": f"{primary_score:.6f}",
-    "flipped_lowerness": f"{flipped_score:.6f}"
-  }
-  return canonical, metadata
+  applied_rotation: int,
+  override: dict[str, float] | None
+) -> Image.Image | None:
+  if not override or override.get("use_source_window", 0.0) < 0.5:
+    return None
+  image = rotate_image(source, applied_rotation)
+  crop_left = max(0, int(round(override.get("source_crop_left_px", 0.0))))
+  crop_right = max(0, int(round(override.get("source_crop_right_px", 0.0))))
+  crop_top = max(0, int(round(override.get("source_crop_top_px", 0.0))))
+  crop_bottom = max(0, int(round(override.get("source_crop_bottom_px", 0.0))))
+  if crop_left or crop_right or crop_top or crop_bottom:
+    left = min(crop_left, image.width - 2)
+    top = min(crop_top, image.height - 2)
+    right = max(left + 1, image.width - crop_right)
+    bottom = max(top + 1, image.height - crop_bottom)
+    image = image.crop((left, top, right, bottom))
+  return resize_to_width(image, 520)
 
 
 def main() -> None:
@@ -171,6 +274,8 @@ def main() -> None:
   dataset_dir = resolve(base_dir, args.dataset_dir)
   manifest_path = resolve(dataset_dir, args.windows_manifest)
   direction_overrides_path = resolve(dataset_dir, args.direction_overrides)
+  section_overrides_path = resolve(dataset_dir, args.section_overrides)
+  canonical_overrides_path = resolve(dataset_dir, args.canonical_overrides)
 
   if args.section_count <= 0:
     raise ValueError("--section-count must be positive.")
@@ -187,6 +292,8 @@ def main() -> None:
     shutil.rmtree(canonical_dir)
   ensure_dirs(dataset_dir)
   direction_overrides = load_direction_overrides(direction_overrides_path)
+  section_overrides = load_section_overrides(section_overrides_path, args.section_count)
+  canonical_overrides = load_canonical_overrides(canonical_overrides_path)
 
   canonical_rows: list[dict[str, str]] = []
   rows: list[dict[str, str]] = []
@@ -195,6 +302,7 @@ def main() -> None:
   source_axis_counts = {"x": 0, "y": 0}
   canonical_axis_counts = {"x": 0, "y": 0}
   rotation_counts = {"0": 0, "90": 0, "180": 0, "270": 0}
+  deskewed_count = 0
 
   with manifest_path.open("r", encoding="utf-8") as handle:
     reader = csv.DictReader(handle)
@@ -217,19 +325,48 @@ def main() -> None:
 
       with Image.open(window_path) as image:
         source = image.convert("RGB")
-        canonical, orientation_meta = canonicalize_window_orientation(
+        normalized = normalize_roi_strip(
           source,
-          filename,
-          direction_overrides
+          tighten_min_area_ratio=DATASET_TIGHTEN_INK_RATIO
         )
+        if normalized is None:
+          skipped.append({"split": split, "filename": filename, "reason": "normalize-roi-strip-failed"})
+          continue
+        canonical = normalized.image
+        primary_lowerness = ink_lowerness_score(canonical)
+        flipped_lowerness = ink_lowerness_score(rotate_image(canonical, 180))
+        if filename in direction_overrides:
+          direction_flip = bool(direction_overrides.get(filename, False))
+          direction_source = "override"
+        elif flipped_lowerness + AUTO_DIRECTION_MIN_DELTA < primary_lowerness:
+          direction_flip = True
+          direction_source = "heuristic"
+        else:
+          direction_flip = False
+          direction_source = "default"
+        if direction_flip:
+          canonical = rotate_image(canonical, 180)
+        canonical_override = canonical_overrides.get(filename)
+        axis_rotation = normalized.major_axis_rotation
+        applied_rotation = (axis_rotation + (180 if direction_flip else 0)) % 360
+        source_window_canonical = build_source_window_canonical(
+          source,
+          applied_rotation,
+          canonical_override
+        )
+        if source_window_canonical is not None:
+          canonical = source_window_canonical
+        canonical = apply_canonical_override(canonical, canonical_override)
         width, height = canonical.size
-        source_major_axis = orientation_meta["source_major_axis"]
-        canonical_major_axis = orientation_meta["canonical_major_axis"]
+        source_major_axis = major_axis(source.width, source.height)
+        canonical_major_axis = major_axis(width, height)
         source_axis_counts[source_major_axis] += 1
         canonical_axis_counts[canonical_major_axis] += 1
-        applied_rotation = orientation_meta["applied_rotation"]
-        if applied_rotation in rotation_counts:
-          rotation_counts[applied_rotation] += 1
+        rotation_key = str(applied_rotation)
+        if rotation_key in rotation_counts:
+          rotation_counts[rotation_key] += 1
+        if normalized.deskew_angle != 0:
+          deskewed_count += 1
 
         canonical_path = dataset_dir / "windows_canonical" / split / f"{Path(window_path).stem}.png"
         canonical.save(canonical_path)
@@ -247,19 +384,34 @@ def main() -> None:
           "canonical_height": str(height),
           "source_major_axis": source_major_axis,
           "canonical_major_axis": canonical_major_axis,
-          "axis_rotation": orientation_meta["axis_rotation"],
-          "direction_flip": orientation_meta["direction_flip"],
-          "direction_source": orientation_meta["direction_source"],
-          "applied_rotation": applied_rotation,
-          "primary_lowerness": orientation_meta["primary_lowerness"],
-          "flipped_lowerness": orientation_meta["flipped_lowerness"]
+          "axis_rotation": str(axis_rotation),
+          "direction_flip": "1" if direction_flip else "0",
+          "direction_source": direction_source,
+          "applied_rotation": str(applied_rotation),
+          "primary_lowerness": f"{primary_lowerness:.6f}",
+          "flipped_lowerness": f"{flipped_lowerness:.6f}",
+          "deskew_angle": str(normalized.deskew_angle),
+          "canonical_source": "source-window" if source_window_canonical is not None else "normalized",
+          "canonical_crop_left_px": f"{(canonical_override or {}).get('crop_left_px', 0.0):.3f}",
+          "canonical_crop_right_px": f"{(canonical_override or {}).get('crop_right_px', 0.0):.3f}",
+          "canonical_crop_top_px": f"{(canonical_override or {}).get('crop_top_px', 0.0):.3f}",
+          "canonical_crop_bottom_px": f"{(canonical_override or {}).get('crop_bottom_px', 0.0):.3f}",
+          "canonical_rotate_degrees": f"{(canonical_override or {}).get('rotate_degrees', 0.0):.3f}",
+          "source_crop_left_px": f"{(canonical_override or {}).get('source_crop_left_px', 0.0):.3f}",
+          "source_crop_right_px": f"{(canonical_override or {}).get('source_crop_right_px', 0.0):.3f}",
+          "source_crop_top_px": f"{(canonical_override or {}).get('source_crop_top_px', 0.0):.3f}",
+          "source_crop_bottom_px": f"{(canonical_override or {}).get('source_crop_bottom_px', 0.0):.3f}",
+          "normalization_mode": "dataset-roi-preserving"
         })
 
-        for section_index in range(args.section_count):
-          x0, x1 = section_bounds(width, args.section_count, section_index)
-          y0, y1 = 0, height
-
-          section = canonical.crop((x0, y0, x1, y1))
+        section_offsets = section_overrides.get(filename, [0.0] * args.section_count)
+        rects = build_cell_rects(
+          canonical,
+          args.section_count,
+          per_section_x_offsets=section_offsets
+        )
+        for section_index, rect in enumerate(rects):
+          section = canonical.crop((rect.left, rect.top, rect.right, rect.bottom))
           section_name = f"{Path(window_path).stem}_s{section_index}.png"
           section_path = dataset_dir / "sections" / split / section_name
           section.save(section_path)
@@ -272,11 +424,12 @@ def main() -> None:
             "canonical_window_path": canonical_rel,
             "section_index": str(section_index),
             "major_axis": canonical_major_axis,
-            "applied_rotation": applied_rotation,
-            "x0": str(x0),
-            "y0": str(y0),
-            "x1": str(x1),
-            "y1": str(y1),
+            "applied_rotation": str(applied_rotation),
+            "x_offset_px": f"{section_offsets[section_index]:.3f}",
+            "x0": str(rect.left),
+            "y0": str(rect.top),
+            "x1": str(rect.right),
+            "y1": str(rect.bottom),
             "section_path": str(section_path.relative_to(dataset_dir))
           })
 
@@ -302,7 +455,19 @@ def main() -> None:
       "direction_source",
       "applied_rotation",
       "primary_lowerness",
-      "flipped_lowerness"
+      "flipped_lowerness",
+      "deskew_angle",
+      "canonical_source",
+      "canonical_crop_left_px",
+      "canonical_crop_right_px",
+      "canonical_crop_top_px",
+      "canonical_crop_bottom_px",
+      "canonical_rotate_degrees",
+      "source_crop_left_px",
+      "source_crop_right_px",
+      "source_crop_top_px",
+      "source_crop_bottom_px",
+      "normalization_mode"
     ]
   )
   write_csv(
@@ -317,6 +482,7 @@ def main() -> None:
       "section_index",
       "major_axis",
       "applied_rotation",
+      "x_offset_px",
       "x0",
       "y0",
       "x1",
@@ -339,10 +505,15 @@ def main() -> None:
     "source_axis_counts": source_axis_counts,
     "canonical_axis_counts": canonical_axis_counts,
     "applied_rotation_counts": rotation_counts,
+    "deskewed_count": deskewed_count,
     "dataset_dir": str(dataset_dir),
     "windows_manifest": str(manifest_path),
     "direction_overrides": str(direction_overrides_path),
-    "direction_override_count": len(direction_overrides)
+    "direction_override_count": len(direction_overrides),
+    "section_overrides": str(section_overrides_path),
+    "section_override_count": len(section_overrides),
+    "canonical_overrides": str(canonical_overrides_path),
+    "canonical_override_count": len(canonical_overrides)
   }
   (dataset_dir / "manifests" / "sections_summary.json").write_text(
     json.dumps(summary, indent=2),
@@ -358,6 +529,7 @@ def main() -> None:
   )
   print(f"Source major axis counts: x={source_axis_counts['x']} y={source_axis_counts['y']}")
   print(f"Canonical major axis counts: x={canonical_axis_counts['x']} y={canonical_axis_counts['y']}")
+  print(f"Deskewed windows: {deskewed_count}")
   print(
     "Applied rotations: "
     f"0={rotation_counts['0']} 90={rotation_counts['90']} "

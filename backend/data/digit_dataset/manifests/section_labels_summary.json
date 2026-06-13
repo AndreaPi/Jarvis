@@ -1,24 +1,24 @@
 {
-  "labels_exported": 60,
+  "labels_exported": 116,
   "labels_skipped": 0,
   "section_count": 4,
   "split_counts": {
-    "train": 48,
-    "val": 8,
+    "train": 112,
+    "val": 0,
     "test": 4
   },
   "digit_counts": {
     "0": 5,
-    "1": 12,
-    "2": 18,
-    "3": 13,
-    "4": 2,
-    "5": 1,
-    "6": 1,
-    "7": 3,
-    "8": 3,
+    "1": 15,
+    "2": 40,
+    "3": 35,
+    "4": 4,
+    "5": 3,
+    "6": 2,
+    "7": 5,
+    "8": 5,
     "9": 2
   },
-  "dataset_dir": "/home/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset_v2",
-  "sections_manifest": "/home/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset_v2/manifests/sections.csv"
+  "dataset_dir": "/Users/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset",
+  "sections_manifest": "/Users/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset/manifests/sections.csv"
 }

@@ -1,0 +1,5 @@
+outs:
+- md5: e6d7ee6178dfe73aa3b980457992edce
+  size: 6234922
+  hash: md5
+  path: roi-rotaug-e30-640.pt

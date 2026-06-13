@@ -7,8 +7,17 @@
     "serve": "python3 -m http.server 8000",
     "dev": "python3 -m http.server 8000",
     "test:e2e": "playwright test",
+    "test:backend": "backend/.venv/bin/python -m unittest backend.test_build_roi_dataset",
     "test:e2e:headed": "playwright test --headed",
-    "benchmark:roi-diff": "node scripts/compare-roi-checkpoints.cjs"
+    "benchmark:roi-diff": "node scripts/compare-roi-checkpoints.cjs",
+    "qa:strip-dataset": "backend/.venv/bin/python backend/export_strip_dataset_qa.py",
+    "qa:strip-runtime": "node scripts/export-strip-runtime-qa.cjs",
+    "qa:ocr-oracle": "node scripts/export-ocr-candidate-oracle.cjs",
+    "qa:cell-crops": "node scripts/export-cell-crop-failure-qa.cjs",
+    "qa:roi-geometry-audit": "node scripts/export-roi-geometry-audit.cjs",
+    "qa:runtime-failure-dataset": "backend/.venv/bin/python backend/export_runtime_failure_dataset_qa.py",
+    "qa:runtime-failure-dataset:selected": "backend/.venv/bin/python backend/export_runtime_failure_dataset_qa.py --selected-only",
+    "qa:digit-classifier-cv": "backend/.venv/bin/python backend/evaluate_digit_classifier_finetune.py"
   },
   "devDependencies": {
     "@playwright/test": "1.58.1"

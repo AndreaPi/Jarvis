@@ -2,28 +2,40 @@
 
 This playbook documents the practical loop used to improve OCR quality in Jarvis.
 
-Current baseline notes (March 2, 2026, fallback `OFF`, historical exact-match snapshot):
+Current baseline policy:
 
-- Test set: `0/14` exact-match (`Correct`)
-- Pinned model (`roi-rotaug-e30-640.pt`): `mismatch` 6, `ocr-no-digits` 7, `no-detection` 1
-- Challenger (`roi.pt`): `mismatch` 4, `ocr-no-digits` 10, `no-detection` 0
-- Gated fallback experiment (`JARVIS_DIGIT_FALLBACK=1`) reduced `ocr-no-digits` but increased `mismatch` with no exact-match gain, so fallback remains disabled.
-- Evaluation now uses `MAE` as the primary promotion signal; exact-match and no-read rates are guardrails.
-- The active local test-set CSV now has `15` images; keep historical `0/14` snapshots only for trend context.
+- Use the latest UI **Run test set** histogram as source of truth (`window.__jarvisLastTestSetHistogram`).
+- Treat fixed numeric snapshots as historical only; they go stale quickly as thresholds/ranking change.
+- Evaluation uses `MAE` as the primary promotion signal; `Exact Match` and `No-read` are guardrails.
+- The active local test-set CSV is `assets/meter_readings.csv`, currently `33` images after the June 2026 ROI ingestion through `meter_20260612.JPEG`.
+- Current promoted ROI + restored promoted per-cell classifier baseline, measured June 12, 2026: `MAE 111.75`, `Exact Match 11/33`, `No-read 1/33`.
+- Historical May 29, 2026 ranker-on/ranker-off control on the then-29-image corpus: ranker-on `MAE 166.07`, `Exact Match 10/29`, `No-read 1/29`; ranker-off `MAE 166.57`, `Exact Match 10/29`, `No-read 1/29`. The ranker remains enabled because it slightly improved `MAE` without worsening guardrails on that corpus.
+- Re-run the UI `Run test set` before treating any metric as the current promotion target.
+- `meter_20260112.JPEG`, `meter_20260113.jpg`, and `meter_20260219.JPEG` are intentionally removed from the active raw/test/training corpus because their visible readings are ambiguous.
 
-Critical blocker note (March 4, 2026):
+Digit dataset status (current workflow):
 
-- Digit-classifier training cells are currently unreliable due to strip orientation/cell-split issues in dataset export.
-- `build_digit_dataset.py` splits cells assuming left-to-right horizontal strips; vertical strips become thin non-digit slices.
-- Some horizontal strips are 180-deg inverted, so cell index to reading-digit assignment is reversed.
-- Concrete examples from manual QA:
-  - `meter_07012020_c3_4.png` appears as digit `1` in context.
-  - `meter_01122026_c2_0.png` is a thin register slice, not a usable digit crop.
+- Dataset generation now uses `extract_digit_windows.py` -> `split_digit_windows.py` -> `label_digit_sections.py`.
+- `split_digit_windows.py` canonicalizes orientation (major axis + optional reading-direction `flip180` overrides) before equispaced 4-way split.
+- Small reviewed canonical-strip fixes live in `data/digit_dataset/manifests/canonical_overrides.csv`; regenerate sections, labels, synthetic train sections, and `qa:strip-dataset` after changing it.
+- Classifier training consumes `data/digit_dataset/sections_labeled/{train,val,test}`.
+- Whole-strip shadow-reader training consumes `data/digit_dataset/windows_canonical/{train,val,test}` and `canonical_windows.csv` readings. The constrained `23xx` reader uses the same canonical windows with a guard label derived from `reading[1] === "3"` and suffix labels from the final two digits.
+- Synthetic generation remains train-only (`sections_synthetic/train`) and is mixed into training with `--synthetic-target-ratio`.
+- As of May 27, 2026, the digit dataset intentionally has no validation split: `meter_20260323.JPEG` moved into train, while `meter_20260327.JPEG` remains a fixed hard test holdout. Use grouped source-image CV on the train pool for model experiments; the fixed test image is a historical diagnostic, not a promotion gate.
+
+## Immediate Next Steps (May 29, 2026)
+
+1. Keep the whole-strip reader shadow-only until its exact-match rate and `MAE` beat the current per-cell primary path.
+2. Treat the May 4, 2026 canonical strip-window QA pass as accepted for the 23-image digit-training corpus: all retained strips are readable and label-consistent, even when some crops are not tightly framed.
+3. Do not promote the retrained four-head strip reader. After retraining on the accepted canonical windows, the UI primary path remained at `MAE 71.77`, `Exact Match 9/23`, `No-read 1/23`, and focused strip-runtime QA on `meter_20260327.JPEG` plus April captures produced only `1/7` exact strip-shadow matches.
+4. Keep the restored promoted per-cell digit classifier as the safety baseline. A May 24, 2026 fine-tune challenger using clean + curated-runtime-failure cells failed the then-28-image UI gate (`MAE 139.11`, `Exact Match 3/28`, `No-read 1/28`) versus the restored baseline with the conservative geometry ranker (`MAE 61.22`, `Exact Match 10/28`, `No-read 1/28`).
+5. Keep the first house-specific `23xx` constrained strip-reader checkpoint shadow-only. It is diagnostic-only: cross-validation looked conservative (`0` guard false positives, `19` guard false negatives), but runtime QA still found accepted wrong predictions. Lowering the guard from `0.98` to `0.80` accepted more wrong values, so threshold tuning is not enough.
+6. Verify each OCR tuning change on the full test set with `MAE` + guardrails (`Exact Match`, `No-read`) before keeping it.
 
 ## Goals
 
 1. Reduce `mismatch` (wrong 4-digit value returned).
-2. Reduce `ocr-no-digits` (no accepted 4-digit candidate).
+2. Reduce no-read outcomes (`ocr-no-digits`, `classifier-edge-gate-final-drop`, and related final drops).
 3. Preserve neural-ROI-only policy and strip-only OCR path.
 
 ## Standard Iteration Loop
@@ -39,17 +51,17 @@ npm run test:e2e
 
 2. Inspect hard failures
 
-- Prioritize:
-  - `meter_02202026.JPEG`
-  - `meter_02192026.JPEG`
-  - `meter_07012020.JPEG`
-  - `meter_02242026.JPEG`
+- Prioritize the current top `Absolute Error` rows and dominant `Failure Reason` buckets from the latest run.
 - Inspect debug stages:
   - `0. neural roi detection`
   - `0b. neural roi crop`
   - `5. detected strip crop`
-  - `6. OCR input candidate`
+  - `6a. OCR input candidate (initial preview)`
+  - `6. OCR input candidate` (winning decode input)
+  - `7. classifier cell crops`
+  - `8. strip reader input`
 - Inspect selection logs in `window.__jarvisOcrSelectionLogs`.
+- Compare `selectionLog.selected` against `selectionLog.stripReader` and `selectionLog.stripReader23xx` before considering any strip-reader promotion.
 
 3. Apply one narrow change
 
@@ -82,13 +94,14 @@ Use the scripted checkpoint comparison to produce a per-image report between the
 npm run benchmark:roi-diff
 ```
 
-For the gated classifier fallback experiment (fallback only after `ocr-no-digits`), run:
+The benchmark always runs neural-digit-only decode with the per-cell classifier enabled; the strip reader may run in shadow when its checkpoint/backend endpoint are available.
+It requires these local checkpoints before starting:
 
-```bash
-JARVIS_DIGIT_FALLBACK=1 npm run benchmark:roi-diff
-```
-
-Compare fallback `ON` vs `OFF` with the same promotion gates; do not accept `ocr-no-digits` reductions that simply convert into `mismatch`.
+- `backend/models/roi-rotaug-e30-640.pt`
+- `backend/models/roi.pt`
+- `backend/models/digit_classifier.pt`
+- `backend/models/digit_strip_reader.pt`
+- `backend/models/digit_strip_reader_23xx.pt` for constrained-reader shadow diagnostics
 
 Artifacts are saved to:
 
@@ -101,8 +114,57 @@ The report includes:
 - Per-image `Detected`, `Failure Reason`, and top reject reason.
 - Per-image selected metadata (`sourceLabel`, `method`, `preprocessMode`) from `window.__jarvisOcrSelectionLogs`.
 - Side-by-side stage `5. detected strip crop` and `6. OCR input candidate`.
+- Stage `6` now shows the exact strip variant used by the winning decode (after normalization/orientation selection).
 - Stage `6` export uses the last `6. OCR input candidate` frame from each debug session.
-- Summary deltas for `MAE`, guardrail rates (`Exact Match`, `No-read`), `mismatch`, `ocr-no-digits`, and `no-detection`.
+- Stage `7` shows the four cell crops used by the current primary classifier.
+- Stage `8` shows the best whole-strip shadow-reader input and prediction/confidence summary.
+- Summary deltas for `MAE`, guardrail rates (`Exact Match`, `No-read`), and dominant failure buckets (`mismatch`, `classifier-edge-gate-final-drop`, `ocr-no-digits`, `no-detection`).
+
+## Focused QA Exporters
+
+Use these scripts when the UI histogram points to candidate-selection, strip-reader, or cell-crop failures:
+
+```bash
+npm run qa:strip-dataset
+npm run qa:ocr-oracle
+npm run qa:strip-runtime
+npm run qa:cell-crops
+npm run qa:runtime-failure-dataset
+npm run qa:runtime-failure-dataset:selected
+npm run qa:digit-classifier-cv
+```
+
+They write timestamped reports under `output/strip-dataset-qa/`, `output/ocr-candidate-oracle/`, `output/strip-runtime-qa/`, `output/cell-crop-failure-qa/`, and `output/runtime-failure-dataset-qa/`. Run `qa:strip-dataset` after digit-window regeneration and visually accept the canonical strips before using them for retraining. Use `qa:runtime-failure-dataset` after exporting runtime failure cells so hard-example crops can be reviewed before any fine-tuning run. Use `qa:runtime-failure-dataset:selected` when the review should focus only on the UI-selected failure candidate for each image.
+
+## Digit Classifier Recovery Notes
+
+The promoted `backend/models/digit_classifier.pt` checkpoint currently contains behavior that was not recovered by training from the clean canonical section dataset alone. Treat it as the safety baseline and restore it from DVC before digit-classifier experiments:
+
+```bash
+env DVC_SITE_CACHE_DIR=/tmp/dvc-site-cache \
+  backend/.venv/bin/python -m dvc checkout --force \
+  backend/models/digit_classifier.pt.dvc \
+  backend/models/digit_strip_reader.pt.dvc
+```
+
+Runtime-failure crops can be reconstructed with:
+
+```bash
+cd backend
+source .venv/bin/activate
+python export_runtime_digit_failure_set.py
+cd ..
+npm run qa:runtime-failure-dataset
+npm run qa:digit-classifier-cv
+```
+
+May 24, 2026 evidence: grouped source-image CV suggested runtime-failure cells are a useful ingredient (`51.8%` restored baseline, `61.6%` clean fine-tune, `66.1%` clean + curated-runtime-failure fine-tune), but the then-28-image full UI benchmark rejected the resulting challenger (`MAE 139.11`, `Exact Match 3/28`, `No-read 1/28`). It fixed some targeted rows, including `meter_20260413.JPEG`, but damaged many rows the restored checkpoint already handled. Do not promote any digit classifier trained only from `sections_labeled` or from a CV-positive recipe unless it beats the restored checkpoint on the same UI **Run test set**.
+
+May 27, 2026 split policy: grouped cross-validation by source image is now the default model-experiment workflow. Fold assignment must group by original meter filename, not individual section/cell crops, so cells, canonical strips, synthetic variants, and runtime-failure crops derived from one photo cannot leak between train and evaluation folds. The default CV command uses only the train pool, because the single remaining `test` image is kept as a fixed historical hard-case diagnostic.
+
+May 24, 2026 UI-selected runtime-failure review: the dominant failure mode is upstream strip/cell geometry, not pure digit classification. The tracked taxonomy lives in `docs/ocr-runtime-failure-selected-taxonomy.csv` and is rendered by `qa:runtime-failure-dataset`. Among the 15 UI-selected failure candidates, 13 are structurally invalid before classification: six have over-wide strips where cells 1 and 4 contain no digits while cells 2 and 3 contain two digits each (`meter_20200701.JPEG`, `meter_20260216.JPEG`, `meter_20260420.JPEG`, `meter_20260423.JPEG`, `meter_20260427.JPEG`, `meter_20260507.JPEG`), five are truncated on the right with two digits missing (`meter_20260401.JPEG`, `meter_20260409.JPEG`, `meter_20260512.JPEG`, `meter_20260515.JPEG`, `meter_20260518.JPEG`), and two are degenerate/rotated captures with one or zero usable digits (`meter_20260214.JPEG`, `meter_20260416.JPEG`). Only two reviewed failures looked like classifier or local split misses on otherwise usable strips (`meter_20260413.JPEG`, `meter_20260521.JPEG`). Prioritize candidate geometry/ranking fixes before spending more effort on digit-classifier fine-tuning.
+
+May 29, 2026 selector follow-up: the conservative candidate geometry ranker is deliberately a ranking tie-breaker, not a hard gate. It measures per-cell texture to detect sparse edge cells plus crowded middle cells, then applies only a tiny score penalty when compatible same-prefix edge evidence exists. Stronger penalties and low-texture gates regressed earlier UI benchmarks, so keep the ranker conservative unless a future UI Run test set proves otherwise. On the then-current 29-image corpus, ranker-on measured `MAE 166.07`, `Exact Match 10/29`, `No-read 1/29`; ranker-off measured `MAE 166.57`, `Exact Match 10/29`, `No-read 1/29`.
 
 ## Checkpoint Promotion Gates
 
@@ -112,13 +174,28 @@ Promote a challenger checkpoint only if all gates pass on the same test-set run:
 2. **MAE gate**: challenger `MAE` must be less than or equal to baseline.
 3. **Exact-match guardrail**: challenger `Exact Match` rate must be greater than or equal to baseline.
 4. **No-read guardrail**: challenger `No-read` rate must be less than or equal to baseline.
-5. **OCR no-digits gate**: challenger `ocr-no-digits` count must be less than or equal to baseline.
+5. **Failure-bucket gate**: challenger must not regress dominant no-read bucket counts (for example `classifier-edge-gate-final-drop` or `ocr-no-digits`) versus baseline.
 
 If any gate fails, keep `roi-rotaug-e30-640.pt` as default and continue tuning extraction/selection.
 
-Fallback-specific rule:
+June 9, 2026 ROI promotion: the retrained `roi.pt` challenger was copied into the promoted `backend/models/roi-rotaug-e30-640.pt` default after `npm run benchmark:roi-diff` measured `MAE 106.83` versus the previous checkpoint's `388.00`, with exact match unchanged at `11/31` and no-read unchanged at `1/31`. A visual audit of changed rows showed the new detector generally produces readable register crops; remaining high-impact misses are primarily classifier/selection failures.
 
-- Keep `digitClassifier.enabled=false` by default until fallback `ON` beats fallback `OFF` on `MAE` and does not regress exact-match/no-read guardrails or increase `mismatch`.
+Classifier-default rule:
+
+- Keep `digitClassifier.enabled=true` by default and tune ranking/acceptance using `MAE` + guardrails.
+
+Strip-reader shadow rule:
+
+- Keep `digitStripReader.shadowOnly=true` until the same UI run shows whole-strip shadow exact match and `MAE` outperform the primary selected values.
+- Do not promote based on canonical-window train/val/test metrics alone; the browser candidate crops are the promotion surface.
+
+Digit-classifier rule:
+
+- Keep `backend/models/digit_classifier.pt` restored from DVC as the primary safety baseline.
+- Train challengers into `backend/runs/...`, not `backend/models/`.
+- A challenger must improve `MAE` and must not regress exact match or no-read count on the UI **Run test set** before promotion.
+- Clean canonical section metrics and grouped CV are diagnostic only; browser runtime candidate crops are the promotion surface.
+- The digit dataset no longer uses a one-image validation split. If `train_digit_classifier.py` sees no `val` samples, checkpoint selection falls back to train loss; use grouped CV plus the UI **Run test set** to judge the recipe.
 
 ## High-Impact Tuning Areas
 
@@ -137,19 +214,42 @@ Signal to watch:
 - Empty `topCandidates` in selection logs
 - Debug stage `6` visually clear but still no accepted candidate
 
-### 2) Word-pass Input Modes (`mismatch` vs `ocr-no-digits`)
+### 2) Classifier Candidate Ranking (`mismatch` vs `ocr-no-digits`)
 
-File: `src/ocr/config.js` (`OCR_CONFIG.roiDeterministic.wordPassModes`)
+Files:
 
-Examples:
+- `src/ocr/pipeline.js` (candidate ranking + early stop)
+- `src/ocr/config.js` (`digitClassifier.maxPrimaryCandidates`, edge safeguards)
 
-- `['raw']` (current default): conservative
-- `['raw', 'soft']`: can reduce no-read but may increase mismatches
-- `['raw', 'soft', 'binary']`: often increases wrong confident reads
+Use temporary ranking/threshold experiments first, then codify only if net-positive.
 
-Use temporary experiments first, then codify only if net-positive.
+### 3) Whole-Strip Shadow Reader
 
-### 3) Acceptance/Support Guardrails
+Files:
+
+- `backend/train_strip_digit_reader.py`
+- `backend/train_strip_digit_reader_23xx.py`
+- `backend/strip_digit_reader.py`
+- `backend/strip_digit_reader_23xx.py`
+- `src/ocr/digit-classifier.js`
+- `src/ocr/pipeline.js`
+
+Focus:
+
+- Compare `selectionLog.stripReader.value` and `selectionLog.stripReader23xx` to expected readings and selected classifier readings.
+- Watch whether stage `8` receives a visually plausible full strip before blaming the model.
+- Retrain after canonical windows change, then judge promotion only with the UI test set.
+- The May 4, 2026 four-head retrain is a shadow baseline, not a promotion candidate; use it to study candidate source behavior and as a comparison point for constrained-reader experiments.
+
+House-specific `23xx` shortcut:
+
+- The constrained strip-reader experiment hard-codes the first two digits as `23`, trains/predicts only the final two digit positions, and uses a dedicated second-digit-is-`3` guard before accepting any forced `23xx` value.
+- This is a deliberate local shortcut for the current home water meter, not a general OCR assumption.
+- Review the assumption at least yearly, immediately if readings approach `2390`, and before reusing Jarvis for another meter.
+- The default guard threshold is `0.98`; false positives are the dangerous failure mode, so tune for near-zero false positives even if recall is poor.
+- The May 4, 2026 checkpoint persists the fixed prefix in config/checkpoint metadata and keeps the unconstrained four-head reader benchmark available. It is not promotion-ready because runtime suffix predictions are unreliable, and lowering the guard threshold mostly accepts more wrong values.
+
+### 4) Acceptance/Support Guardrails
 
 Files:
 
@@ -160,9 +260,9 @@ Focus:
 
 - Balance strictness (avoid false positives) vs recall (avoid no-read).
 - Validate with histogram movement, not single-image anecdotes.
-- Active guardrails in current pipeline: word-pass support (`hits` / `topHits` vs `minWordPassHits`) plus edge-candidate corroboration/cell-strength checks.
+- Active guardrails in current pipeline: evidence ranking, mixed primary evaluation of top edge and base strip candidates, narrow `scan-roi` / base fallback only when base candidates were not already evaluated and edge support is still weak or edge-only, and final edge-confidence checks.
 
-### 4) ROI Sanity Gates (usually not primary blocker)
+### 5) ROI Sanity Gates (usually not primary blocker)
 
 Files:
 

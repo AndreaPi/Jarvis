@@ -1,0 +1,5 @@
+outs:
+- md5: 270c0d9f086ba593070e5aef702dfd81
+  size: 21540082
+  hash: md5
+  path: digit_strip_reader_23xx.pt

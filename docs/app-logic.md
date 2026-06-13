@@ -1,6 +1,6 @@
 # App Logic
 
-This document describes the current Jarvis OCR execution path, including neural ROI gating and the optional gated classifier fallback.
+This document describes the current Jarvis OCR execution path, with neural ROI gating, per-cell neural digit-classifier selection, whole-strip shadow-reader logging, and guarded `23xx` shadow-reader diagnostics.
 
 ## End-to-End OCR Flow
 
@@ -18,17 +18,9 @@ flowchart TD
   H --> I["Build ROI candidates<br/>(rotations + optional edge crops)"]
   I --> J{"Candidates available?"}
   J -- "No" --> K["Ask manual entry"]
-  J -- "Yes" --> L["Word-pass OCR per candidate<br/>(SINGLE_WORD, digits only)"]
-
-  L --> M{"Best 4-digit reading found?"}
-  M -- "No" --> N["Sparse scan OCR on ROI crop<br/>(SPARSE_TEXT, soft)"]
-  M -- "Yes" --> O["finalizeSelection()<br/>evidence ranking + word-pass support guardrail"]
-  N --> N2{"Still no accepted reading?"}
-  N2 -- "No" --> O
-  N2 -- "Yes" --> N3{"Classifier fallback enabled<br/>and no-digits rejects seen?"}
-  N3 -- "No" --> O
-  N3 -- "Yes" --> N4["Digit-classifier fallback<br/>(4 cells from ROI candidate)"]
-  N4 --> O
+  J -- "Yes" --> L["Per candidate:<br/>run strip reader shadow + classifier cells"]
+  L --> M["Cell classifier result remains primary<br/>(strip readers are shadow-only)"]
+  M --> O["finalizeSelection()<br/>evidence ranking + edge safeguard"]
 
   O --> P{"Final selection exists?"}
   P -- "Yes" --> Q["Return reading + fill UI input"]
@@ -50,19 +42,24 @@ flowchart TD
    - If ROI crop cannot produce valid OCR candidates, the app falls back to manual input.
 
 3. OCR acceptance gate
-   - Word-pass result is preferred.
-   - Sparse scan is attempted if no word-pass result is available.
-   - Optional classifier fallback runs only when enabled and the branch has `ocr-no-digits` rejects.
-   - `finalizeSelection` ranks evidence across OCR passes and applies the active word-pass support guardrail (`hits` / `topHits` vs `minWordPassHits`) before returning a value.
-   - Edge-only winners are rejected unless corroborated by non-edge evidence or very strong per-cell confidence.
-   - Default config keeps classifier fallback disabled (`digitClassifier.enabled=false`) because current benchmark shows no MAE gain without exact-match/no-read guardrail safety.
+   - Candidate strips are decoded by splitting into four cells and calling the backend digit classifier.
+   - The whole-strip reader and guarded `23xx` reader also run for candidates in shadow mode and record diagnostics without affecting selection.
+   - `finalizeSelection` ranks evidence across classifier passes before returning a value.
+   - The selector prioritizes `90/270` edge candidates, but the primary pass also evaluates top base-strip candidates when they are available.
+   - A narrow `scan-roi` / base fallback rerun is only used when base candidates were not already evaluated and the top edge evidence is still weak or edge-only.
+   - Weak edge-only reads can still be rejected by configured per-cell confidence thresholds in `finalizeSelection`.
+   - Digit classifier is enabled by default (`digitClassifier.enabled=true`).
+   - Strip reader shadow logging is enabled by default (`digitStripReader.enabled=true`, `digitStripReader.shadowOnly=true`).
+   - Guarded `23xx` shadow logging is enabled by default (`digitStripReader23xx.enabled=true`, `digitStripReader23xx.shadowOnly=true`).
 
 ## What Gets Logged
 
 - Per-image selection logs are appended to `window.__jarvisOcrSelectionLogs`.
 - `selected` metadata includes `sourceLabel`, `method`, and `preprocessMode` for each accepted reading.
+- `stripReader` metadata contains the best shadow whole-strip prediction, confidence, source label, and per-position confidence summary.
+- `stripReader23xx` metadata contains accepted/abstained guarded-prefix diagnostics and suffix confidences.
 - The test-set runner reads those logs to build:
-  - `Failure Reason` values (`mismatch`, `ocr-no-digits`, etc.)
+  - `Failure Reason` values (`mismatch`, `classifier-edge-gate-final-drop`, `ocr-no-digits`, etc.)
   - Reject histograms from OCR branch reject reasons.
 
 ## Source Files

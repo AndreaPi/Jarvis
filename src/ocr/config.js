@@ -1,5 +1,5 @@
 const OCR_CONFIG = {
-  maxDimension: 1400,
+  maxDimension: 4096,
   meterCropScale: 0.95,
   digitCrops: [
     { name: 'top-wide', x: 0.04, y: 0.02, width: 0.92, height: 0.32 },
@@ -30,6 +30,8 @@ const OCR_CONFIG = {
     tightenInk: 0.08,
     cellOverlap: 0.03,
     requireAllCells: true,
+    tryOppositeOrientation: false,
+    primaryAngles: [90, 270],
     wordPassModes: ['raw'],
     minWordPassHits: 1,
     minStripAspect: 1.45,
@@ -37,24 +39,86 @@ const OCR_CONFIG = {
     normalizeWidth: 520,
     deskewMaxAngle: 8,
     deskewStep: 2,
-    useEdgeCandidates: true
+    useEdgeCandidates: true,
+    edgeContextPaddingX: 0.18,
+    edgeContextPaddingY: 0.08,
+    edgeContextShiftRatios: [-0.08, 0, 0.08],
+    edgeContextMaxVariantsPerAngle: 3,
+    normalizationProbe: {
+      enabled: true,
+      shadowOnly: true,
+      targetAspects: [2.4, 2.8, 3.2],
+      heightRatios: [1, 1.16],
+      shiftRatios: [-0.12, 0, 0.12],
+      maxVariantsPerAngle: 12
+    },
+    tightenRegister: true,
+    registerMinCropRatio: 0.45,
+    registerMaxCropRatio: 0.82,
+    registerTargetAspect: 3.2,
+    registerVerticalBandRatio: 0.68,
+    registerCropRatios: [0.82, 0.72, 0.62, 0.52],
+    registerPaddingRatio: 1.02,
+    cellSplitProbe: {
+      enabled: true,
+      shadowOnly: true,
+      offsetRatios: [-0.08, -0.04, 0, 0.04, 0.08],
+      maxOffsetsPerVariant: 5
+    }
   },
   digitClassifier: {
-    enabled: false,
+    enabled: true,
     endpoint: 'http://127.0.0.1:8001/digit/predict-cells',
     timeoutMs: 1800,
-    minCellConfidence: 0.28,
-    fallbackPreferNonEdge: true,
+    minCellConfidence: 0.18,
+    forceInitialPreviewCandidate: false,
+    fallbackPreferNonEdge: false,
     fallbackTargetAspect: 2.6,
-    singleCellRefine: true,
-    singleCellLowConfidence: 0.56,
-    singleCellRefineMinConfidence: 42,
-    singleCellRefineSwitchMargin: 4,
-    fallbackOnNoDigitsOnly: true,
-    fallbackMinAcceptedCells: 4,
-    fallbackEdgeMinAverageConfidence: 65,
-    fallbackEdgeMinCellConfidence: 35,
+    maxPrimaryCandidates: 4,
+    decodeDiagnosticCandidates: false,
+    maxDiagnosticCandidates: 36,
+    fallbackEdgeMinAverageConfidence: 25,
+    fallbackEdgeMinCellConfidence: 18,
     fallbackEdgeRequireNonEdgeSupport: false,
+    geometryRanker: {
+      enabled: true,
+      maxPenalty: 0.04,
+      edgePenaltyMultiplier: 0.55,
+      fullStripMinCropRatio: 0.92,
+      weakEdgeRelativeEnergy: 0.72,
+      weakEdgeMaxActiveWidth: 0.48,
+      weakEdgeRelativeActiveColumns: 0.58,
+      weakEdgeMaxActiveColumns: 24,
+      severeEdgeMaxActiveWidth: 0.64,
+      severeEdgeMaxActiveColumns: 16,
+      crowdedMiddleMinActiveWidth: 0.72,
+      crowdedMiddleMinActiveColumns: 30,
+      lowTextureEnergy: 0.0032,
+      lowTextureMaxActiveColumns: 18,
+      overwidePenalty: 0.04,
+      suspectedOverwidePenalty: 0.03,
+      rightTruncatedPenalty: 0.03,
+      severeRightTruncatedPenalty: 0.025,
+      degeneratePenalty: 0.03
+    },
+    disableAfterFailures: 2,
+    cooldownMs: 8000
+  },
+  digitStripReader: {
+    enabled: true,
+    endpoint: 'http://127.0.0.1:8001/digit/predict-strip',
+    timeoutMs: 1800,
+    minConfidence: 0,
+    shadowOnly: true,
+    disableAfterFailures: 2,
+    cooldownMs: 8000
+  },
+  digitStripReader23xx: {
+    enabled: true,
+    endpoint: 'http://127.0.0.1:8001/digit/predict-strip-23xx',
+    timeoutMs: 1800,
+    guardThreshold: 0.98,
+    shadowOnly: true,
     disableAfterFailures: 2,
     cooldownMs: 8000
   },
@@ -90,6 +154,18 @@ const applyRuntimeOverrides = () => {
     OCR_CONFIG.digitClassifier = {
       ...OCR_CONFIG.digitClassifier,
       ...overrides.digitClassifier
+    };
+  }
+  if (overrides.digitStripReader && typeof overrides.digitStripReader === 'object') {
+    OCR_CONFIG.digitStripReader = {
+      ...OCR_CONFIG.digitStripReader,
+      ...overrides.digitStripReader
+    };
+  }
+  if (overrides.digitStripReader23xx && typeof overrides.digitStripReader23xx === 'object') {
+    OCR_CONFIG.digitStripReader23xx = {
+      ...OCR_CONFIG.digitStripReader23xx,
+      ...overrides.digitStripReader23xx
     };
   }
 };
