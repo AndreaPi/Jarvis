@@ -1,7 +1,20 @@
-const path = require('path');
 const { test, expect } = require('@playwright/test');
 
-const METER_IMAGE_PATH = path.resolve(__dirname, '..', '..', 'assets', 'meter_20260214.JPEG');
+const TEST_IMAGE_UPLOAD = {
+  name: 'test-meter-fixture.svg',
+  mimeType: 'image/svg+xml',
+  buffer: Buffer.from(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1200" viewBox="0 0 900 1200">'
+      + '<rect width="900" height="1200" fill="#d6c5a8"/>'
+      + '<circle cx="450" cy="560" r="260" fill="#e9dfca" stroke="#42372c" stroke-width="34"/>'
+      + '<rect x="345" y="420" width="150" height="310" rx="12" fill="#f8f3e8" stroke="#6b5d4a" stroke-width="8"/>'
+      + '<g fill="#202020" font-family="Arial, sans-serif" font-size="72" font-weight="700">'
+      + '<text x="380" y="505">2</text><text x="380" y="585">3</text><text x="380" y="665">1</text><text x="380" y="745">2</text>'
+      + '</g>'
+      + '</svg>',
+    'utf8'
+  )
+};
 
 const noDetectionPayload = JSON.stringify({
   ok: false,
@@ -250,7 +263,7 @@ const installDigitStripReader23xxMock = async (page, options = {}) => {
 
 const openAppAndUploadImage = async (page) => {
   await page.goto('/');
-  await page.setInputFiles('#photo-input', METER_IMAGE_PATH);
+  await page.setInputFiles('#photo-input', TEST_IMAGE_UPLOAD);
 };
 
 const waitForDebugStages = async (page, stageNames) => {
