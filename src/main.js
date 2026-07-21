@@ -72,6 +72,9 @@ photoInput.addEventListener('click', () => {
 
 photoInput.addEventListener('change', () => {
   const file = photoInput.files && photoInput.files[0];
+  readingInput.value = '';
+  emailDraftController.updateBody();
+
   if (!file) {
     currentPhotoFile = null;
     photoPreview.innerHTML = '<p class="muted">No photo loaded yet.</p>';

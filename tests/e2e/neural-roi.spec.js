@@ -266,6 +266,23 @@ const openAppAndUploadImage = async (page) => {
   await page.setInputFiles('#photo-input', TEST_IMAGE_UPLOAD);
 };
 
+test('clears the previous reading and email draft when the photo changes', async ({ page }) => {
+  await openAppAndUploadImage(page);
+
+  await page.locator('#reading-input').fill('2311');
+  await expect(page.locator('#body-input')).toHaveValue(/Lettura: 2311/);
+
+  await page.setInputFiles('#photo-input', {
+    ...TEST_IMAGE_UPLOAD,
+    name: 'replacement-meter-fixture.svg'
+  });
+
+  await expect(page.locator('#reading-input')).toHaveValue('');
+  await expect(page.locator('#body-input')).toHaveValue(/Lettura: ____/);
+  await expect(page.locator('#body-input')).not.toHaveValue(/Lettura: 2311/);
+  await expect(page.locator('#send-btn')).not.toHaveAttribute('data-gmail-url', /2311/);
+});
+
 const waitForDebugStages = async (page, stageNames) => {
   await page.waitForFunction((names) => {
     const session = document.querySelector('.debug-session');
