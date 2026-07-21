@@ -3,9 +3,8 @@
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
-const http = require('node:http');
-const { spawn } = require('node:child_process');
 const { chromium } = require('@playwright/test');
+const { ensureQaServices } = require('./lib/qa-services.cjs');
 
 const ROOT_DIR = path.resolve(__dirname, '..');
 const FRONTEND_URL = process.env.JARVIS_FRONTEND_URL || 'http://127.0.0.1:8000';
@@ -14,8 +13,6 @@ const OUTPUT_ROOT = path.join(ROOT_DIR, 'output', 'ocr-candidate-oracle');
 const MAX_PRIMARY_CANDIDATES = Number.isFinite(Number.parseInt(process.env.JARVIS_ORACLE_MAX_CANDIDATES || '', 10))
   ? Number.parseInt(process.env.JARVIS_ORACLE_MAX_CANDIDATES, 10)
   : 20;
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const timestampId = () => {
   const now = new Date();
@@ -64,66 +61,11 @@ const absoluteError = (expected, detected) => {
   return Math.abs(expectedValue - detectedValue);
 };
 
-const requestOk = (url) => new Promise((resolve) => {
-  const request = http.get(url, (response) => {
-    response.resume();
-    resolve((response.statusCode || 0) >= 200 && (response.statusCode || 0) < 300);
-  });
-  request.on('error', () => resolve(false));
-  request.setTimeout(1000, () => {
-    request.destroy();
-    resolve(false);
-  });
+const ensureServices = () => ensureQaServices({
+  rootDir: ROOT_DIR,
+  frontendUrl: FRONTEND_URL,
+  backendUrl: BACKEND_URL
 });
-
-const spawnTrackedProcess = (command, args, options = {}) => {
-  const child = spawn(command, args, {
-    cwd: options.cwd || ROOT_DIR,
-    env: options.env || process.env,
-    stdio: ['ignore', 'pipe', 'pipe']
-  });
-  child.stdout.on('data', (chunk) => process.stdout.write(`[${options.label || command}] ${chunk}`));
-  child.stderr.on('data', (chunk) => process.stderr.write(`[${options.label || command}] ${chunk}`));
-  return {
-    stop: async () => {
-      if (child.exitCode !== null || child.signalCode !== null) {
-        return;
-      }
-      child.kill('SIGTERM');
-      for (let index = 0; index < 30; index += 1) {
-        if (child.exitCode !== null || child.signalCode !== null) {
-          return;
-        }
-        await sleep(100);
-      }
-      if (child.exitCode === null && child.signalCode === null) {
-        child.kill('SIGKILL');
-      }
-    }
-  };
-};
-
-const ensureServices = async () => {
-  const processes = [];
-  if (!(await requestOk(FRONTEND_URL))) {
-    processes.push(spawnTrackedProcess('npm', ['run', 'serve'], { label: 'frontend' }));
-  }
-  if (!(await requestOk(`${BACKEND_URL}/health`))) {
-    processes.push(spawnTrackedProcess(
-      path.join(ROOT_DIR, 'backend', '.venv', 'bin', 'uvicorn'),
-      ['backend.app:app', '--host', '127.0.0.1', '--port', '8001'],
-      { label: 'backend' }
-    ));
-  }
-
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if ((await requestOk(FRONTEND_URL)) && (await requestOk(`${BACKEND_URL}/health`))) {
-      return processes;
-    }
-    await sleep(250);
-  }
-  throw new Error('Timed out waiting for frontend/backend services.');
-};
 
 const sourceKind = (sourceLabel) => {
   const label = String(sourceLabel || '');
