@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 try:
   from .detector import DetectorUnavailableError, RoiDetector
@@ -185,7 +185,7 @@ def get_strip_digit_reader_23xx() -> StripDigitReader23xx:
 def _load_rgb_image(file_bytes: bytes) -> np.ndarray:
   try:
     with Image.open(io.BytesIO(file_bytes)) as image:
-      rgb = image.convert("RGB")
+      rgb = ImageOps.exif_transpose(image).convert("RGB")
       return np.array(rgb)
   except UnidentifiedImageError as error:
     raise HTTPException(status_code=400, detail="Unsupported image format.") from error
