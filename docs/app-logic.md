@@ -54,7 +54,7 @@ flowchart TD
 
 ## What Gets Logged
 
-- Per-image selection logs are appended to `window.__jarvisOcrSelectionLogs`.
+- Per-image selection logs are appended to `window.__jarvisOcrSelectionLogs`, retaining the latest 300 entries.
 - `selected` metadata includes `sourceLabel`, `method`, and `preprocessMode` for each accepted reading.
 - `stripReader` metadata contains the best shadow whole-strip prediction, confidence, source label, and per-position confidence summary.
 - `stripReader23xx` metadata contains accepted/abstained guarded-prefix diagnostics and suffix confidences.

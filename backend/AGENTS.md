@@ -11,7 +11,8 @@
 
 ## API and Runtime Expectations
 - Frontend/backend default ports are `127.0.0.1:8000` and `127.0.0.1:8001`.
-- Health check: `GET /health` should report `ready: true`, `roi_ready: true`, `digit_ready: true`, `strip_digit_ready: true`, `strip_digit_23xx_ready: true`, and the expected model paths when all checkpoints are present.
+- Health check: `GET /health` should report `ready: true`, `roi_ready: true`, `digit_ready: true`, `strip_digit_ready: true`, `strip_digit_23xx_ready: true`, `max_upload_bytes`, and the expected model paths when all checkpoints are present.
+- Image endpoints read at most `MAX_UPLOAD_BYTES + 1` bytes per uploaded file and return HTTP `413` above the configured limit; the default limit is 20 MiB.
 - Default ROI endpoint: `http://127.0.0.1:8001/roi/detect`
 - Default digit endpoint: `http://127.0.0.1:8001/digit/predict-cells`
 - Default strip-reader shadow endpoint: `http://127.0.0.1:8001/digit/predict-strip`
