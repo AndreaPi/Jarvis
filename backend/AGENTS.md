@@ -7,6 +7,7 @@
 - Create the backend virtualenv with `cd backend && uv venv .venv && source .venv/bin/activate && uv pip install -r requirements.txt`.
 - For any Python task that depends on computer-vision packages or image tooling (for example `ultralytics`, `opencv`, or `Pillow`), use `backend/.venv` rather than the system Python.
 - Run the API with `cd backend && source .venv/bin/activate && uvicorn app:app --host 127.0.0.1 --port 8001 --reload`.
+- Run backend regression tests from the repo root with `npm run test:backend`.
 - In this Codex environment, if the service must be consumed by the DevTools browser, starting `uvicorn` inside the sandbox may not be reachable from the page. Prefer restarting it with escalated permissions when browser fetches to `127.0.0.1:8001` fail.
 
 ## API and Runtime Expectations

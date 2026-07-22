@@ -100,7 +100,7 @@ Use `backend/.venv` for any Python step in this workflow. Do not rely on the sys
    - Run `dvc add assets/<new-meter-file>` for each newly ingested canonical photo.
    - For Mac/iCloud imports, DVC-track the converted `meter_YYYYMMDD.JPEG`, not the original `IMG_*.HEIC`/`IMG_*.HEIF`.
    - If DVC tries to use an unwritable system cache such as `/Library/Caches/dvc`, rerun with `DVC_SITE_CACHE_DIR=/tmp/dvc-site-cache`.
-   - Run `scripts/dvc-push-safe.sh` if a DVC remote is configured
+   - Run `scripts/dvc-push-safe.sh` only with a configured off-machine remote. The guard refuses plain local paths and `file://` URLs.
    - Only do this after the user has approved the ROI overlays for the new image(s).
 
 12. Validate and summarize.

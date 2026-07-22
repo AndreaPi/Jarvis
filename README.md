@@ -201,13 +201,17 @@ Check backend readiness with:
 curl -s http://127.0.0.1:8001/health
 ```
 
-### E2E Tests
+### Tests
 
-Run Playwright checks for neural-ROI failure handling and OCR selection guard regressions:
+Run the complete local regression set from the repo root:
 
 ```bash
+npm run test:scripts
+npm run test:backend
 npm run test:e2e
 ```
+
+The script suite covers QA service/checkpoint guards plus DVC and artifact-packaging safety. The backend suite covers API image handling, ROI dataset behavior, and runtime crop geometry. Playwright covers UI state, neural-ROI failure handling, and OCR selection guard regressions.
 
 Generate a per-image ROI checkpoint comparison report (`roi-rotaug-e30-640.pt` vs `roi.pt`) with stage `5/6` debug snapshots:
 
@@ -238,7 +242,9 @@ npm run qa:roi-geometry-audit
 
 These write timestamped reports under `output/strip-dataset-qa/`, `output/ocr-candidate-oracle/`, `output/strip-runtime-qa/`, `output/cell-crop-failure-qa/`, and `output/roi-geometry-audit/`. Use `qa:strip-dataset` after rebuilding digit windows and before retraining, so the canonical strips can be visually accepted first.
 
-CI runs these tests on every pull request and on pushes to `master`.
+The browser-based OCR QA runners fail fast if a reused backend is not ready with the canonical promoted ROI and digit-classifier checkpoints.
+
+CI runs the Chromium Playwright suite on every pull request and on pushes to `master`. `test:scripts` and `test:backend` are currently required local checks and are not run by `.github/workflows/e2e.yml`.
 
 ## File Overview
 - `index.html`: UI layout.
