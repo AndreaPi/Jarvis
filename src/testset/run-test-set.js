@@ -33,6 +33,14 @@ const getSelectionLogs = () => {
   return window.__jarvisOcrSelectionLogs;
 };
 
+const latestNewSelectionLog = (selectionLogs, previousLastLog) => {
+  if (!Array.isArray(selectionLogs) || !selectionLogs.length) {
+    return null;
+  }
+  const latestLog = selectionLogs[selectionLogs.length - 1];
+  return latestLog !== previousLastLog ? latestLog : null;
+};
+
 const incrementHistogram = (histogram, key, amount = 1) => {
   if (!(histogram instanceof Map)) {
     return;
@@ -240,14 +248,15 @@ const createTestSetRunner = ({
 
           const blob = await imageResponse.blob();
           const file = new File([blob], row.filename, { type: blob.type || 'image/jpeg' });
-          const selectionLogCountBefore = getSelectionLogs().length;
+          const selectionLogsBefore = getSelectionLogs();
+          const previousLastLog = selectionLogsBefore.length
+            ? selectionLogsBefore[selectionLogsBefore.length - 1]
+            : null;
           const result = await runMeterOcr(file, (message) => {
             setStatus(`Test ${i + 1}/${rows.length}: ${message}`);
           });
           const selectionLogs = getSelectionLogs();
-          const selectionLog = selectionLogs.length > selectionLogCountBefore
-            ? selectionLogs[selectionLogs.length - 1]
-            : null;
+          const selectionLog = latestNewSelectionLog(selectionLogs, previousLastLog);
 
           const detected = result && result.value ? result.value : '';
           const match = detected === row.value;
@@ -371,4 +380,4 @@ const createTestSetRunner = ({
   };
 };
 
-export { createTestSetRunner };
+export { createTestSetRunner, latestNewSelectionLog };
