@@ -26,6 +26,32 @@ const getRectFromNormalized = (canvas, rect) => ({
   height: canvas.height * rect.height
 });
 
+const intersectCropAxis = (start, length, limit) => {
+  const safeLimit = Math.max(1, Number.isFinite(limit) ? limit : 1);
+  const requestedStart = Number.isFinite(start) ? start : 0;
+  const requestedLength = Number.isFinite(length) ? Math.max(1, length) : 1;
+  const clippedStart = clamp(requestedStart, 0, safeLimit);
+  const clippedEnd = clamp(requestedStart + requestedLength, 0, safeLimit);
+  if (clippedEnd > clippedStart) {
+    return { start: clippedStart, length: clippedEnd - clippedStart };
+  }
+  return {
+    start: requestedStart >= safeLimit ? safeLimit - 1 : 0,
+    length: 1
+  };
+};
+
+const intersectRectWithCanvas = (canvas, rect) => {
+  const horizontal = intersectCropAxis(rect.x, rect.width, canvas.width);
+  const vertical = intersectCropAxis(rect.y, rect.height, canvas.height);
+  return {
+    x: horizontal.start,
+    y: vertical.start,
+    width: horizontal.length,
+    height: vertical.length
+  };
+};
+
 const drawOverlayCanvas = (source, shapes = []) => {
   const canvas = cloneCanvas(source);
   const ctx = canvas.getContext('2d');
@@ -102,6 +128,27 @@ const drawImageToCanvas = (image, maxDimension) => {
 };
 
 const cropCanvas = (source, rect) => {
+  const safeRect = intersectRectWithCanvas(source, rect);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(safeRect.width));
+  canvas.height = Math.max(1, Math.round(safeRect.height));
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(
+    source,
+    safeRect.x,
+    safeRect.y,
+    safeRect.width,
+    safeRect.height,
+    0,
+    0,
+    canvas.width,
+    canvas.height
+  );
+  return canvas;
+};
+
+const cropCanvasForClassifierCell = (source, rect) => {
   const safeX = clamp(rect.x, 0, source.width - 1);
   const safeY = clamp(rect.y, 0, source.height - 1);
   const safeRect = {
@@ -111,8 +158,8 @@ const cropCanvas = (source, rect) => {
     height: clamp(rect.height, 1, source.height - safeY)
   };
   const canvas = document.createElement('canvas');
-  canvas.width = Math.round(safeRect.width);
-  canvas.height = Math.round(safeRect.height);
+  canvas.width = Math.max(1, Math.round(safeRect.width));
+  canvas.height = Math.max(1, Math.round(safeRect.height));
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   ctx.imageSmoothingEnabled = true;
   ctx.drawImage(
@@ -174,7 +221,8 @@ const splitIntoCells = (source, count, overlapRatio, offsetRatio = 0) => {
   for (let i = 0; i < count; i += 1) {
     const x = cellWidth * i + offset - overlap;
     const width = cellWidth + overlap * 2;
-    cells.push(cropCanvas(source, { x, y: 0, width, height: source.height }));
+    // Preserve the boundary geometry used to train the promoted classifier.
+    cells.push(cropCanvasForClassifierCell(source, { x, y: 0, width, height: source.height }));
   }
   return cells;
 };
@@ -460,6 +508,7 @@ export {
   normalizeAngle,
   cloneCanvas,
   getRectFromNormalized,
+  intersectRectWithCanvas,
   drawOverlayCanvas,
   loadImageBitmap,
   drawImageToCanvas,
