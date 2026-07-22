@@ -58,7 +58,7 @@ if [[ -z "$REMOTE_URL" ]]; then
   exit 1
 fi
 
-if [[ "$REMOTE_URL" = /* || "$REMOTE_URL" = .* ]]; then
+if [[ "$REMOTE_URL" = /* || "$REMOTE_URL" = .* || "$REMOTE_URL" =~ ^[Ff][Ii][Ll][Ee]:// ]]; then
   echo "Refusing to push: DVC remote '$DEFAULT_REMOTE' is a local path: $REMOTE_URL" >&2
   echo "This repo now assumes cloud-only DVC storage. Configure a non-local remote such as Backblaze B2." >&2
   exit 1
