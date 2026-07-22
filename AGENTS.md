@@ -22,6 +22,8 @@
 ## Build, Test, and Development Commands
 - `npm run serve`: Start the local web server on port `8000`.
 - `npm run dev`: Alias of `npm run serve`.
+- `npm run test:scripts`: Run tests for QA service guards and artifact/DVC safety scripts.
+- `npm run test:backend`: Run backend API, ROI dataset, and runtime crop unit tests.
 - `npm run test:e2e`: Run Playwright end-to-end tests.
 - `npm run benchmark:roi-diff`: Generate ROI checkpoint diff artifacts.
 
@@ -62,7 +64,7 @@ Open `http://localhost:8000` after starting the frontend server.
   - `backend/data/digit_dataset/sections_synthetic/train.dvc`
   - per-file DVC tracking for promoted `backend/models/*.pt`
 - After dataset ingestion or model promotion, run the relevant `dvc add ...` commands, then push with `scripts/dvc-push-safe.sh`.
-- Never run raw `dvc push` directly in this repo. Always use `scripts/dvc-push-safe.sh`; it requires a configured non-local DVC remote and refuses to push to plain local paths.
+- Never run raw `dvc push` directly in this repo. Always use `scripts/dvc-push-safe.sh`; it requires a configured non-local DVC remote and refuses plain local paths and `file://` URLs.
 - For cloud storage, prefer Backblaze B2. Install `dvc[s3]` in `backend/.venv` and configure the DVC remote through B2's S3-compatible endpoint.
 - Use `scripts/package-tier1-artifacts.sh` plus the manual `Publish Artifacts` workflow for release-style snapshots after the DVC remote is up to date.
 

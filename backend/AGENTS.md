@@ -7,11 +7,13 @@
 - Create the backend virtualenv with `cd backend && uv venv .venv && source .venv/bin/activate && uv pip install -r requirements.txt`.
 - For any Python task that depends on computer-vision packages or image tooling (for example `ultralytics`, `opencv`, or `Pillow`), use `backend/.venv` rather than the system Python.
 - Run the API with `cd backend && source .venv/bin/activate && uvicorn app:app --host 127.0.0.1 --port 8001 --reload`.
+- Run backend regression tests from the repo root with `npm run test:backend`.
 - In this Codex environment, if the service must be consumed by the DevTools browser, starting `uvicorn` inside the sandbox may not be reachable from the page. Prefer restarting it with escalated permissions when browser fetches to `127.0.0.1:8001` fail.
 
 ## API and Runtime Expectations
 - Frontend/backend default ports are `127.0.0.1:8000` and `127.0.0.1:8001`.
-- Health check: `GET /health` should report `ready: true`, `roi_ready: true`, `digit_ready: true`, `strip_digit_ready: true`, `strip_digit_23xx_ready: true`, and the expected model paths when all checkpoints are present.
+- Health check: `GET /health` should report `ready: true`, `roi_ready: true`, `digit_ready: true`, `strip_digit_ready: true`, `strip_digit_23xx_ready: true`, `max_upload_bytes`, and the expected model paths when all checkpoints are present.
+- Image endpoints read at most `MAX_UPLOAD_BYTES + 1` bytes per uploaded file and return HTTP `413` above the configured limit; the default limit is 20 MiB.
 - Default ROI endpoint: `http://127.0.0.1:8001/roi/detect`
 - Default digit endpoint: `http://127.0.0.1:8001/digit/predict-cells`
 - Default strip-reader shadow endpoint: `http://127.0.0.1:8001/digit/predict-strip`

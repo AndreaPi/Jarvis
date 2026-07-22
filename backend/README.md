@@ -188,7 +188,7 @@ python train_digit_classifier.py \
   --copy-to runs/digit-classifier-finetune-runtime/digit_classifier.pt
 ```
 
-May 24, 2026 recovery result: grouped CV improved from restored baseline `51.8%` per-cell accuracy to clean-only `61.6%` and clean + curated-runtime-failure `66.1%`, but the final challenger failed the then-28-image UI promotion gate (`3/28` exact, `MAE 139.11`, `1` no-read) versus the restored checkpoint with the conservative geometry ranker (`10/28` exact, `MAE 61.22`, `1` no-read). The promoted checkpoint therefore remains `backend/models/digit_classifier.pt`. The current May 29, 2026 29-image UI baseline is tracked in `src/ocr/AGENTS.md` and `docs/ocr-tuning-playbook.md`.
+May 24, 2026 recovery result: grouped CV improved from restored baseline `51.8%` per-cell accuracy to clean-only `61.6%` and clean + curated-runtime-failure `66.1%`, but the final challenger failed the then-28-image UI promotion gate (`3/28` exact, `MAE 139.11`, `1` no-read) versus the restored checkpoint with the conservative geometry ranker (`10/28` exact, `MAE 61.22`, `1` no-read). The promoted checkpoint therefore remains `backend/models/digit_classifier.pt`. The active UI baseline is tracked in `src/ocr/AGENTS.md` and `docs/ocr-tuning-playbook.md`; May 2026 numbers are historical snapshots only.
 
 ## Train the whole-strip shadow reader
 
@@ -254,14 +254,22 @@ Readiness check:
 curl -s http://127.0.0.1:8001/health
 ```
 
+Run backend regression tests from the repo root:
+
+```bash
+npm run test:backend
+```
+
 ## 4) Endpoints
 
-- `GET /health`: model readiness (`ready`, `roi_ready`, `digit_ready`, `strip_digit_ready`, `strip_digit_23xx_ready`) + effective model/device config.
+- `GET /health`: model readiness (`ready`, `roi_ready`, `digit_ready`, `strip_digit_ready`, `strip_digit_23xx_ready`) + effective model/device config and `max_upload_bytes`.
 - `POST /roi/detect`: multipart upload (`image`) and returns normalized bbox + confidence.
 - `POST /digit/predict`: multipart upload (`image`) and returns the predicted digit + confidence.
 - `POST /digit/predict-cells`: multipart upload (`images`, repeated field) for batch cell decoding.
 - `POST /digit/predict-strip`: multipart upload (`image`) for direct fixed-length 4-digit strip decoding.
 - `POST /digit/predict-strip-23xx`: multipart upload (`image`) for guarded house-specific `23xx` suffix decoding.
+
+All image fields default to a 20 MiB per-file limit and return HTTP `413` when exceeded. Override the limit with `MAX_UPLOAD_BYTES`.
 
 Frontend integration defaults:
 - ROI detection path is `http://127.0.0.1:8001/roi/detect` and is required for OCR.
@@ -272,6 +280,7 @@ Frontend integration defaults:
 
 ## Environment Variables
 
+- `MAX_UPLOAD_BYTES`: maximum bytes read from each uploaded image (default: `20971520`).
 - `ROI_MODEL_PATH`: path to `.pt` weights (default: `backend/models/roi-rotaug-e30-640.pt`)
 - `ROI_DEFAULT_CONFIDENCE`: detection confidence threshold (default: `0.05`)
 - `ROI_DEFAULT_IOU`: NMS IoU threshold (default: `0.5`)

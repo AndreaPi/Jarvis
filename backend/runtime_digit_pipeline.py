@@ -52,17 +52,34 @@ def normalize_angle(angle: float) -> int:
   return int(((angle % 360) + 360) % 360)
 
 
+def resolve_crop_axis(start: float, length: float, limit: int) -> tuple[int, int]:
+  requested_length = max(1.0, float(length))
+  clipped_start = clamp(float(start), 0.0, float(limit))
+  clipped_end = clamp(float(start) + requested_length, 0.0, float(limit))
+  if clipped_end <= clipped_start:
+    clipped_start = float(limit - 1 if start >= limit else 0)
+    clipped_end = clipped_start + 1.0
+
+  pixel_start = max(0, min(limit - 1, int(round(clipped_start))))
+  pixel_end = max(pixel_start + 1, min(limit, int(round(clipped_end))))
+  return pixel_start, pixel_end
+
+
 def resolve_crop_rect(image: Image.Image, rect: dict[str, float]) -> CropRect:
+  left, right = resolve_crop_axis(rect["x"], rect["width"], image.width)
+  top, bottom = resolve_crop_axis(rect["y"], rect["height"], image.height)
+  return CropRect(left=left, top=top, right=right, bottom=bottom)
+
+
+def resolve_classifier_crop_rect(image: Image.Image, rect: dict[str, float]) -> CropRect:
   x = clamp(rect["x"], 0, image.width - 1)
   y = clamp(rect["y"], 0, image.height - 1)
   width = clamp(rect["width"], 1, image.width - x)
   height = clamp(rect["height"], 1, image.height - y)
   left = int(round(x))
   top = int(round(y))
-  right = int(round(x + width))
-  bottom = int(round(y + height))
-  right = max(left + 1, min(image.width, right))
-  bottom = max(top + 1, min(image.height, bottom))
+  right = max(left + 1, min(image.width, int(round(x + width))))
+  bottom = max(top + 1, min(image.height, int(round(y + height))))
   return CropRect(left=left, top=top, right=right, bottom=bottom)
 
 
@@ -356,7 +373,8 @@ def build_cell_rects(
     offset = x_offset_px
     if per_section_x_offsets is not None and index < len(per_section_x_offsets):
       offset = per_section_x_offsets[index]
-    rects.append(resolve_crop_rect(image, {
+    # Preserve the boundary geometry used to train the promoted classifier.
+    rects.append(resolve_classifier_crop_rect(image, {
       "x": cell_width * index - overlap + offset,
       "y": 0,
       "width": cell_width + overlap * 2,

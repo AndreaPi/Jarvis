@@ -33,6 +33,8 @@ const DEBUG_CONFIG = {
 };
 
 let currentPhotoFile = null;
+let photoRevision = 0;
+let ocrRequestId = 0;
 
 const debugOverlayManager = createDebugOverlayManager({
   toggleEl: debugOverlayToggle,
@@ -72,16 +74,24 @@ photoInput.addEventListener('click', () => {
 
 photoInput.addEventListener('change', () => {
   const file = photoInput.files && photoInput.files[0];
+  const selectedPhotoRevision = ++photoRevision;
+  ocrRequestId += 1;
+  currentPhotoFile = file || null;
+  readBtn.disabled = false;
+  readingInput.value = '';
+  emailDraftController.updateBody();
+
   if (!file) {
-    currentPhotoFile = null;
     photoPreview.innerHTML = '<p class="muted">No photo loaded yet.</p>';
     setStatus('Waiting for a photo.');
     return;
   }
 
-  currentPhotoFile = file;
   const reader = new FileReader();
   reader.onload = () => {
+    if (selectedPhotoRevision !== photoRevision || currentPhotoFile !== file) {
+      return;
+    }
     photoPreview.innerHTML = '';
     const img = document.createElement('img');
     img.src = reader.result;
@@ -89,6 +99,9 @@ photoInput.addEventListener('change', () => {
     photoPreview.appendChild(img);
   };
   reader.onerror = () => {
+    if (selectedPhotoRevision !== photoRevision || currentPhotoFile !== file) {
+      return;
+    }
     photoPreview.innerHTML = '<p class="muted">Preview unavailable.</p>';
   };
   reader.readAsDataURL(file);
@@ -101,11 +114,27 @@ readBtn.addEventListener('click', async () => {
     return;
   }
 
+  const requestedFile = currentPhotoFile;
+  const requestedPhotoRevision = photoRevision;
+  const requestId = ++ocrRequestId;
+  const isCurrentRequest = () => (
+    requestId === ocrRequestId
+    && requestedPhotoRevision === photoRevision
+    && requestedFile === currentPhotoFile
+  );
+
   readBtn.disabled = true;
   setStatus('Reading image...');
 
   try {
-    const result = await runMeterOcr(currentPhotoFile, (message) => setStatus(message));
+    const result = await runMeterOcr(requestedFile, (message) => {
+      if (isCurrentRequest()) {
+        setStatus(message);
+      }
+    });
+    if (!isCurrentRequest()) {
+      return;
+    }
     if (result && result.value) {
       readingInput.value = result.value;
       setStatus(`Reading detected: ${result.value}. Review if needed.`);
@@ -114,13 +143,18 @@ readBtn.addEventListener('click', async () => {
       setStatus('No clear reading detected. Enter it manually.');
     }
   } catch (error) {
+    if (!isCurrentRequest()) {
+      return;
+    }
     console.error(error);
     const message = error instanceof Error && error.message
       ? error.message
       : 'Neural ROI failed. Enter the reading manually.';
     setStatus(message);
   } finally {
-    readBtn.disabled = false;
+    if (requestId === ocrRequestId) {
+      readBtn.disabled = false;
+    }
   }
 });
 

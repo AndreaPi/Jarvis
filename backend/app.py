@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 try:
   from .detector import DetectorUnavailableError, RoiDetector
@@ -58,6 +58,7 @@ MODEL_SOURCE = "env" if MODEL_PATH_ENV else "default"
 DEFAULT_CONFIDENCE = _env_float("ROI_DEFAULT_CONFIDENCE", 0.05)
 DEFAULT_IOU = _env_float("ROI_DEFAULT_IOU", 0.5)
 DEFAULT_IMGSZ = _env_int("ROI_DEFAULT_IMGSZ", 960)
+MAX_UPLOAD_BYTES = max(1, _env_int("MAX_UPLOAD_BYTES", 20 * 1024 * 1024))
 DEFAULT_DIGIT_MODEL_PATH = BASE_DIR / "models" / "digit_classifier.pt"
 DIGIT_MODEL_PATH = Path(os.getenv("DIGIT_MODEL_PATH", str(DEFAULT_DIGIT_MODEL_PATH))).expanduser().resolve()
 DIGIT_MIN_CONFIDENCE = _env_float("DIGIT_MIN_CONFIDENCE", 0.0)
@@ -185,10 +186,20 @@ def get_strip_digit_reader_23xx() -> StripDigitReader23xx:
 def _load_rgb_image(file_bytes: bytes) -> np.ndarray:
   try:
     with Image.open(io.BytesIO(file_bytes)) as image:
-      rgb = image.convert("RGB")
+      rgb = ImageOps.exif_transpose(image).convert("RGB")
       return np.array(rgb)
   except UnidentifiedImageError as error:
     raise HTTPException(status_code=400, detail="Unsupported image format.") from error
+
+
+async def _read_upload_bytes(upload: UploadFile, max_bytes: int = MAX_UPLOAD_BYTES) -> bytes:
+  file_bytes = await upload.read(max_bytes + 1)
+  if len(file_bytes) > max_bytes:
+    raise HTTPException(
+      status_code=413,
+      detail=f"Upload too large; limit is {max_bytes} bytes."
+    )
+  return file_bytes
 
 @app.get("/health")
 def health() -> dict:
@@ -253,6 +264,7 @@ def health() -> dict:
     "default_confidence": DEFAULT_CONFIDENCE,
     "default_iou": DEFAULT_IOU,
     "default_imgsz": DEFAULT_IMGSZ,
+    "max_upload_bytes": MAX_UPLOAD_BYTES,
     "digit_min_confidence": DIGIT_MIN_CONFIDENCE,
     "digit_top_k": DIGIT_TOP_K,
     "strip_digit_min_confidence": STRIP_DIGIT_MIN_CONFIDENCE,
@@ -273,7 +285,7 @@ async def detect_roi(image: UploadFile = File(...)) -> dict:
   except DetectorUnavailableError as error:
     raise HTTPException(status_code=503, detail=str(error)) from error
 
-  file_bytes = await image.read()
+  file_bytes = await _read_upload_bytes(image)
   if not file_bytes:
     raise HTTPException(status_code=400, detail="Empty upload.")
 
@@ -317,7 +329,7 @@ async def predict_digit(image: UploadFile = File(...)) -> dict:
   except DigitClassifierUnavailableError as error:
     raise HTTPException(status_code=503, detail=str(error)) from error
 
-  file_bytes = await image.read()
+  file_bytes = await _read_upload_bytes(image)
   if not file_bytes:
     raise HTTPException(status_code=400, detail="Empty upload.")
 
@@ -353,7 +365,7 @@ async def predict_digit_cells(images: list[UploadFile] = File(...)) -> dict:
   predictions = []
   accepted_count = 0
   for upload in images:
-    file_bytes = await upload.read()
+    file_bytes = await _read_upload_bytes(upload)
     if not file_bytes:
       predictions.append({
         "ok": False,
@@ -397,7 +409,7 @@ async def predict_digit_strip(image: UploadFile = File(...)) -> dict:
   except StripDigitReaderUnavailableError as error:
     raise HTTPException(status_code=503, detail=str(error)) from error
 
-  file_bytes = await image.read()
+  file_bytes = await _read_upload_bytes(image)
   if not file_bytes:
     raise HTTPException(status_code=400, detail="Empty upload.")
 
@@ -428,7 +440,7 @@ async def predict_digit_strip_23xx(image: UploadFile = File(...)) -> dict:
   except StripDigitReader23xxUnavailableError as error:
     raise HTTPException(status_code=503, detail=str(error)) from error
 
-  file_bytes = await image.read()
+  file_bytes = await _read_upload_bytes(image)
   if not file_bytes:
     raise HTTPException(status_code=400, detail="Empty upload.")
 

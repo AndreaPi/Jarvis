@@ -54,7 +54,7 @@ flowchart TD
 
 ## What Gets Logged
 
-- Per-image selection logs are appended to `window.__jarvisOcrSelectionLogs`.
+- Per-image selection logs are appended to `window.__jarvisOcrSelectionLogs`, retaining the latest 300 entries.
 - `selected` metadata includes `sourceLabel`, `method`, and `preprocessMode` for each accepted reading.
 - `stripReader` metadata contains the best shadow whole-strip prediction, confidence, source label, and per-position confidence summary.
 - `stripReader23xx` metadata contains accepted/abstained guarded-prefix diagnostics and suffix confidences.
@@ -62,9 +62,16 @@ flowchart TD
   - `Failure Reason` values (`mismatch`, `classifier-edge-gate-final-drop`, `ocr-no-digits`, etc.)
   - Reject histograms from OCR branch reject reasons.
 
+## Photo Replacement Safety
+
+- Selecting a new photo immediately clears the previous detected reading and regenerates the email draft without that stale value.
+- Each photo change invalidates any in-flight OCR request. Progress, errors, and final readings from an older photo are ignored if they arrive after the replacement.
+- Preview callbacks use the same photo revision guard, so a delayed file read cannot replace the current preview.
+
 ## Source Files
 
 - OCR orchestration: `src/ocr/pipeline.js`
+- Photo selection and stale-request guards: `src/main.js`
 - Neural ROI probe and sanity checks: `src/ocr/neural-roi.js`
 - Candidate generation: `src/ocr/alignment.js`
 - OCR ranking/reading extraction: `src/ocr/recognition.js`

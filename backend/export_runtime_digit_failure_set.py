@@ -15,12 +15,14 @@ try:
   from .detector import RoiDetector
   from .digit_classifier import DigitClassifier
   from .runtime_digit_pipeline import CELL_OVERLAP as SHARED_CELL_OVERLAP
+  from .runtime_digit_pipeline import crop_image
   from .runtime_digit_pipeline import normalize_roi_strip as shared_normalize_roi_strip
   from .runtime_digit_pipeline import split_into_cells as shared_split_into_cells
 except ImportError:
   from detector import RoiDetector
   from digit_classifier import DigitClassifier
   from runtime_digit_pipeline import CELL_OVERLAP as SHARED_CELL_OVERLAP
+  from runtime_digit_pipeline import crop_image
   from runtime_digit_pipeline import normalize_roi_strip as shared_normalize_roi_strip
   from runtime_digit_pipeline import split_into_cells as shared_split_into_cells
 
@@ -171,20 +173,6 @@ def resize_to_width(image: Image.Image, target_width: int) -> Image.Image:
   scale = target_width / max(1, image.width)
   new_height = max(1, int(round(image.height * scale)))
   return image.resize((target_width, new_height), Image.Resampling.BILINEAR)
-
-
-def crop_image(image: Image.Image, rect: dict[str, float]) -> Image.Image:
-  x = clamp(rect["x"], 0, image.width - 1)
-  y = clamp(rect["y"], 0, image.height - 1)
-  width = clamp(rect["width"], 1, image.width - x)
-  height = clamp(rect["height"], 1, image.height - y)
-  left = int(round(x))
-  top = int(round(y))
-  right = int(round(x + width))
-  bottom = int(round(y + height))
-  right = max(left + 1, min(image.width, right))
-  bottom = max(top + 1, min(image.height, bottom))
-  return image.crop((left, top, right, bottom))
 
 
 def rotate_image(image: Image.Image, angle: int) -> Image.Image:

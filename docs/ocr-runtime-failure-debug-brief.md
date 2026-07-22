@@ -9,7 +9,7 @@ Create a focused starting point for the next OCR runtime-failure debugging pass.
 | Area | Evidence | Working read |
 | --- | --- | --- |
 | Active OCR path | Neural ROI is mandatory; digit-classifier inference is mandatory; whole-strip readers remain shadow-only. | Debugging should stay on ROI candidate selection, strip normalization, cell splits, and primary classifier inputs. |
-| Benchmark baseline | Current promoted ROI + restored per-cell classifier surface, rechecked June 12, 2026 after ingesting `meter_20260612.JPEG`: `MAE 111.75`, `Exact Match 11/33`, `No-read 1/33`. The June 9 ROI checkpoint diff surface before the June 10/12 ingestions was `MAE 106.83`, `Exact Match 11/31`, `No-read 1/31`; the previous ROI checkpoint on that 31-image surface was `MAE 388.00`, `Exact Match 11/31`, `No-read 1/31`. | The June 9 ROI checkpoint promotion remains valid; remaining high-impact failures are mostly crop/split/selection problems, not ROI detection misses. |
+| Benchmark baseline | Current promoted ROI + restored per-cell classifier surface, rechecked July 22, 2026 after ingesting through `meter_20260628.JPEG`: `MAE 108.76`, `Exact Match 11/34`, `No-read 1/34`. The June 9 ROI checkpoint diff surface before the June 10/12/28 ingestions was `MAE 106.83`, `Exact Match 11/31`, `No-read 1/31`; the previous ROI checkpoint on that 31-image surface was `MAE 388.00`, `Exact Match 11/31`, `No-read 1/31`. | The June 9 ROI checkpoint promotion remains valid; remaining high-impact failures are mostly crop/split/selection problems, not ROI detection misses. |
 | Selected failure taxonomy | `right_truncated`: 5, `overwide_split`: 4, `classifier_or_local_split`: 2, plus one each of `overwide_rotated_split`, `overwide_blurry_split`, `degenerate_rotated`, and `degenerate_no_digits`. | The dominant failures are upstream geometry/cropping issues, not isolated digit-classifier misses. |
 | Debug summaries | `output/debug-stage-inspection/summary.json` covers 7 rows; selected sources are `roi-90-base-roi` for 6 rows and `roi-90-edge-roi` for 1 row. Reject summaries include `classifier-edge-candidate-selected`: 14 and `classifier-missing-cell-digit`: 1. | Candidate selection is producing rejected edge alternatives and mostly selecting base ROI variants in the inspected subset. |
 | Guardrails | `src/ocr/AGENTS.md` says to run both `npm run test:e2e` and the UI `Run test set` before treating OCR changes as promotable. | Any code change should be judged by UI-set `MAE`, with exact match and no-read as guardrails. |
@@ -63,7 +63,7 @@ Candidate checks worth testing:
 npm run test:e2e
 ```
 
-Then run the UI `Run test set` with the debug overlay enabled. Promotion requires improved `MAE` without exact-match or no-read regressions against the active 33-image baseline.
+Then run the UI `Run test set` with the debug overlay enabled. Promotion requires improved `MAE` without exact-match or no-read regressions against the active 34-image baseline.
 
 ## Open Questions
 
@@ -222,3 +222,12 @@ The June 12 iPhone HEIC capture was converted to canonical `assets/meter_2026061
 - DVC push via `scripts/dvc-push-safe.sh` published the updated ROI images directory and the new canonical asset.
 - UI `Run test set` on the current 33-image surface reported `MAE 111.75`, `Exact Match 11/33`, and `No-read 1/33`.
 - The new row remains a classifier/selection miss: expected `2339`, selected `2304` from `roi-90-base-roi` (absolute error `35`).
+
+## Execution Notes - 2026-07-22 Baseline Refresh
+
+The June 28 capture is now canonical `assets/meter_20260628.JPEG`, present in `assets/meter_readings.csv`, tracked by DVC, and assigned to the ROI training split.
+
+- The active corpus contains `34` rows (`train=33`, `val=0`, `test=1`).
+- UI `Run test set` reported `MAE 108.76`, `Exact Match 11/34`, and `No-read 1/34`.
+- The newest row is a near miss: expected `2345`, selected `2332` (absolute error `13`).
+- Generic crop intersection was corrected during the codebase review, while classifier cell boundary geometry stayed unchanged after an A/B run showed that altering it regressed OCR. The final UI metrics therefore remain the pre-change baseline.

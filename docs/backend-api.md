@@ -16,6 +16,8 @@ In the Codex/DevTools environment, a backend started inside the sandbox may not 
 
 Default local base URL: `http://127.0.0.1:8001`
 
+Uploaded photos are transposed from their EXIF orientation before conversion to RGB and model inference.
+
 ## Endpoints
 
 ### `GET /health`
@@ -39,6 +41,7 @@ Key fields:
 - `strip_digit_model_path`, `strip_digit_device`: strip-reader model/runtime selection.
 - `strip_digit_23xx_model_path`, `strip_digit_23xx_device`: constrained strip-reader model/runtime selection.
 - `default_confidence`, `default_iou`, `default_imgsz`: ROI inference defaults.
+- `max_upload_bytes`: per-file image upload limit in bytes.
 - `digit_min_confidence`, `digit_top_k`: classifier acceptance defaults.
 - `strip_digit_min_confidence`, `strip_digit_top_k`: strip-reader acceptance defaults.
 - `strip_digit_23xx_guard_threshold`, `strip_digit_23xx_top_k`: constrained strip-reader guard/defaults.
@@ -172,10 +175,15 @@ Response includes:
 ## Error Semantics
 
 - `400`: bad input (empty upload, unsupported image, too many images, etc.)
+- `413`: an uploaded image exceeds `MAX_UPLOAD_BYTES` (20 MiB by default)
 - `503`: model/dependency unavailable
 - `200` with `ok: false` (ROI endpoint): inference ran but no ROI detected
 
 ## Environment Variables
+
+Shared upload handling:
+
+- `MAX_UPLOAD_BYTES` (default `20971520`)
 
 ROI detector:
 

@@ -2,9 +2,8 @@
 
 const fsp = require('node:fs/promises');
 const path = require('node:path');
-const http = require('node:http');
-const { spawn } = require('node:child_process');
 const { chromium } = require('@playwright/test');
+const { ensureQaServices } = require('./lib/qa-services.cjs');
 
 const ROOT_DIR = path.resolve(__dirname, '..');
 const FRONTEND_URL = process.env.JARVIS_FRONTEND_URL || 'http://127.0.0.1:8000';
@@ -12,8 +11,6 @@ const BACKEND_URL = process.env.JARVIS_BACKEND_URL || 'http://127.0.0.1:8001';
 const OUTPUT_ROOT = path.join(ROOT_DIR, 'output', 'roi-geometry-audit');
 const MAX_PRIMARY_CANDIDATES = 20;
 const MAX_DIAGNOSTIC_CANDIDATES = 36;
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const timestampId = () => {
   const now = new Date();
@@ -52,66 +49,11 @@ const parseCsv = (text) => {
 
 const relativeFrom = (from, target) => path.relative(from, target).replaceAll(path.sep, '/');
 
-const requestOk = (url) => new Promise((resolve) => {
-  const request = http.get(url, (response) => {
-    response.resume();
-    resolve((response.statusCode || 0) >= 200 && (response.statusCode || 0) < 300);
-  });
-  request.on('error', () => resolve(false));
-  request.setTimeout(1000, () => {
-    request.destroy();
-    resolve(false);
-  });
+const ensureServices = () => ensureQaServices({
+  rootDir: ROOT_DIR,
+  frontendUrl: FRONTEND_URL,
+  backendUrl: BACKEND_URL
 });
-
-const spawnTrackedProcess = (command, args, options = {}) => {
-  const child = spawn(command, args, {
-    cwd: options.cwd || ROOT_DIR,
-    env: options.env || process.env,
-    stdio: ['ignore', 'pipe', 'pipe']
-  });
-  child.stdout.on('data', (chunk) => process.stdout.write(`[${options.label || command}] ${chunk}`));
-  child.stderr.on('data', (chunk) => process.stderr.write(`[${options.label || command}] ${chunk}`));
-  return {
-    stop: async () => {
-      if (child.exitCode !== null || child.signalCode !== null) {
-        return;
-      }
-      child.kill('SIGTERM');
-      for (let index = 0; index < 30; index += 1) {
-        if (child.exitCode !== null || child.signalCode !== null) {
-          return;
-        }
-        await sleep(100);
-      }
-      if (child.exitCode === null && child.signalCode === null) {
-        child.kill('SIGKILL');
-      }
-    }
-  };
-};
-
-const ensureServices = async () => {
-  const processes = [];
-  if (!(await requestOk(FRONTEND_URL))) {
-    processes.push(spawnTrackedProcess('npm', ['run', 'serve'], { label: 'frontend' }));
-  }
-  if (!(await requestOk(`${BACKEND_URL}/health`))) {
-    processes.push(spawnTrackedProcess(
-      path.join(ROOT_DIR, 'backend', '.venv', 'bin', 'uvicorn'),
-      ['backend.app:app', '--host', '127.0.0.1', '--port', '8001'],
-      { label: 'backend' }
-    ));
-  }
-
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if ((await requestOk(FRONTEND_URL)) && (await requestOk(`${BACKEND_URL}/health`))) {
-      return processes;
-    }
-    await sleep(250);
-  }
-  throw new Error('Timed out waiting for frontend/backend services.');
-};
 
 const runImage = async (page, row, options = {}) => page.evaluate(async ({ filename, options: browserOptions }) => {
   window.__jarvisOcrSelectionLogs = [];

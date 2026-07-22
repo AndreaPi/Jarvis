@@ -266,6 +266,70 @@ const openAppAndUploadImage = async (page) => {
   await page.setInputFiles('#photo-input', TEST_IMAGE_UPLOAD);
 };
 
+test('clears the previous reading and email draft when the photo changes', async ({ page }) => {
+  await openAppAndUploadImage(page);
+
+  await page.locator('#reading-input').fill('2311');
+  await expect(page.locator('#body-input')).toHaveValue(/Lettura: 2311/);
+
+  await page.setInputFiles('#photo-input', {
+    ...TEST_IMAGE_UPLOAD,
+    name: 'replacement-meter-fixture.svg'
+  });
+
+  await expect(page.locator('#reading-input')).toHaveValue('');
+  await expect(page.locator('#body-input')).toHaveValue(/Lettura: ____/);
+  await expect(page.locator('#body-input')).not.toHaveValue(/Lettura: 2311/);
+  await expect(page.locator('#send-btn')).not.toHaveAttribute('data-gmail-url', /2311/);
+});
+
+test('ignores an OCR result when its photo has been replaced', async ({ page }) => {
+  await installDigitClassifierMock(page, { digits: ['2', '3', '1', '1'], confidence: 0.98 });
+  await installDigitStripReaderMock(page, { value: '2311', confidence: 0.99 });
+  await installDigitStripReader23xxMock(page, { value: '2311', accepted: true });
+
+  let markRoiStarted;
+  const roiStarted = new Promise((resolve) => {
+    markRoiStarted = resolve;
+  });
+  let releaseRoi;
+  const roiRelease = new Promise((resolve) => {
+    releaseRoi = resolve;
+  });
+  await page.route('**/roi/detect', async (route) => {
+    markRoiStarted();
+    await roiRelease;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: {
+        'access-control-allow-origin': '*'
+      },
+      body: successPayload
+    });
+  });
+
+  await openAppAndUploadImage(page);
+  await page.getByRole('button', { name: 'Read meter' }).click();
+  await roiStarted;
+
+  await page.setInputFiles('#photo-input', {
+    ...TEST_IMAGE_UPLOAD,
+    name: 'replacement-meter-fixture.svg'
+  });
+  await expect(page.getByRole('button', { name: 'Read meter' })).toBeEnabled();
+  await expect(page.locator('#ocr-status')).toContainText('Photo ready. Click "Read meter".');
+
+  releaseRoi();
+  await page.waitForFunction(() => (window.__jarvisOcrSelectionLogs || []).length > 0);
+  await page.waitForTimeout(100);
+
+  await expect(page.locator('#reading-input')).toHaveValue('');
+  await expect(page.locator('#body-input')).toHaveValue(/Lettura: ____/);
+  await expect(page.locator('#send-btn')).not.toHaveAttribute('data-gmail-url', /2311/);
+  await expect(page.locator('#ocr-status')).toContainText('Photo ready. Click "Read meter".');
+});
+
 const waitForDebugStages = async (page, stageNames) => {
   await page.waitForFunction((names) => {
     const session = document.querySelector('.debug-session');

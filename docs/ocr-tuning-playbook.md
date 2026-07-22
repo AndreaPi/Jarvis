@@ -7,8 +7,8 @@ Current baseline policy:
 - Use the latest UI **Run test set** histogram as source of truth (`window.__jarvisLastTestSetHistogram`).
 - Treat fixed numeric snapshots as historical only; they go stale quickly as thresholds/ranking change.
 - Evaluation uses `MAE` as the primary promotion signal; `Exact Match` and `No-read` are guardrails.
-- The active local test-set CSV is `assets/meter_readings.csv`, currently `33` images after the June 2026 ROI ingestion through `meter_20260612.JPEG`.
-- Current promoted ROI + restored promoted per-cell classifier baseline, measured June 12, 2026: `MAE 111.75`, `Exact Match 11/33`, `No-read 1/33`.
+- The active local test-set CSV is `assets/meter_readings.csv`, currently `34` images after ROI ingestion through `meter_20260628.JPEG`.
+- Current promoted ROI + restored promoted per-cell classifier baseline, rechecked July 22, 2026: `MAE 108.76`, `Exact Match 11/34`, `No-read 1/34`.
 - Historical May 29, 2026 ranker-on/ranker-off control on the then-29-image corpus: ranker-on `MAE 166.07`, `Exact Match 10/29`, `No-read 1/29`; ranker-off `MAE 166.57`, `Exact Match 10/29`, `No-read 1/29`. The ranker remains enabled because it slightly improved `MAE` without worsening guardrails on that corpus.
 - Re-run the UI `Run test set` before treating any metric as the current promotion target.
 - `meter_20260112.JPEG`, `meter_20260113.jpg`, and `meter_20260219.JPEG` are intentionally removed from the active raw/test/training corpus because their visible readings are ambiguous.

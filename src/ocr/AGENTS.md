@@ -13,6 +13,7 @@
 - Edge-derived candidate generation is enabled by default and can be toggled with `OCR_CONFIG.roiDeterministic.useEdgeCandidates`.
 - The primary classifier shortlist now mixes high-ranked edge and base strip candidates so valid full-strip rotations are not starved behind edge-only passes.
 - Opposite-orientation retry is disabled by default (`roiDeterministic.tryOppositeOrientation=false`).
+- Generic canvas/runtime crop helpers intersect requested rectangles with image bounds. Classifier cell splitting intentionally preserves the historical boundary geometry used to train the promoted checkpoint; changing that geometry requires a full UI benchmark.
 - The default ROI checkpoint is `backend/models/roi-rotaug-e30-640.pt`, refreshed on June 9, 2026 after the retrained ROI detector won the end-to-end OCR gate.
 
 ## Debug Overlay Semantics
@@ -23,13 +24,13 @@
 - Diff artifacts and benchmark reports should use the last `6. OCR input candidate` frame as the selected OCR input snapshot.
 
 ## Active Benchmark Baseline
-- Current UI test-set surface is `assets/meter_readings.csv`, currently `33` images after the June 2026 ROI ingestion through `meter_20260612.JPEG`.
-- Current promoted ROI + restored promoted per-cell classifier baseline, rechecked June 12, 2026:
-  - UI production test-set run: `MAE 111.75`, `Exact Match 11/33`, `No-read 1/33`
-  - New `meter_20260612.JPEG` row: expected `2339`, selected `2304` from `roi-90-base-roi` (absolute error `35`)
-  - Previous 31-image ROI checkpoint diff surface before the June 10/12 ingestions: `MAE 106.83`, `Exact Match 11/31`, `No-read 1/31`
+- Current UI test-set surface is `assets/meter_readings.csv`, currently `34` images after the ROI ingestion through `meter_20260628.JPEG`.
+- Current promoted ROI + restored promoted per-cell classifier baseline, rechecked July 22, 2026:
+  - UI production test-set run: `MAE 108.76`, `Exact Match 11/34`, `No-read 1/34`
+  - Newest `meter_20260628.JPEG` row: expected `2345`, selected `2332` (absolute error `13`)
+  - Previous 31-image ROI checkpoint diff surface before the June 10/12/28 ingestions: `MAE 106.83`, `Exact Match 11/31`, `No-read 1/31`
   - Previous ROI checkpoint on that 31-image run: `MAE 388.00`, `Exact Match 11/31`, `No-read 1/31`
-  - `npm run test:e2e`: passes (`7/7`)
+  - `npm run test:e2e`: passes (`14/14`)
 - Historical restored per-cell classifier baseline with the conservative geometry ranker, measured May 29, 2026:
   - UI test set: `MAE 166.07`, `Exact Match 10/29`, `No-read 1/29`
   - Same-corpus ranker-off control: `MAE 166.57`, `Exact Match 10/29`, `No-read 1/29`
@@ -43,6 +44,7 @@
 - Test-set review should inspect `Detected`, `Absolute Error`, `Failure Reason`, stages `5/6/7/8`, `selectionLog.stripReader`, and `selectionLog.stripReader23xx`.
 - `npm run benchmark:roi-diff` remains the standard checkpoint comparison workflow.
 - The benchmark requires `backend/models/roi-rotaug-e30-640.pt`, `backend/models/roi.pt`, `backend/models/digit_classifier.pt`, and `backend/models/digit_strip_reader.pt` to exist locally before it will start.
+- OCR QA runners fail fast unless the backend reports `roi_ready` and `digit_ready` with the canonical promoted ROI and digit-classifier checkpoints.
 - Keep a challenger out of the default path until it improves end-to-end OCR, not just detection presence.
 
 ## Current Focus
