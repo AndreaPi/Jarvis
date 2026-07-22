@@ -87,7 +87,10 @@ if [[ ! -s "$MANIFEST_PATH" ]]; then
 fi
 
 tar -czf "$ARCHIVE_PATH" -T "$MANIFEST_PATH"
-sha256sum "$ARCHIVE_PATH" > "$CHECKSUM_PATH"
+(
+  cd "$OUTPUT_ROOT"
+  sha256sum "$(basename "$ARCHIVE_PATH")" > "$(basename "$CHECKSUM_PATH")"
+)
 cp "$MANIFEST_PATH" "${ARCHIVE_PATH%.tar.gz}.manifest.txt"
 
 echo "Created archive: $ARCHIVE_PATH"
