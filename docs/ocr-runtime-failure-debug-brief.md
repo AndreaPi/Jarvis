@@ -9,7 +9,7 @@ Create a focused starting point for the next OCR runtime-failure debugging pass.
 | Area | Evidence | Working read |
 | --- | --- | --- |
 | Active OCR path | Neural ROI is mandatory; digit-classifier inference is mandatory; whole-strip readers remain shadow-only. | Debugging should stay on ROI candidate selection, strip normalization, cell splits, and primary classifier inputs. |
-| Benchmark baseline | Current promoted ROI + restored per-cell classifier surface, rechecked July 22, 2026 after ingesting through `meter_20260628.JPEG`: `MAE 108.76`, `Exact Match 11/34`, `No-read 1/34`. The June 9 ROI checkpoint diff surface before the June 10/12/28 ingestions was `MAE 106.83`, `Exact Match 11/31`, `No-read 1/31`; the previous ROI checkpoint on that 31-image surface was `MAE 388.00`, `Exact Match 11/31`, `No-read 1/31`. | The June 9 ROI checkpoint promotion remains valid; remaining high-impact failures are mostly crop/split/selection problems, not ROI detection misses. |
+| Benchmark baseline | The live test surface is `assets/meter_readings.csv`. The latest verified promoted ROI + restored per-cell classifier benchmark is the 34-image run from July 22, 2026: `MAE 108.76`, `Exact Match 11/34`, `No-read 1/34`; the CSV has changed since that snapshot. The June 9 ROI checkpoint diff surface before the June 10/12/28 ingestions was `MAE 106.83`, `Exact Match 11/31`, `No-read 1/31`; the previous ROI checkpoint on that 31-image surface was `MAE 388.00`, `Exact Match 11/31`, `No-read 1/31`. | The June 9 ROI checkpoint promotion remains valid; establish a fresh full-surface UI baseline before judging another promotion. Remaining high-impact failures are mostly crop/split/selection problems, not ROI detection misses. |
 | Selected failure taxonomy | `right_truncated`: 5, `overwide_split`: 4, `classifier_or_local_split`: 2, plus one each of `overwide_rotated_split`, `overwide_blurry_split`, `degenerate_rotated`, and `degenerate_no_digits`. | The dominant failures are upstream geometry/cropping issues, not isolated digit-classifier misses. |
 | Debug summaries | `output/debug-stage-inspection/summary.json` covers 7 rows; selected sources are `roi-90-base-roi` for 6 rows and `roi-90-edge-roi` for 1 row. Reject summaries include `classifier-edge-candidate-selected`: 14 and `classifier-missing-cell-digit`: 1. | Candidate selection is producing rejected edge alternatives and mostly selecting base ROI variants in the inspected subset. |
 | Guardrails | `src/ocr/AGENTS.md` says to run both `npm run test:e2e` and the UI `Run test set` before treating OCR changes as promotable. | Any code change should be judged by UI-set `MAE`, with exact match and no-read as guardrails. |
@@ -63,7 +63,7 @@ Candidate checks worth testing:
 npm run test:e2e
 ```
 
-Then run the UI `Run test set` with the debug overlay enabled. Promotion requires improved `MAE` without exact-match or no-read regressions against the active 34-image baseline.
+Then run the UI `Run test set` with the debug overlay enabled. First establish a fresh baseline on the live CSV; promotion requires improved `MAE` without exact-match or no-read regressions on that same surface. Treat the 34-image July 22 result only as the latest verified historical reference.
 
 ## Open Questions
 

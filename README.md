@@ -272,6 +272,6 @@ CI runs the Chromium Playwright suite on every pull request and on pushes to `ma
 ## Asset Naming (Meter Images)
 - Use the EXIF `DateTimeOriginal` value as the source of truth for the acquisition date.
 - Rename JPEG/PNG files to `meter_yyyymmdd` (zero-padded) and keep the original extension.
-- Convert HEIC/HEIF imports to canonical JPEGs named `meter_yyyymmdd.JPEG`, verify the converted JPEG opens, then delete the original HEIC/HEIF file instead of tracking it in DVC.
+- Fully decode HEIC/HEIF imports with the backend Pillow + `pillow-heif` environment before conversion; metadata-only iCloud placeholders must stop the import without deleting the source. Convert valid inputs to canonical JPEGs named `meter_yyyymmdd.JPEG`, fully load and verify the JPEG, then delete the original HEIC/HEIF instead of tracking it in DVC.
 - If multiple images share the same date, keep one as-is and add numeric suffixes to the rest (e.g., `_1`, `_2`).
 - If EXIF is missing, prefer a known date from the filename or capture notes and document it.

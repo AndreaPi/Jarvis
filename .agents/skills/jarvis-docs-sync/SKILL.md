@@ -47,6 +47,7 @@ Check linked local images or generated diagrams when their source description ch
    - Look for stale commands, ports, file paths, model names, dataset counts, workflow steps, artifact-retention rules, and benchmark expectations.
    - Use `rg` to find repeated claims across docs before editing.
    - Separate active claims from dated history. Keep historical benchmark snapshots intact when they are clearly dated or described as `then-current`; update wording that incorrectly presents an old snapshot as current.
+   - Do not hard-code volatile active corpus or split counts in operational docs when they can be derived from manifests. Keep exact counts only when they are part of a dated benchmark/result or a stable invariant.
 
 3. Update only what is actually stale.
    - Do not rewrite docs for style alone.

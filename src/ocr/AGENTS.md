@@ -24,10 +24,10 @@
 - Diff artifacts and benchmark reports should use the last `6. OCR input candidate` frame as the selected OCR input snapshot.
 
 ## Active Benchmark Baseline
-- Current UI test-set surface is `assets/meter_readings.csv`, currently `34` images after the ROI ingestion through `meter_20260628.JPEG`.
-- Current promoted ROI + restored promoted per-cell classifier baseline, rechecked July 22, 2026:
+- The current UI test-set surface is always the live `assets/meter_readings.csv`; do not hard-code its changing row count here.
+- The latest verified promoted ROI + restored promoted per-cell classifier benchmark is the 34-image run from July 22, 2026. The live CSV has changed since that snapshot, so rerun the full UI test set before refreshing the active metric target:
   - UI production test-set run: `MAE 108.76`, `Exact Match 11/34`, `No-read 1/34`
-  - Newest `meter_20260628.JPEG` row: expected `2345`, selected `2332` (absolute error `13`)
+  - Then-newest `meter_20260628.JPEG` row: expected `2345`, selected `2332` (absolute error `13`)
   - Previous 31-image ROI checkpoint diff surface before the June 10/12/28 ingestions: `MAE 106.83`, `Exact Match 11/31`, `No-read 1/31`
   - Previous ROI checkpoint on that 31-image run: `MAE 388.00`, `Exact Match 11/31`, `No-read 1/31`
   - `npm run test:e2e`: passes (`14/14`)
