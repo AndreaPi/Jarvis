@@ -9,6 +9,8 @@ Execute this workflow from the Jarvis repository root.
 
 Use `backend/.venv` for any Python step in this workflow. Do not rely on the system Python for CV or image dependencies such as `ultralytics` or `Pillow`.
 
+Run mutating command sequences fail-fast. Use separate checked commands or `set -euo pipefail`; never let rename, conversion, validation, deletion, dataset rebuild, or DVC steps continue after an earlier failure. Record `git status --short` before starting and leave unrelated Git or DVC changes untouched.
+
 ## Workflow
 
 1. Remove Windows sidecars every run.
@@ -25,10 +27,13 @@ Use `backend/.venv` for any Python step in this workflow. Do not rely on the sys
 3. Normalize each candidate from capture metadata.
    - For JPEG/PNG, read EXIF when available: `identify -format '%[EXIF:DateTimeOriginal]\n' assets/<file>`.
    - If `identify` is unavailable on macOS, use `sips -g creation assets/<file>` as a fallback capture timestamp.
+   - Before renaming or converting, force a full pixel decode with `backend/.venv` Pillow. For HEIC/HEIF, register the `pillow-heif` opener and call `load()`; metadata and dimensions reported by `sips` are not proof that an iCloud-backed file contains image pixels.
+   - If full decode fails, stop and keep the source file. Ask the user to download/export the original again. With explicit approval, searching and exporting the matching original from Photos is an acceptable recovery path.
    - Rename JPEG/PNG to `meter_yyyymmdd` while preserving extension/case.
-   - Convert HEIC/HEIF to a canonical JPEG named `meter_yyyymmdd.JPEG`. Use `backend/.venv` plus `pillow-heif` for conversion if macOS tooling cannot produce a normal JPEG that Pillow can reopen.
+   - Convert HEIC/HEIF to a canonical JPEG named `meter_yyyymmdd.JPEG` with `backend/.venv` Pillow plus `pillow-heif`; prefer this over `sips` so orientation is applied consistently.
+   - Write conversion output to a temporary sibling file. Reopen it with Pillow, call `load()`, and verify positive dimensions before atomically replacing the canonical target.
    - If target exists, append `_1`, `_2`, `_3`, ...
-   - After HEIC/HEIF conversion, verify the target JPEG exists and can be opened by `backend/.venv` Pillow, then immediately delete the original HEIC/HEIF file from `assets/`.
+   - Delete the original HEIC/HEIF from `assets/` only after the canonical target passes full pixel validation. A failed conversion or validation must leave the source untouched.
    - Treat HEIC/HEIF deletion as required cleanup, not a review gate. If the execution environment requires explicit approval for `rm`, request that approval immediately and continue deletion as soon as it is granted.
    - Never write HEIC/HEIF filenames to `assets/meter_readings.csv`, `backend/data/roi_boxes_manifest.json`, or DVC metadata; use the converted JPEG filename everywhere downstream.
 
@@ -66,14 +71,13 @@ Use `backend/.venv` for any Python step in this workflow. Do not rely on the sys
    - Upsert the converted entry in `backend/data/roi_boxes_manifest.json`:
      - `{"filename": "meter_YYYYMMDD.JPEG", "rectNorm": {"x": ..., "y": ..., "width": ..., "height": ...}}`
    - Move each consumed TXT label from `assets/` to `backend/data/roi_dataset/labels/train/<stem>.txt`.
+   - Run label validation and moves from the repository root, or use absolute paths. Do not rely on a `cd backend` from an earlier command.
    - Do not rebuild the ROI dataset until every image in the new batch has a matching manifest entry.
    - Keep `backend/data/roi_boxes_manifest.json` as the source of truth; generated label files must stay aligned with it after rebuild.
    - Do not use the old external `jarvis-roi-dataset-sync` helper path; the repo now expects `backend/build_roi_dataset.py` with a manifest input.
 
 8. Rebuild the ROI dataset from the current CSV + ROI manifest.
-   - `cd /Users/andrea/GitHubRepositories/Jarvis/backend` or `cd backend` from the repo root.
-   - `source .venv/bin/activate`
-   - `python build_roi_dataset.py --roi-json <path-to-roi-json>`
+   - From the repository root, run `backend/.venv/bin/python backend/build_roi_dataset.py --roi-json backend/data/roi_boxes_manifest.json`.
    - The builder persists split assignments in `backend/data/roi_dataset/splits.json`.
    - Existing images keep their assigned split; new images default to `train` unless you edit `splits.json`.
    - The builder updates the ROI dataset to match the CSV + manifest without recomputing old splits from CSV order.
@@ -81,7 +85,7 @@ Use `backend/.venv` for any Python step in this workflow. Do not rely on the sys
 
 9. Review generated ROI previews.
    - Check `backend/data/roi_dataset/previews/*_bbox.jpg` for quick bounding-box QA.
-   - Re-render full QA overlays with `cd backend && source .venv/bin/activate && python visualize_roi_labels.py`.
+   - Re-render full QA overlays from the repository root with `backend/.venv/bin/python backend/visualize_roi_labels.py`.
    - Review outputs under `backend/data/roi_dataset/qa_previews/`.
    - Explicitly prompt the user to inspect the new image overlays before treating the labels as training-ready.
    - Do not continue to DVC push, final summary, commit, or promotion language until the user either approves the labels or asks for corrections.
@@ -96,11 +100,12 @@ Use `backend/.venv` for any Python step in this workflow. Do not rely on the sys
    - After the user approves the corrected overlay, scan for stray `:Zone.Identifier` files under `backend/data/roi_dataset/` and delete them before continuing.
 
 11. Refresh DVC-tracked artifacts.
-   - Run `dvc add backend/data/roi_dataset/images`
-   - Run `dvc add assets/<new-meter-file>` for each newly ingested canonical photo.
+   - Run `backend/.venv/bin/python -m dvc add backend/data/roi_dataset/images`.
+   - Run `backend/.venv/bin/python -m dvc add assets/<new-meter-file>` for each newly ingested canonical photo.
    - For Mac/iCloud imports, DVC-track the converted `meter_YYYYMMDD.JPEG`, not the original `IMG_*.HEIC`/`IMG_*.HEIF`.
    - If DVC tries to use an unwritable system cache such as `/Library/Caches/dvc`, rerun with `DVC_SITE_CACHE_DIR=/tmp/dvc-site-cache`.
    - Run `scripts/dvc-push-safe.sh` only with a configured off-machine remote. The guard refuses plain local paths and `file://` URLs.
+   - Push only the updated pointers for this batch, then run target-specific `dvc status` on those pointers. A global DVC status may expose unrelated dirty outputs; report them but do not repair or include them.
    - Only do this after the user has approved the ROI overlays for the new image(s).
 
 12. Validate and summarize.
@@ -114,6 +119,8 @@ Use `backend/.venv` for any Python step in this workflow. Do not rely on the sys
      - ROI dataset rows/images rebuilt
      - preview images regenerated
      - final label files updated
+     - DVC pointers pushed and their target-specific status
+     - unrelated pre-existing Git or DVC changes, if any
      - whether the user explicitly approved the new ROI labels or whether further Make Sense correction is still pending
 
 ## Command Snippets
@@ -127,9 +134,11 @@ Use `backend/.venv` for any Python step in this workflow. Do not rely on the sys
 - CSV to file consistency:
   - `awk -F, 'NR>1 {print $1}' assets/meter_readings.csv | while read -r f; do [ -f "assets/$f" ] || echo "missing: $f"; done`
 - Rebuild ROI dataset:
-  - `cd backend && source .venv/bin/activate && python build_roi_dataset.py --roi-json /absolute/path/to/roi_boxes.json`
+  - `backend/.venv/bin/python backend/build_roi_dataset.py --roi-json backend/data/roi_boxes_manifest.json`
 - Re-render ROI QA overlays:
-  - `cd backend && source .venv/bin/activate && python visualize_roi_labels.py`
+  - `backend/.venv/bin/python backend/visualize_roi_labels.py`
+- Check only the DVC targets updated in the current batch:
+  - `backend/.venv/bin/python -m dvc status <updated-pointer.dvc> [...]`
 
 ## Notes
 
