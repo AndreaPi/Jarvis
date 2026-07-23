@@ -17,6 +17,28 @@ Jarvis is a lightweight personal assistant web app. The first module helps you r
 - Open a Gmail draft or use a mailto fallback.
 - Run a built-in OCR test set table with `Detected`, `Absolute Error`, and `Failure Reason` columns plus MAE/exact-match/no-read summary stats.
 
+## One-click use on macOS
+
+After the backend environment and promoted model files have been installed:
+
+1. Double-click `start-jarvis.command` in Finder.
+2. Wait for Jarvis to open in the default browser.
+3. Upload the meter photo, verify or correct the reading, and prepare the email.
+4. Double-click `stop-jarvis.command` when finished.
+
+The launcher keeps both services on `127.0.0.1`, verifies all four promoted model
+checkpoints through the backend health check, and only stops processes that it
+started and can identify. If startup fails, the Terminal window stays open with
+the reason and the local log location.
+
+The same controls are available from a terminal:
+
+```bash
+npm run jarvis:start
+npm run jarvis:status
+npm run jarvis:stop
+```
+
 ## Local Development
 1. Ensure Python 3, `uv`, and Node.js are installed.
 2. Run the dev server:
@@ -211,7 +233,7 @@ npm run test:backend
 npm run test:e2e
 ```
 
-The script suite covers QA service/checkpoint guards plus DVC and artifact-packaging safety. The backend suite covers API image handling, ROI dataset behavior, and runtime crop geometry. Playwright covers UI state, neural-ROI failure handling, and OCR selection guard regressions.
+The script suite covers the one-click launcher safety checks, QA service/checkpoint guards, DVC safety, and artifact packaging. The backend suite covers API image handling, ROI dataset behavior, and runtime crop geometry. Playwright covers UI state, neural-ROI failure handling, and OCR selection guard regressions.
 
 Generate a per-image ROI checkpoint comparison report (`roi-rotaug-e30-640.pt` vs `roi.pt`) with stage `5/6` debug snapshots:
 

@@ -20,9 +20,12 @@
 - `assets/`: Static assets and example uploads.
 
 ## Build, Test, and Development Commands
+- `npm run jarvis:start`: Start the local frontend and canonical OCR backend, verify readiness, and open Jarvis.
+- `npm run jarvis:status`: Report whether both local Jarvis services are ready.
+- `npm run jarvis:stop`: Stop only the local services created by the Jarvis launcher.
 - `npm run serve`: Start the local web server on port `8000`.
 - `npm run dev`: Alias of `npm run serve`.
-- `npm run test:scripts`: Run tests for QA service guards and artifact/DVC safety scripts.
+- `npm run test:scripts`: Run launcher, QA service guard, and artifact/DVC safety tests.
 - `npm run test:backend`: Run backend API, ROI dataset, and runtime crop unit tests.
 - `npm run test:e2e`: Run Playwright end-to-end tests.
 - `npm run benchmark:roi-diff`: Generate ROI checkpoint diff artifacts.
