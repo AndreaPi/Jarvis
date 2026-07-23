@@ -1,28 +1,28 @@
 {
-  "windows_processed": 29,
-  "sections_exported": 116,
+  "windows_processed": 36,
+  "sections_exported": 144,
   "windows_skipped": 0,
   "section_count": 4,
   "splits": {
-    "train": 28,
+    "train": 35,
     "val": 0,
     "test": 1
   },
   "source_axis_counts": {
     "x": 3,
-    "y": 26
+    "y": 33
   },
   "canonical_axis_counts": {
-    "x": 29,
+    "x": 36,
     "y": 0
   },
   "applied_rotation_counts": {
     "0": 1,
-    "90": 25,
+    "90": 32,
     "180": 2,
     "270": 1
   },
-  "deskewed_count": 3,
+  "deskewed_count": 4,
   "dataset_dir": "/Users/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset",
   "windows_manifest": "/Users/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset/manifests/windows.csv",
   "direction_overrides": "/Users/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset/manifests/direction_overrides.csv",

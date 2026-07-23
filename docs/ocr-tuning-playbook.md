@@ -8,7 +8,7 @@ Current baseline policy:
 - Treat fixed numeric snapshots as historical only; they go stale quickly as thresholds/ranking change.
 - Evaluation uses `MAE` as the primary promotion signal; `Exact Match` and `No-read` are guardrails.
 - The active local test-set surface is always the live `assets/meter_readings.csv`; derive its changing row count from the file rather than hard-coding it in this playbook.
-- The latest verified promoted ROI + restored promoted per-cell classifier benchmark is the 34-image run from July 22, 2026: `MAE 108.76`, `Exact Match 11/34`, `No-read 1/34`. The live CSV has changed since that snapshot; rerun the full UI test set before treating a numeric snapshot as the active promotion target.
+- The latest verified promoted ROI + restored promoted per-cell classifier benchmark is the 36-image run from July 23, 2026: `MAE 104.71`, `Exact Match 11/36`, `No-read 1/36`. A standardized same-run ROI diff measured the same promoted stack at `MAE 103.83`, so use paired runs when small runtime variance matters.
 - Historical May 29, 2026 ranker-on/ranker-off control on the then-29-image corpus: ranker-on `MAE 166.07`, `Exact Match 10/29`, `No-read 1/29`; ranker-off `MAE 166.57`, `Exact Match 10/29`, `No-read 1/29`. The ranker remains enabled because it slightly improved `MAE` without worsening guardrails on that corpus.
 - Re-run the UI `Run test set` before treating any metric as the current promotion target.
 - `meter_20260112.JPEG`, `meter_20260113.jpg`, and `meter_20260219.JPEG` are intentionally removed from the active raw/test/training corpus because their visible readings are ambiguous.
@@ -23,14 +23,15 @@ Digit dataset status (current workflow):
 - Synthetic generation remains train-only (`sections_synthetic/train`) and is mixed into training with `--synthetic-target-ratio`.
 - As of May 27, 2026, the digit dataset intentionally has no validation split: `meter_20260323.JPEG` moved into train, while `meter_20260327.JPEG` remains a fixed hard test holdout. Use grouped source-image CV on the train pool for model experiments; the fixed test image is a historical diagnostic, not a promotion gate.
 
-## Immediate Next Steps (May 29, 2026)
+## Immediate Next Steps (July 23, 2026)
 
 1. Keep the whole-strip reader shadow-only until its exact-match rate and `MAE` beat the current per-cell primary path.
-2. Treat the May 4, 2026 canonical strip-window QA pass as accepted for the 23-image digit-training corpus: all retained strips are readable and label-consistent, even when some crops are not tightly framed.
-3. Do not promote the retrained four-head strip reader. After retraining on the accepted canonical windows, the UI primary path remained at `MAE 71.77`, `Exact Match 9/23`, `No-read 1/23`, and focused strip-runtime QA on `meter_20260327.JPEG` plus April captures produced only `1/7` exact strip-shadow matches.
-4. Keep the restored promoted per-cell digit classifier as the safety baseline. A May 24, 2026 fine-tune challenger using clean + curated-runtime-failure cells failed the then-28-image UI gate (`MAE 139.11`, `Exact Match 3/28`, `No-read 1/28`) versus the restored baseline with the conservative geometry ranker (`MAE 61.22`, `Exact Match 10/28`, `No-read 1/28`).
-5. Keep the first house-specific `23xx` constrained strip-reader checkpoint shadow-only. It is diagnostic-only: cross-validation looked conservative (`0` guard false positives, `19` guard false negatives), but runtime QA still found accepted wrong predictions. Lowering the guard from `0.98` to `0.80` accepted more wrong values, so threshold tuning is not enough.
-6. Verify each OCR tuning change on the full test set with `MAE` + guardrails (`Exact Match`, `No-read`) before keeping it.
+2. Treat the July 23 canonical strip-window QA pass as accepted for the 36-image digit corpus. The seven new June/July sources are readable and label-consistent, including their transition-wheel states.
+3. Do not promote the July four-head strip-reader fine-tune. Focused runtime QA remained `1/7` exact and the fixed hard holdout remained `0/1` exact.
+4. Keep the restored promoted per-cell digit classifier as the safety baseline. The July clean + balanced-synthetic fine-tune improved grouped CV from `48.6%` to `67.9%`, then failed the 36-image UI gate at `MAE 3063.31`, `Exact Match 0/36`, `No-read 1/36`.
+5. Keep the existing `23xx` checkpoint shadow-only and reject the July retrain. Its CV produced `0` guard false positives, `33` false negatives, and no accepted predictions; focused runtime QA also accepted none.
+6. Keep the June 9 ROI checkpoint promoted. The July retrain reduced readable-row `MAE` from `103.83` to `75.50`, but exact match fell from `11/36` to `8/36` and no-read rose from `1/36` to `12/36`.
+7. Verify each OCR tuning change on the full test set with `MAE` + guardrails (`Exact Match`, `No-read`) before keeping it.
 
 ## Goals
 
@@ -239,7 +240,7 @@ Focus:
 - Compare `selectionLog.stripReader.value` and `selectionLog.stripReader23xx` to expected readings and selected classifier readings.
 - Watch whether stage `8` receives a visually plausible full strip before blaming the model.
 - Retrain after canonical windows change, then judge promotion only with the UI test set.
-- The May 4, 2026 four-head retrain is a shadow baseline, not a promotion candidate; use it to study candidate source behavior and as a comparison point for constrained-reader experiments.
+- The July 23, 2026 four-head fine-tune is also a rejected shadow challenger: focused runtime QA remained `1/7` exact. Keep the promoted shadow checkpoint as the comparison baseline.
 
 House-specific `23xx` shortcut:
 
@@ -247,7 +248,7 @@ House-specific `23xx` shortcut:
 - This is a deliberate local shortcut for the current home water meter, not a general OCR assumption.
 - Review the assumption at least yearly, immediately if readings approach `2390`, and before reusing Jarvis for another meter.
 - The default guard threshold is `0.98`; false positives are the dangerous failure mode, so tune for near-zero false positives even if recall is poor.
-- The May 4, 2026 checkpoint persists the fixed prefix in config/checkpoint metadata and keeps the unconstrained four-head reader benchmark available. It is not promotion-ready because runtime suffix predictions are unreliable, and lowering the guard threshold mostly accepts more wrong values.
+- The promoted May 4 checkpoint persists the fixed prefix in config/checkpoint metadata and keeps the unconstrained four-head reader benchmark available. The July 23 retrain was worse (`33` CV false negatives and no accepted predictions), while lowering the guard threshold previously accepted more wrong values.
 
 ### 4) Acceptance/Support Guardrails
 
@@ -278,6 +279,13 @@ Recent test-set verification showed no `invalid-geometry` failures.
   - `window.__jarvisOcrSelectionLogs`
 - Last run histogram:
   - `window.__jarvisLastTestSetHistogram`
+
+## July 23, 2026 Retraining Decision
+
+- ROI report: `output/roi-checkpoint-diff/20260723-000715-neural-digit/roi-diff-report.md`; challenger rejected on exact-match and no-read guardrails.
+- Digit grouped CV: `backend/runs/digit-classifier-cv-jul36/digit_classifier_finetune_cv_summary.json`; the CV-winning recipe failed the UI promotion gate.
+- Strip QA: `output/strip-runtime-qa/20260723-001010/summary.json`; the unconstrained challenger stayed at `1/7` exact and the constrained challenger accepted none.
+- Production checkpoints under `backend/models/` were left unchanged. The accepted 36-source digit manifests and DVC pointers were refreshed locally.
 
 ## Commit Checklist (OCR Changes)
 

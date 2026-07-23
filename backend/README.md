@@ -190,6 +190,8 @@ python train_digit_classifier.py \
 
 May 24, 2026 recovery result: grouped CV improved from restored baseline `51.8%` per-cell accuracy to clean-only `61.6%` and clean + curated-runtime-failure `66.1%`, but the final challenger failed the then-28-image UI promotion gate (`3/28` exact, `MAE 139.11`, `1` no-read) versus the restored checkpoint with the conservative geometry ranker (`10/28` exact, `MAE 61.22`, `1` no-read). The promoted checkpoint therefore remains `backend/models/digit_classifier.pt`. The active UI baseline is tracked in `src/ocr/AGENTS.md` and `docs/ocr-tuning-playbook.md`; May 2026 numbers are historical snapshots only.
 
+July 23, 2026 recovery result: after expanding the digit manifests to `36` sources, clean + balanced-synthetic fine-tuning improved grouped source-image CV from `48.6%` for the restored checkpoint to `67.9%`, but failed the 36-image UI gate (`0/36` exact, `MAE 3063.31`, `1` no-read). This is further evidence that clean-section CV does not represent browser runtime crop behavior; keep the restored checkpoint promoted.
+
 ## Train the whole-strip shadow reader
 
 This trains a fixed four-head CNN on canonical ROI windows (`data/digit_dataset/windows_canonical`) and writes:
@@ -205,6 +207,8 @@ python train_strip_digit_reader.py --device cpu
 
 The trainer letterboxes canonical windows to `520x160` so horizontal digit geometry is preserved. When validation has too few samples for reliable checkpoint selection, the default `--selection-split auto` falls back to train-set selection and leaves the UI test set as the promotion gate.
 
+The July 23, 2026 fine-tune on the expanded `35`-source train split remained `0/1` exact on the fixed hard holdout and only `1/7` exact in focused runtime QA. It remains a rejected shadow challenger.
+
 ## Train the guarded `23xx` shadow reader
 
 This trains a house-specific constrained CNN on canonical ROI windows. It uses a binary guard for whether the second digit is `3`, then predicts only the final two suffix digits. It writes:
@@ -219,6 +223,8 @@ python train_strip_digit_reader_23xx.py --device cpu
 ```
 
 House-specific constrained-reader assumption: for this local water meter, the fixed prefix `23` is an intentional shortcut based on the expectation that the meter will remain below `2400` cubic meters while this project is used in this home. Review the assumption at least yearly or whenever readings approach `2390`. The reader stays shadow-only and only accepts a forced `23xx` value when its second-digit-is-`3` guard reaches the configured threshold. The first checkpoint is diagnostic-only: cross-validation looked conservative (`0` guard false positives, `19` guard false negatives), but runtime QA still found accepted wrong predictions. Lowering the guard from `0.98` to `0.80` accepted more wrong values, so threshold tuning is not enough.
+
+The July 23, 2026 retrain was rejected with `0` guard false positives, `33` false negatives, and no accepted CV or focused-runtime predictions at the `0.98` threshold. Keep the existing shadow checkpoint; do not infer that a lower threshold would be safer.
 
 Optional: generate synthetic **train-only** sections from real train patches, then mix real + synthetic in training.
 Val/test remain strictly real-only.

@@ -9,7 +9,7 @@ Create a focused starting point for the next OCR runtime-failure debugging pass.
 | Area | Evidence | Working read |
 | --- | --- | --- |
 | Active OCR path | Neural ROI is mandatory; digit-classifier inference is mandatory; whole-strip readers remain shadow-only. | Debugging should stay on ROI candidate selection, strip normalization, cell splits, and primary classifier inputs. |
-| Benchmark baseline | The live test surface is `assets/meter_readings.csv`. The latest verified promoted ROI + restored per-cell classifier benchmark is the 34-image run from July 22, 2026: `MAE 108.76`, `Exact Match 11/34`, `No-read 1/34`; the CSV has changed since that snapshot. The June 9 ROI checkpoint diff surface before the June 10/12/28 ingestions was `MAE 106.83`, `Exact Match 11/31`, `No-read 1/31`; the previous ROI checkpoint on that 31-image surface was `MAE 388.00`, `Exact Match 11/31`, `No-read 1/31`. | The June 9 ROI checkpoint promotion remains valid; establish a fresh full-surface UI baseline before judging another promotion. Remaining high-impact failures are mostly crop/split/selection problems, not ROI detection misses. |
+| Benchmark baseline | The live test surface is `assets/meter_readings.csv`. The latest verified promoted ROI + restored per-cell classifier benchmark is the 36-image run from July 23, 2026: `MAE 104.71`, `Exact Match 11/36`, `No-read 1/36`. A standardized paired ROI run measured the same promoted stack at `MAE 103.83`, `Exact Match 11/36`, `No-read 1/36`. The June 9 checkpoint diff surface before later ingestions was `MAE 106.83`, `Exact Match 11/31`, `No-read 1/31`; the previous ROI checkpoint on that 31-image surface was `MAE 388.00`, `Exact Match 11/31`, `No-read 1/31`. | The June 9 ROI checkpoint remains promoted after the July retrain failed exact-match and no-read guardrails. Remaining high-impact failures are mostly crop/split/selection problems, not ROI detection misses. |
 | Selected failure taxonomy | `right_truncated`: 5, `overwide_split`: 4, `classifier_or_local_split`: 2, plus one each of `overwide_rotated_split`, `overwide_blurry_split`, `degenerate_rotated`, and `degenerate_no_digits`. | The dominant failures are upstream geometry/cropping issues, not isolated digit-classifier misses. |
 | Debug summaries | `output/debug-stage-inspection/summary.json` covers 7 rows; selected sources are `roi-90-base-roi` for 6 rows and `roi-90-edge-roi` for 1 row. Reject summaries include `classifier-edge-candidate-selected`: 14 and `classifier-missing-cell-digit`: 1. | Candidate selection is producing rejected edge alternatives and mostly selecting base ROI variants in the inspected subset. |
 | Guardrails | `src/ocr/AGENTS.md` says to run both `npm run test:e2e` and the UI `Run test set` before treating OCR changes as promotable. | Any code change should be judged by UI-set `MAE`, with exact match and no-read as guardrails. |
@@ -63,7 +63,7 @@ Candidate checks worth testing:
 npm run test:e2e
 ```
 
-Then run the UI `Run test set` with the debug overlay enabled. First establish a fresh baseline on the live CSV; promotion requires improved `MAE` without exact-match or no-read regressions on that same surface. Treat the 34-image July 22 result only as the latest verified historical reference.
+Then run the UI `Run test set` with the debug overlay enabled. First establish a fresh baseline on the live CSV; promotion requires improved `MAE` without exact-match or no-read regressions on that same surface. The latest verified reference is the 36-image July 23 result.
 
 ## Open Questions
 
@@ -231,3 +231,14 @@ The June 28 capture is now canonical `assets/meter_20260628.JPEG`, present in `a
 - UI `Run test set` reported `MAE 108.76`, `Exact Match 11/34`, and `No-read 1/34`.
 - The newest row is a near miss: expected `2345`, selected `2332` (absolute error `13`).
 - Generic crop intersection was corrected during the codebase review, while classifier cell boundary geometry stayed unchanged after an A/B run showed that altering it regressed OCR. The final UI metrics therefore remain the pre-change baseline.
+
+## Execution Notes - 2026-07-23 Dataset Expansion And Rejected Retrains
+
+The digit workflow was rebuilt from all `36` canonical readings (`35` train, no validation split, and the fixed `meter_20260327.JPEG` hard test holdout). The seven June/July sources missing from the previous digit manifests were added, producing `140` real train cells and `1560` train-only synthetic cells. Visual QA accepted all seven new canonical strips and cell boundaries.
+
+- Fresh promoted-stack UI baseline: `MAE 104.71`, `Exact Match 11/36`, `No-read 1/36`; `npm run test:e2e` passed (`14/14`).
+- ROI challenger report: `output/roi-checkpoint-diff/20260723-000715-neural-digit/`. Its readable-row `MAE` improved from `103.83` to `75.50`, but exact match regressed from `11/36` to `8/36` and no-read regressed from `1/36` to `12/36`, so the June 9 checkpoint remains promoted.
+- Digit grouped CV without the geometry-corrupted runtime-failure pool improved from `48.6%` for the restored baseline to `67.9%` for clean + balanced-synthetic fine-tuning. The final challenger then failed the UI gate at `MAE 3063.31`, `Exact Match 0/36`, `No-read 1/36`, so the restored classifier remains promoted.
+- The unconstrained strip-reader fine-tune stayed at `1/7` exact on focused runtime QA and remained `0/1` exact on the fixed hard holdout.
+- The constrained `23xx` retrain produced `0` guard false positives, `33` false negatives, and no accepted CV predictions; focused runtime QA accepted none at the `0.98` threshold.
+- No production checkpoint under `backend/models/` changed. Digit manifests and DVC pointers were refreshed locally; the off-machine DVC push still requires explicit approval because it transmits meter-image-derived datasets.

@@ -25,9 +25,11 @@
 
 ## Active Benchmark Baseline
 - The current UI test-set surface is always the live `assets/meter_readings.csv`; do not hard-code its changing row count here.
-- The latest verified promoted ROI + restored promoted per-cell classifier benchmark is the 34-image run from July 22, 2026. The live CSV has changed since that snapshot, so rerun the full UI test set before refreshing the active metric target:
-  - UI production test-set run: `MAE 108.76`, `Exact Match 11/34`, `No-read 1/34`
-  - Then-newest `meter_20260628.JPEG` row: expected `2345`, selected `2332` (absolute error `13`)
+- The latest verified promoted ROI + restored promoted per-cell classifier benchmark is the 36-image run from July 23, 2026:
+  - UI production test-set run: `MAE 104.71`, `Exact Match 11/36`, `No-read 1/36`
+  - The one no-read remains `meter_20201111.JPEG` (`no-detection`)
+  - The standardized same-run ROI checkpoint comparison measured the promoted baseline at `MAE 103.83`, `Exact Match 11/36`, `No-read 1/36`; use same-run comparisons when small runtime variance matters
+  - Previous 34-image July 22 snapshot: `MAE 108.76`, `Exact Match 11/34`, `No-read 1/34`
   - Previous 31-image ROI checkpoint diff surface before the June 10/12/28 ingestions: `MAE 106.83`, `Exact Match 11/31`, `No-read 1/31`
   - Previous ROI checkpoint on that 31-image run: `MAE 388.00`, `Exact Match 11/31`, `No-read 1/31`
   - `npm run test:e2e`: passes (`14/14`)
@@ -49,16 +51,17 @@
 
 ## Current Focus
 1. Keep the restored promoted `backend/models/digit_classifier.pt` as the primary safety baseline.
-2. Treat the May 4, 2026 canonical-strip QA pass as accepted for the 23-image digit-training corpus; all retained strips are readable, with realistic crop-tightness variation.
-3. Keep the retrained four-head strip reader shadow-only. Its May 4, 2026 focused runtime QA on `meter_20260327.JPEG` plus April captures reached only `1/7` exact, so it is not a promotion candidate.
+2. Treat the July 23, 2026 canonical-strip QA pass as accepted for the 36-image digit corpus; the seven newly added June/July sources are readable and label-consistent, with realistic transition-wheel states.
+3. Keep the four-head strip reader shadow-only. The July 23 fine-tune on 35 train sources still reached only `1/7` exact on focused runtime QA, so it is not a promotion candidate.
 4. Use strip-reader shadow logs to compare whole-strip predictions by source against the current per-cell classifier, especially when deciding whether a future constrained reader should use selected-source or confidence-best candidates.
-5. Do not promote digit-classifier scratch retrains or clean-section-only fine-tunes unless they beat the restored checkpoint on the UI test set. A May 24, 2026 clean + curated-runtime-failure challenger improved grouped CV but failed the then-28-image UI gate (`MAE 139.11`, `Exact Match 3/28`, `No-read 1/28`).
-6. Keep the constrained `23xx` reader shadow-only. The first May 4, 2026 checkpoint is diagnostic-only: cross-validation looked conservative (`0` guard false positives, `19` guard false negatives), but runtime QA still found accepted wrong predictions. Lowering the guard from `0.98` to `0.80` accepted more wrong values, so threshold tuning is not enough.
-7. Use `npm run qa:cell-crops` to inspect candidate-family coverage before changing selection. The June 8, 2026 register-localization probe found expected readings only on already-covered rows, so it was rolled back; the retained report now includes non-readable candidates and expected-hit family counts.
-8. Use `npm run qa:roi-geometry-audit` when expected readings remain absent from expanded candidates. The June 8, 2026 focused audit of the current `10` candidate-coverage rows split them into `7` crop-family boundary-clipped rows and `3` edge-window-present normalization-insufficient rows.
-9. Do not reintroduce the June 9, 2026 `regwin` register-window crop family without a stronger guard. Its focused run produced near-miss values but no exact expected candidate recovery, and selectable experiments regressed to `MAE 1345.10` (`maxPrimaryCandidates=4`) and `MAE 1378.67` (`maxPrimaryCandidates=20`). The implementation was removed to avoid dead diagnostic code.
-10. Keep `roiDeterministic.cellSplitProbe` shadow-only. The June 11, 2026 QA run found `splitProbeOnlyHitRowCount: 1` (`meter_20200701.JPEG`) and production UI metrics stayed `MAE 106.83`, `Exact Match 11/31`, `No-read 1/31`; this is diagnostic evidence for split placement, not a production promotion.
-11. Medium-term: evaluate YOLO OBB ROI detection only if axis-aligned ROI retrains still leave rotation or edge ambiguity.
+5. Do not promote digit-classifier scratch retrains or clean-section-only fine-tunes unless they beat the restored checkpoint on the UI test set. The July 23 clean + balanced-synthetic fine-tune improved grouped source-image CV (`67.9%` versus `48.6%` for the restored baseline) but failed the 36-image UI gate (`MAE 3063.31`, `Exact Match 0/36`, `No-read 1/36`).
+6. Keep the constrained `23xx` reader shadow-only. Its July 23 retrain was rejected with `0` guard false positives, `33` false negatives, and no accepted CV predictions; focused runtime QA also accepted none at the `0.98` threshold. Lowering the guard previously accepted more wrong values, so threshold tuning is not enough.
+7. Keep the June 9 ROI checkpoint promoted. A July 23 retrain lowered readable-row `MAE` from `103.83` to `75.50`, but regressed exact match from `11/36` to `8/36` and no-read from `1/36` to `12/36`.
+8. Use `npm run qa:cell-crops` to inspect candidate-family coverage before changing selection. The June 8, 2026 register-localization probe found expected readings only on already-covered rows, so it was rolled back; the retained report now includes non-readable candidates and expected-hit family counts.
+9. Use `npm run qa:roi-geometry-audit` when expected readings remain absent from expanded candidates. The June 8, 2026 focused audit of the current `10` candidate-coverage rows split them into `7` crop-family boundary-clipped rows and `3` edge-window-present normalization-insufficient rows.
+10. Do not reintroduce the June 9, 2026 `regwin` register-window crop family without a stronger guard. Its focused run produced near-miss values but no exact expected candidate recovery, and selectable experiments regressed to `MAE 1345.10` (`maxPrimaryCandidates=4`) and `MAE 1378.67` (`maxPrimaryCandidates=20`). The implementation was removed to avoid dead diagnostic code.
+11. Keep `roiDeterministic.cellSplitProbe` shadow-only. The June 11, 2026 QA run found `splitProbeOnlyHitRowCount: 1` (`meter_20200701.JPEG`) and production UI metrics stayed `MAE 106.83`, `Exact Match 11/31`, `No-read 1/31`; this is diagnostic evidence for split placement, not a production promotion.
+12. Medium-term: evaluate YOLO OBB ROI detection only if axis-aligned ROI retrains still leave rotation or edge ambiguity.
 
 ## Digit Classifier Training Guardrail
 - Restore promoted checkpoints from DVC before digit experiments when local model outputs drift.

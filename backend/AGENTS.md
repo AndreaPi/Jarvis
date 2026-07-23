@@ -47,6 +47,7 @@
 - Treat promoted checkpoints under `backend/models/*.pt` as must-retain artifacts and keep DVC state up to date when models or datasets change.
 - Keep host/CORS scoped to localhost unless there is an explicit deployment task.
 - Digit-model experiments use grouped CV by source image. The digit dataset currently has no validation split; `meter_20260323.JPEG` is train and `meter_20260327.JPEG` remains a fixed hard test holdout. UI **Run test set** remains the promotion gate.
+- July 23, 2026 retraining on the expanded 36-source corpus promoted no models. The ROI challenger regressed exact match/no-read, the CV-winning digit-classifier challenger failed the UI gate, and both strip-reader challengers remained non-competitive. Keep all four `backend/models/*.pt` defaults unchanged.
 
 ## Digit Dataset Expansion Loop (`4/5/6/9`)
 1. Refresh capture planning with `python plan_digit_expansion.py --target-train-per-digit 12 --priority-digits 4,5,6,9`.
