@@ -139,6 +139,10 @@ train,meter_20260721.JPEG,2347,0,2,sections/train/meter_20260721_s0.png,sections
 train,meter_20260721.JPEG,2347,1,3,sections/train/meter_20260721_s1.png,sections_labeled/train/3/meter_20260721_s1_d3.png,windows/train/meter_20260721.png,windows_canonical/train/meter_20260721.png
 train,meter_20260721.JPEG,2347,2,4,sections/train/meter_20260721_s2.png,sections_labeled/train/4/meter_20260721_s2_d4.png,windows/train/meter_20260721.png,windows_canonical/train/meter_20260721.png
 train,meter_20260721.JPEG,2347,3,7,sections/train/meter_20260721_s3.png,sections_labeled/train/7/meter_20260721_s3_d7.png,windows/train/meter_20260721.png,windows_canonical/train/meter_20260721.png
+train,meter_20260724.JPEG,2348,0,2,sections/train/meter_20260724_s0.png,sections_labeled/train/2/meter_20260724_s0_d2.png,windows/train/meter_20260724.png,windows_canonical/train/meter_20260724.png
+train,meter_20260724.JPEG,2348,1,3,sections/train/meter_20260724_s1.png,sections_labeled/train/3/meter_20260724_s1_d3.png,windows/train/meter_20260724.png,windows_canonical/train/meter_20260724.png
+train,meter_20260724.JPEG,2348,2,4,sections/train/meter_20260724_s2.png,sections_labeled/train/4/meter_20260724_s2_d4.png,windows/train/meter_20260724.png,windows_canonical/train/meter_20260724.png
+train,meter_20260724.JPEG,2348,3,8,sections/train/meter_20260724_s3.png,sections_labeled/train/8/meter_20260724_s3_d8.png,windows/train/meter_20260724.png,windows_canonical/train/meter_20260724.png
 test,meter_20260327.JPEG,2321,0,2,sections/test/meter_20260327_s0.png,sections_labeled/test/2/meter_20260327_s0_d2.png,windows/test/meter_20260327.png,windows_canonical/test/meter_20260327.png
 test,meter_20260327.JPEG,2321,1,3,sections/test/meter_20260327_s1.png,sections_labeled/test/3/meter_20260327_s1_d3.png,windows/test/meter_20260327.png,windows_canonical/test/meter_20260327.png
 test,meter_20260327.JPEG,2321,2,2,sections/test/meter_20260327_s2.png,sections_labeled/test/2/meter_20260327_s2_d2.png,windows/test/meter_20260327.png,windows_canonical/test/meter_20260327.png

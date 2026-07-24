@@ -139,6 +139,10 @@ train,meter_20260721.JPEG,2347,windows/train/meter_20260721.png,windows_canonica
 train,meter_20260721.JPEG,2347,windows/train/meter_20260721.png,windows_canonical/train/meter_20260721.png,1,x,90,0.000,126,0,264,215,sections/train/meter_20260721_s1.png
 train,meter_20260721.JPEG,2347,windows/train/meter_20260721.png,windows_canonical/train/meter_20260721.png,2,x,90,0.000,256,0,394,215,sections/train/meter_20260721_s2.png
 train,meter_20260721.JPEG,2347,windows/train/meter_20260721.png,windows_canonical/train/meter_20260721.png,3,x,90,0.000,386,0,520,215,sections/train/meter_20260721_s3.png
+train,meter_20260724.JPEG,2348,windows/train/meter_20260724.png,windows_canonical/train/meter_20260724.png,0,x,90,0.000,0,0,138,242,sections/train/meter_20260724_s0.png
+train,meter_20260724.JPEG,2348,windows/train/meter_20260724.png,windows_canonical/train/meter_20260724.png,1,x,90,0.000,126,0,264,242,sections/train/meter_20260724_s1.png
+train,meter_20260724.JPEG,2348,windows/train/meter_20260724.png,windows_canonical/train/meter_20260724.png,2,x,90,0.000,256,0,394,242,sections/train/meter_20260724_s2.png
+train,meter_20260724.JPEG,2348,windows/train/meter_20260724.png,windows_canonical/train/meter_20260724.png,3,x,90,0.000,386,0,520,242,sections/train/meter_20260724_s3.png
 test,meter_20260327.JPEG,2321,windows/test/meter_20260327.png,windows_canonical/test/meter_20260327.png,0,x,90,16.000,12,0,150,276,sections/test/meter_20260327_s0.png
 test,meter_20260327.JPEG,2321,windows/test/meter_20260327.png,windows_canonical/test/meter_20260327.png,1,x,90,16.000,142,0,280,276,sections/test/meter_20260327_s1.png
 test,meter_20260327.JPEG,2321,windows/test/meter_20260327.png,windows_canonical/test/meter_20260327.png,2,x,90,8.000,264,0,402,276,sections/test/meter_20260327_s2.png
