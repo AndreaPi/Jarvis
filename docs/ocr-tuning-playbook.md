@@ -15,6 +15,19 @@ Current baseline policy:
 
 Digit dataset status (current workflow):
 
+- The new full-image object-detection dataset is built and reviewed separately;
+  see `docs/full-image-digit-dataset.md`. Its persistent five-fold manifest
+  splits train sources at image level; the historical one-image sanity holdout
+  remains isolated from checkpoint selection but is not a promotion gate. Its
+  derived YOLO labels are not a training source until all canonical
+  annotations are reviewed. A frozen recipe requires a newly collected locked
+  external full-image test set before promotion. Run
+  `evaluate_full_image_digit_detector.py` on every CV checkpoint so
+  complete-reading exact match and no-read remain gates alongside mAP.
+  `backend/data/full_image_digit_dataset/manifests/source_exclusions.csv`
+  defines retained legacy-stress sources outside this detector's active scope;
+  `meter_20201111.JPEG` is excluded there for severe defocus but remains
+  retained in the source and canonical annotation history.
 - Dataset generation now uses `extract_digit_windows.py` -> `split_digit_windows.py` -> `label_digit_sections.py`.
 - `split_digit_windows.py` canonicalizes orientation (major axis + optional reading-direction `flip180` overrides) before equispaced 4-way split.
 - Small reviewed canonical-strip fixes live in `data/digit_dataset/manifests/canonical_overrides.csv`; regenerate sections, labels, synthetic train sections, and `qa:strip-dataset` after changing it.

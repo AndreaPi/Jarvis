@@ -10,7 +10,7 @@
     "serve": "python3 -m http.server 8000",
     "dev": "python3 -m http.server 8000",
     "test:e2e": "playwright test",
-    "test:backend": "backend/.venv/bin/python -m unittest backend.test_app backend.test_build_roi_dataset backend.test_runtime_digit_pipeline",
+    "test:backend": "backend/.venv/bin/python -m unittest backend.test_app backend.test_build_roi_dataset backend.test_build_full_image_digit_dataset backend.test_train_full_image_digit_detector backend.test_evaluate_full_image_digit_detector backend.test_runtime_digit_pipeline",
     "test:scripts": "node --test scripts/test-*.cjs && python3 -m unittest discover -s scripts -p 'test_*.py'",
     "test:e2e:headed": "playwright test --headed",
     "benchmark:roi-diff": "node scripts/compare-roi-checkpoints.cjs",

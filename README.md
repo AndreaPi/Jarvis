@@ -134,6 +134,7 @@ Treat the following as Tier 1 artifacts that must not be lost:
 - `backend/data/roi_dataset/images/**`
 - `backend/data/roi_dataset/labels/**`
 - `backend/data/roi_dataset/splits.json`
+- `backend/data/full_image_digit_dataset/manifests/**`
 - `backend/data/digit_dataset/manifests/**`
 - `backend/data/digit_dataset/sections_synthetic/manifests/**`
 - promoted checkpoints in `backend/models/*.pt`
@@ -204,6 +205,19 @@ python validate_digit_dataset.py
 ```
 
 `validate_digit_dataset.py` validates the current windows/canonical/sections workflow.
+
+The replacement full-image digit detector uses a separate, review-first dataset.
+See [`docs/full-image-digit-dataset.md`](docs/full-image-digit-dataset.md) for
+the bootstrap, Make Sense review, guarded import, and image-level cross-validation
+workflow. Do not train from its labels while any annotation remains `pending`,
+and do not use its single historical sanity image for checkpoint selection or
+as a generalization estimate. Promotion requires a newly collected locked
+external full-image test set after the recipe is frozen. Evaluate experimental
+checkpoints with `backend/evaluate_full_image_digit_detector.py`; complete
+four-digit exact match and no-read are required alongside YOLO detection
+metrics. Sources retained only for legacy diagnostics are declared in
+`backend/data/full_image_digit_dataset/manifests/source_exclusions.csv` and
+are omitted from active labels, folds, training, and evaluation.
 
 3. Start the API:
 

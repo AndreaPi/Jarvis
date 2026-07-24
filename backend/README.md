@@ -118,6 +118,115 @@ Generate a prioritized capture checklist for underrepresented digits:
 python plan_digit_expansion.py --target-train-per-digit 12 --priority-digits 4,5,6,9
 ```
 
+## Build the full-image digit-box dataset
+
+The replacement detector dataset labels the four individual digit-wheel
+apertures directly on each full meter image with classes `0` through `9`.
+Bootstrap the boxes from the reviewed register ROI, verified reading, and
+canonical orientation metadata:
+
+```bash
+cd backend
+source .venv/bin/activate
+python build_full_image_digit_dataset.py
+```
+
+This writes the canonical review manifest and derived YOLO labels under
+`data/full_image_digit_dataset/`. It also creates a disposable Make Sense
+review package under `../output/full-image-digit-review/`.
+
+`data/full_image_digit_dataset/manifests/source_exclusions.csv` retains
+legacy-stress sources for diagnostics while omitting them from active labels,
+CV folds, review packages, training, and evaluation. The source photo,
+trusted reading, bootstrap rows, and reviewed annotations remain preserved.
+
+After reviewing and exporting YOLO annotations from Make Sense, import them
+with:
+
+```bash
+python import_full_image_digit_annotations.py /path/to/makesense-export.zip
+python build_full_image_digit_dataset.py
+```
+
+The importer rejects missing images by default, requires exactly four boxes
+per image, restores reading order from orientation metadata, and verifies that
+the imported classes equal the trusted reading. Reviewed coordinates are
+preserved on later bootstrap runs. Do not use the dataset for training while
+`manifests/summary.json` reports any `pending` annotations.
+
+The builder also maintains `manifests/cv_folds.csv`: five persistent,
+image-level folds over train sources. Validate a fold before training:
+
+```bash
+python train_full_image_digit_detector.py --validate-only --fold 0
+```
+
+Train one fold without promoting its checkpoint:
+
+```bash
+python train_full_image_digit_detector.py \
+  --fold 0 \
+  --base-model yolov8n.pt \
+  --device cpu
+```
+
+Evaluate its best checkpoint on that same full-image validation fold:
+
+```bash
+python evaluate_full_image_digit_detector.py \
+  --checkpoint runs/full-image-digit-detector-fold0/weights/best.pt \
+  --fold 0
+```
+
+This writes a JSON artifact beside the run with reproducible detection metrics,
+complete-reading exact match, no-read, readable digit accuracy, readable
+`MAE`, and per-image predictions. It uses the selected CV validation fold only
+and never reads the historical sanity holdout or a source listed in
+`manifests/source_exclusions.csv`.
+
+The selected fold becomes validation, the other four folds become train, and
+the historical one-image sanity holdout remains test-only. It is not a
+statistically meaningful external test set or a promotion gate.
+
+To compare a mixed-scale recipe while retaining full-image evaluation, add
+`--train-register-crops`. It creates one register-context crop for each
+training image only; validation and test inputs remain full images:
+
+```bash
+python train_full_image_digit_detector.py \
+  --fold 0 \
+  --base-model yolov8n.pt \
+  --train-register-crops \
+  --device cpu
+```
+
+The controlled rare-class balancing recipe additionally uses digit-centred
+crops from training-fold images only:
+
+```bash
+python train_full_image_digit_detector.py \
+  --fold 0 \
+  --base-model yolov8n.pt \
+  --train-register-crops \
+  --train-balanced-digit-target 24 \
+  --device cpu
+```
+
+This raises each rare digit to a minimum of 24 training-box exposures without
+augmenting validation or test. Every added image is a real crop around one
+reviewed aperture; validation and test remain full-image-only. The run
+provenance reports generated counts and distinct source-image counts by class.
+
+Repeat folds `0` through `4` only after a recipe passes the initial fold
+comparison on both detection and complete-reading metrics. Cross-validation
+checkpoints stay under `runs/`. Freeze the recipe, collect a new locked
+external full-image test set, and evaluate it once before using
+`--copy-to models/full_image_digit_detector.pt`. Promotion still requires
+explicit approval.
+
+The complete annotation policy and review checklist are in
+[`../docs/full-image-digit-dataset.md`](../docs/full-image-digit-dataset.md).
+
 ## Train a dedicated digit classifier
 
 This trains a small per-cell CNN on real labeled sections (`data/digit_dataset/sections_labeled`) and writes:

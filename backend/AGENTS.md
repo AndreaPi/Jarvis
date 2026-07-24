@@ -29,6 +29,11 @@
 - `cd backend && source .venv/bin/activate && python split_digit_windows.py --clean`: Canonicalize and split digit windows into 4 equispaced sections.
 - `cd backend && source .venv/bin/activate && python label_digit_sections.py --clean`: Build labeled section datasets.
 - `cd backend && source .venv/bin/activate && python validate_digit_dataset.py`: Validate the current windows/canonical/sections digit dataset.
+- `cd backend && source .venv/bin/activate && python build_full_image_digit_dataset.py`: Bootstrap full-image digit-wheel boxes, regenerate derived YOLO labels, and build the Make Sense review package.
+- `cd backend && source .venv/bin/activate && python import_full_image_digit_annotations.py /path/to/makesense-export.zip`: Guardedly import reviewed Make Sense boxes into the canonical full-image annotation manifest.
+- `cd backend && source .venv/bin/activate && python train_full_image_digit_detector.py --validate-only --fold 0`: Validate and materialize one reviewed full-image digit-detector CV fold without training.
+- `cd backend && source .venv/bin/activate && python train_full_image_digit_detector.py --fold 0 --device cpu`: Train one full-image digit-detector CV fold without promoting its checkpoint. Add `--train-register-crops --train-balanced-digit-target 24` for the controlled train-only mixed-scale and rare-class-balancing recipe.
+- `cd backend && source .venv/bin/activate && python evaluate_full_image_digit_detector.py --checkpoint runs/<run>/weights/best.pt --fold 0`: Reproduce detection metrics and evaluate complete four-digit readings on the selected full-image validation fold only.
 - `cd backend && source .venv/bin/activate && python generate_synthetic_digit_dataset.py --clean --direct-per-real 6 --compose-window-count 180`: Generate synthetic train-only digit sections.
 - `cd backend && source .venv/bin/activate && python plan_digit_expansion.py --target-train-per-digit 12 --priority-digits 4,5,6,9`: Refresh the targeted capture checklist.
 - `cd backend && source .venv/bin/activate && python train_digit_classifier.py --device cpu`: Train the real-only digit classifier.
@@ -47,6 +52,9 @@
 - Treat promoted checkpoints under `backend/models/*.pt` as must-retain artifacts and keep DVC state up to date when models or datasets change.
 - Keep host/CORS scoped to localhost unless there is an explicit deployment task.
 - Digit-model experiments use grouped CV by source image. The digit dataset currently has no validation split; `meter_20260323.JPEG` is train and `meter_20260327.JPEG` remains a fixed hard test holdout. UI **Run test set** remains the promotion gate.
+- Full-image digit detection uses `data/full_image_digit_dataset/manifests/annotations.csv` as its canonical human-review layer and `cv_folds.csv` as its persistent five-fold assignment over train sources. Bootstrap output must never overwrite existing reviewed rows, training must wait until no annotation is `pending`, and the one-image historical sanity holdout must not participate in model selection or be presented as a generalization estimate. Evaluate every checkpoint with `evaluate_full_image_digit_detector.py`; mAP improvements are insufficient when complete-reading exact match and no-read do not improve. Freeze the selected recipe before evaluating it once on a newly collected locked external full-image test set.
+- `data/full_image_digit_dataset/manifests/source_exclusions.csv` is the active-scope boundary for the full-image detector. Preserve excluded source photos, readings, bootstrap rows, and reviewed annotations as `legacy_stress`, while omitting them from active labels, folds, review packages, training, and evaluation.
+- Balanced full-image digit crops must be generated only from source images assigned to training for the selected fold. Keep validation and test as unchanged full images, and record per-class generated-crop and source-image counts in run provenance.
 - July 23, 2026 retraining on the expanded 36-source corpus promoted no models. The ROI challenger regressed exact match/no-read, the CV-winning digit-classifier challenger failed the UI gate, and both strip-reader challengers remained non-competitive. Keep all four `backend/models/*.pt` defaults unchanged.
 
 ## Digit Dataset Expansion Loop (`4/5/6/9`)
