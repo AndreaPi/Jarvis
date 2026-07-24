@@ -77,7 +77,7 @@ Run mutating command sequences fail-fast. Use separate checked commands or `set 
    - Do not use the old external `jarvis-roi-dataset-sync` helper path; the repo now expects `backend/build_roi_dataset.py` with a manifest input.
 
 8. Rebuild the ROI dataset from the current CSV + ROI manifest.
-   - From the repository root, run `backend/.venv/bin/python backend/build_roi_dataset.py --roi-json backend/data/roi_boxes_manifest.json`.
+   - From the repository root, run `backend/.venv/bin/python backend/build_roi_dataset.py --roi-json data/roi_boxes_manifest.json`. The script resolves relative arguments from `backend/`, not from the shell's working directory.
    - The builder persists split assignments in `backend/data/roi_dataset/splits.json`.
    - Existing images keep their assigned split; new images default to `train` unless you edit `splits.json`.
    - The builder updates the ROI dataset to match the CSV + manifest without recomputing old splits from CSV order.
@@ -122,6 +122,11 @@ Run mutating command sequences fail-fast. Use separate checked commands or `set 
      - DVC pointers pushed and their target-specific status
      - unrelated pre-existing Git or DVC changes, if any
      - whether the user explicitly approved the new ROI labels or whether further Make Sense correction is still pending
+   - After the ROI overlay is approved and the batch's canonical photos and ROI
+     images are published, hand off the canonical filenames to
+     `jarvis-meter-to-digit-box-sync` when the new photos should join the
+     full-image digit-detector dataset. Do not treat ROI approval as digit-box
+     approval.
 
 ## Command Snippets
 
@@ -134,7 +139,7 @@ Run mutating command sequences fail-fast. Use separate checked commands or `set 
 - CSV to file consistency:
   - `awk -F, 'NR>1 {print $1}' assets/meter_readings.csv | while read -r f; do [ -f "assets/$f" ] || echo "missing: $f"; done`
 - Rebuild ROI dataset:
-  - `backend/.venv/bin/python backend/build_roi_dataset.py --roi-json backend/data/roi_boxes_manifest.json`
+  - `backend/.venv/bin/python backend/build_roi_dataset.py --roi-json data/roi_boxes_manifest.json`
 - Re-render ROI QA overlays:
   - `backend/.venv/bin/python backend/visualize_roi_labels.py`
 - Check only the DVC targets updated in the current batch:
@@ -147,3 +152,5 @@ Run mutating command sequences fail-fast. Use separate checked commands or `set 
 - The browser-assisted OCR path is not authoritative for CSV updates. Always confirm readings manually before writing `assets/meter_readings.csv`.
 - New ROI labels are not training-ready until the user has provided manual labels and reviewed the generated overlays.
 - Canonical meter photos and ROI image binaries are retained with DVC; do not leave new ingested JPEG/PNG files outside DVC tracking.
+- Full-image digit-aperture annotations have a separate downstream human-review
+  gate in `jarvis-meter-to-digit-box-sync`.
