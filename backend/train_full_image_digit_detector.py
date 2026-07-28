@@ -145,6 +145,15 @@ def parse_args() -> argparse.Namespace:
     ),
   )
   parser.add_argument(
+    "--resume-from",
+    default="",
+    help=(
+      "Resume an interrupted run from its unstripped weights/last.pt. The "
+      "selected fold and crop recipe are rematerialized before Ultralytics "
+      "restores the epoch, optimizer, scheduler, and early-stopping state."
+    ),
+  )
+  parser.add_argument(
     "--validate-only",
     action="store_true",
     help="Validate and materialize the selected fold without training.",
@@ -682,6 +691,55 @@ def resolve_device(value: str) -> str | None:
   return normalized
 
 
+def validate_resume_checkpoint(
+  checkpoint_path: Path,
+  checkpoint: dict,
+  args: argparse.Namespace,
+  expected_run_dir: Path,
+) -> int:
+  if checkpoint_path.name != "last.pt":
+    raise ValueError("--resume-from must point to an interrupted run's weights/last.pt")
+  actual_run_dir = checkpoint_path.parent.parent.resolve()
+  if actual_run_dir != expected_run_dir.resolve():
+    raise ValueError(
+      "Resume checkpoint run directory does not match --project/--name: "
+      f"{actual_run_dir} != {expected_run_dir.resolve()}"
+    )
+
+  epoch = int(checkpoint.get("epoch", -1))
+  if epoch < 0:
+    raise ValueError("Resume checkpoint does not contain a completed epoch")
+  if checkpoint.get("optimizer") is None:
+    raise ValueError(
+      "Resume checkpoint has no optimizer state; use an unstripped interrupted "
+      "weights/last.pt checkpoint"
+    )
+
+  checkpoint_args = checkpoint.get("train_args") or {}
+  expected_args = {
+    "epochs": args.epochs,
+    "imgsz": args.imgsz,
+    "batch": args.batch,
+    "seed": args.seed,
+  }
+  mismatches = {
+    key: (checkpoint_args.get(key), value)
+    for key, value in expected_args.items()
+    if checkpoint_args.get(key) != value
+  }
+  if mismatches:
+    details = ", ".join(
+      f"{key}: checkpoint={actual!r}, requested={expected!r}"
+      for key, (actual, expected) in mismatches.items()
+    )
+    raise ValueError(f"Resume arguments differ from the checkpoint: {details}")
+  if epoch + 1 >= args.epochs:
+    raise ValueError(
+      f"Checkpoint already completed {epoch + 1} of {args.epochs} epochs"
+    )
+  return epoch + 1
+
+
 def main() -> None:
   args = parse_args()
   base_dir = Path(__file__).resolve().parent
@@ -692,7 +750,15 @@ def main() -> None:
   labels_root = resolve_path(base_dir, args.labels)
   project_path = resolve_path(base_dir, args.project)
   copy_to_path = resolve_path(base_dir, args.copy_to) if args.copy_to else None
+  resume_from_path = (
+    resolve_path(base_dir, args.resume_from) if args.resume_from else None
+  )
   run_name = args.name.strip() or f"full-image-digit-detector-fold{args.fold}"
+  run_dir = project_path / run_name
+  if resume_from_path is not None and args.pretrained_model:
+    raise ValueError("--resume-from cannot be combined with --pretrained-model")
+  if resume_from_path is not None and args.validate_only:
+    raise ValueError("--resume-from cannot be combined with --validate-only")
 
   source_exclusions = read_source_exclusions(source_exclusions_path)
   annotation_rows = filter_excluded_annotations(
@@ -735,6 +801,7 @@ def main() -> None:
       "patience": args.patience,
       "seed": args.seed,
       "device": args.device,
+      "resume_from": str(resume_from_path) if resume_from_path else None,
       "ultralytics_version": metadata.version("ultralytics"),
       "augmentation": TRAIN_AUGMENT_KWARGS,
     }
@@ -751,18 +818,36 @@ def main() -> None:
     except ImportError as error:
       raise RuntimeError("ultralytics is required. Install backend/requirements.txt.") from error
 
-    local_base_model = resolve_path(base_dir, args.base_model)
-    model_source = str(local_base_model) if local_base_model.exists() else args.base_model
-    model = YOLO(model_source)
-    if args.pretrained_model:
-      local_pretrained_model = resolve_path(base_dir, args.pretrained_model)
-      pretrained_source = (
-        str(local_pretrained_model)
-        if local_pretrained_model.exists()
-        else args.pretrained_model
+    resume = resume_from_path is not None
+    if resume:
+      if not resume_from_path.exists():
+        raise FileNotFoundError(f"Resume checkpoint does not exist: {resume_from_path}")
+      model = YOLO(str(resume_from_path))
+      completed_epochs = validate_resume_checkpoint(
+        resume_from_path,
+        model.ckpt or {},
+        args,
+        run_dir,
       )
-      model.load(pretrained_source)
-    model.train(
+      print(
+        f"Resuming {run_name} after {completed_epochs} completed epochs "
+        f"from {resume_from_path}"
+      )
+    else:
+      local_base_model = resolve_path(base_dir, args.base_model)
+      model_source = (
+        str(local_base_model) if local_base_model.exists() else args.base_model
+      )
+      model = YOLO(model_source)
+      if args.pretrained_model:
+        local_pretrained_model = resolve_path(base_dir, args.pretrained_model)
+        pretrained_source = (
+          str(local_pretrained_model)
+          if local_pretrained_model.exists()
+          else args.pretrained_model
+        )
+        model.load(pretrained_source)
+    train_kwargs = dict(
       data=str(dataset_yaml),
       epochs=args.epochs,
       imgsz=args.imgsz,
@@ -776,6 +861,9 @@ def main() -> None:
       deterministic=True,
       **TRAIN_AUGMENT_KWARGS,
     )
+    if resume:
+      train_kwargs["resume"] = True
+    model.train(**train_kwargs)
 
     trainer = getattr(model, "trainer", None)
     save_dir_value = getattr(trainer, "save_dir", None) if trainer is not None else None

@@ -6,7 +6,10 @@ from pathlib import Path
 
 from PIL import Image
 
-from backend.train_full_image_digit_detector import materialize_fold_dataset
+from backend.train_full_image_digit_detector import (
+  materialize_fold_dataset,
+  validate_resume_checkpoint,
+)
 
 
 def annotation_rows(
@@ -54,6 +57,65 @@ def write_sample(
 
 
 class FullImageDigitDetectorTrainingTests(unittest.TestCase):
+  def test_validates_resumable_checkpoint_configuration(self) -> None:
+    with tempfile.TemporaryDirectory(prefix="jarvis-full-digit-resume-") as temp_dir:
+      run_dir = Path(temp_dir) / "runs" / "balanced-fold1"
+      checkpoint_path = run_dir / "weights" / "last.pt"
+      checkpoint = {
+        "epoch": 59,
+        "optimizer": {"state": {}},
+        "train_args": {
+          "epochs": 120,
+          "imgsz": 1280,
+          "batch": 4,
+          "seed": 42,
+        },
+      }
+      args = type("Args", (), {
+        "epochs": 120,
+        "imgsz": 1280,
+        "batch": 4,
+        "seed": 42,
+      })()
+
+      completed_epochs = validate_resume_checkpoint(
+        checkpoint_path,
+        checkpoint,
+        args,
+        run_dir,
+      )
+
+      self.assertEqual(completed_epochs, 60)
+
+  def test_rejects_resume_without_optimizer_state(self) -> None:
+    with tempfile.TemporaryDirectory(prefix="jarvis-full-digit-resume-") as temp_dir:
+      run_dir = Path(temp_dir) / "runs" / "balanced-fold1"
+      checkpoint_path = run_dir / "weights" / "last.pt"
+      checkpoint = {
+        "epoch": 59,
+        "optimizer": None,
+        "train_args": {
+          "epochs": 120,
+          "imgsz": 1280,
+          "batch": 4,
+          "seed": 42,
+        },
+      }
+      args = type("Args", (), {
+        "epochs": 120,
+        "imgsz": 1280,
+        "batch": 4,
+        "seed": 42,
+      })()
+
+      with self.assertRaisesRegex(ValueError, "no optimizer state"):
+        validate_resume_checkpoint(
+          checkpoint_path,
+          checkpoint,
+          args,
+          run_dir,
+        )
+
   def test_materializes_fold_without_test_leakage(self) -> None:
     with tempfile.TemporaryDirectory(prefix="jarvis-full-digit-train-") as temp_dir:
       root = Path(temp_dir)

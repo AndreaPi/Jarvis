@@ -170,6 +170,22 @@ python train_full_image_digit_detector.py \
   --device cpu
 ```
 
+If training is interrupted, resume from the run's unstripped `last.pt` while
+repeating the same fold, recipe, and run name:
+
+```bash
+python train_full_image_digit_detector.py \
+  --fold 0 \
+  --device cpu \
+  --name full-image-digit-detector-fold0 \
+  --resume-from runs/full-image-digit-detector-fold0/weights/last.pt
+```
+
+The trainer rematerializes the temporary fold, rejects mismatched core
+arguments or a stripped/completed checkpoint, and lets Ultralytics restore the
+epoch, optimizer, scheduler, and early-stopping state. Repeat any crop-recipe
+flags from the original command exactly.
+
 Evaluate its best checkpoint on that same full-image validation fold:
 
 ```bash

@@ -145,6 +145,22 @@ python train_full_image_digit_detector.py \
   --device cpu
 ```
 
+If the run is interrupted, resume its unstripped `last.pt` checkpoint while
+repeating the same fold, recipe flags, and run name:
+
+```bash
+python train_full_image_digit_detector.py \
+  --fold 0 \
+  --device cpu \
+  --name full-image-digit-detector-fold0 \
+  --resume-from runs/full-image-digit-detector-fold0/weights/last.pt
+```
+
+The trainer rebuilds the deleted temporary dataset before Ultralytics restores
+the completed epoch, optimizer, scheduler, and early-stopping state. It rejects
+core argument mismatches, a checkpoint from another run name, and stripped or
+already-completed checkpoints.
+
 Evaluate the best checkpoint on the same fold:
 
 ```bash
