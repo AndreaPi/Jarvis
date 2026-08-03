@@ -10,6 +10,11 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
+try:
+  from .runtime_digit_pipeline import rotate_image
+except ImportError:
+  from runtime_digit_pipeline import rotate_image
+
 
 VALID_SPLITS = ("train", "val", "test")
 CLASS_NAMES = tuple(str(value) for value in range(10))
@@ -233,8 +238,8 @@ def build_digit_boxes(
       y0 = roi_y0 + minor_inset_ratio * roi_height
       y1 = roi_y0 + (1 - minor_inset_ratio) * roi_height
     else:
-      # Pillow's positive 90-degree rotation maps source bottom-to-top into
-      # canonical left-to-right reading order.
+      # Runtime positive 90-degree rotation is clockwise and maps source
+      # bottom-to-top into canonical left-to-right reading order.
       physical_index = 3 - position if rotation == 90 else position
       cell_height = roi_height / 4
       x0 = roi_x0 + minor_inset_ratio * roi_width
@@ -673,6 +678,10 @@ def crop_around_annotations(
   ))
 
 
+def orient_review_crop(image: Image.Image, rotation: int) -> Image.Image:
+  return rotate_image(image, rotation)
+
+
 def build_contact_sheet(
   preview_paths: list[Path],
   destination: Path,
@@ -741,7 +750,7 @@ def build_review_package(
       crop = crop_around_annotations(rendered, image_rows)
       rotation = int(image_rows[0]["direction_rotation"])
       if rotation:
-        crop = crop.rotate(rotation, expand=True)
+        crop = orient_review_crop(crop, rotation)
       crop = fit_within(crop, 1400, 700)
       crop_path = crop_preview_dir / f"{Path(filename).stem}.jpg"
       crop.save(crop_path, "JPEG", quality=92)

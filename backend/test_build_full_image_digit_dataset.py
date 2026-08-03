@@ -13,6 +13,7 @@ from PIL import Image
 
 from backend.build_full_image_digit_dataset import (
   build_digit_boxes,
+  orient_review_crop,
   seed_or_preserve_cv_folds,
 )
 from backend.import_full_image_digit_annotations import merge_reviewed_export
@@ -31,6 +32,21 @@ def write_csv(path: Path, headers: list[str], rows: list[list[str]]) -> None:
 
 
 class FullImageDigitDatasetTests(unittest.TestCase):
+  def test_review_crop_rotation_matches_clockwise_runtime_convention(self) -> None:
+    source = Image.new("RGB", (2, 4), color=(0, 0, 0))
+    for y in range(2):
+      for x in range(source.width):
+        source.putpixel((x, y), (255, 0, 0))
+    for y in range(2, source.height):
+      for x in range(source.width):
+        source.putpixel((x, y), (0, 0, 255))
+
+    rotated = orient_review_crop(source, 90)
+
+    self.assertEqual(rotated.size, (4, 2))
+    self.assertEqual(rotated.getpixel((0, 0)), (0, 0, 255))
+    self.assertEqual(rotated.getpixel((3, 0)), (255, 0, 0))
+
   def test_horizontal_and_vertical_reading_order(self) -> None:
     horizontal_roi = (0.5, 0.5, 0.4, 0.2)
     vertical_roi = (0.5, 0.5, 0.2, 0.4)
