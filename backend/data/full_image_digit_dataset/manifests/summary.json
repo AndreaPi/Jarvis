@@ -1,25 +1,25 @@
 {
   "version": 1,
-  "images": 36,
-  "annotations": 144,
+  "images": 37,
+  "annotations": 148,
   "split_images": {
     "test": 1,
-    "train": 35
+    "train": 36
   },
   "class_counts": {
     "0": 5,
     "1": 13,
-    "2": 48,
-    "3": 47,
-    "4": 8,
+    "2": 49,
+    "3": 48,
+    "4": 9,
     "5": 4,
     "6": 4,
     "7": 7,
     "8": 6,
-    "9": 2
+    "9": 3
   },
   "review_counts": {
-    "reviewed": 144
+    "reviewed": 148
   },
   "annotation_policy": "one complete digit-wheel aperture per reading position",
   "bootstrap_source": "existing register ROI + verified reading + canonical orientation",
@@ -30,7 +30,7 @@
   "cross_validation": {
     "fold_count": 5,
     "image_counts": {
-      "0": 7,
+      "0": 8,
       "1": 7,
       "2": 7,
       "3": 7,
@@ -40,14 +40,14 @@
       "0": {
         "0": 1,
         "1": 1,
-        "2": 10,
-        "3": 9,
-        "4": 2,
+        "2": 11,
+        "3": 10,
+        "4": 3,
         "5": 0,
         "6": 1,
         "7": 2,
         "8": 2,
-        "9": 0
+        "9": 1
       },
       "1": {
         "0": 1,
@@ -111,8 +111,8 @@
         "notes": "Retain source reading and reviewed annotations for diagnostic use only"
       }
     ],
-    "retained_annotation_images": 37,
-    "active_images": 36
+    "retained_annotation_images": 38,
+    "active_images": 37
   },
   "review_package": "output/full-image-digit-review"
 }
