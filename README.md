@@ -125,6 +125,24 @@ Optional: train the guarded house-specific `23xx` strip-reader checkpoint:
 python train_strip_digit_reader_23xx.py --device cpu
 ```
 
+### Thermal monitoring for long macOS training
+
+From the repository root, start the thermal monitor in a separate terminal:
+
+```bash
+scripts/monitor-thermal.sh
+```
+
+It shows one `powermetrics` thermal-pressure sample every 30 seconds. Complete
+sample blocks are appended to a timestamped log under `backend/runs/thermal/`
+only when `Current pressure level` is not `Nominal`; nominal samples and
+machine metadata stay out of the log. Press `Ctrl-C` to stop it. To append to a
+different file, pass the path as the only argument:
+
+```bash
+scripts/monitor-thermal.sh /path/to/thermal-events.log
+```
+
 ## Artifact Retention
 
 Treat the following as Tier 1 artifacts that must not be lost:
