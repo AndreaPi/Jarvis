@@ -51,7 +51,9 @@ Run mutating command sequences fail-fast. Use separate checked commands or `set 
 
 6. Collect manual ROI labels for the new images.
    - Do not auto-estimate ROI boxes as the default path. After canonical photo normalization and meter-value confirmation, ask the user to label the 4-digit black register in a suitable annotation app such as Make Sense.
+   - Lead every Make Sense labeling request with a prominent clickable Markdown link to `[Open Make Sense](https://www.makesense.ai/)`; localize the link text to the user's language when useful. Prefer the link over opening an external browser automatically so the user keeps control of focus and the workflow remains reliable across execution environments. Never require the user to remember or type the site address.
    - Build and report the complete batch of newly ingested canonical image filenames that need labels.
+   - In the same message as the Make Sense link, provide clickable local links for every canonical input image and list the exact output TXT filename expected for each one.
    - Tell the user to label every image in that batch, and wait until they upload one exported label file per new image into `assets/`.
    - Expected label format is YOLO TXT with one row per image:
      - `0 x_center y_center width height`
@@ -95,6 +97,7 @@ Run mutating command sequences fail-fast. Use separate checked commands or `set 
    - Keep rect format: `{"x": ..., "y": ..., "width": ..., "height": ...}` normalized to the full image.
    - Target only the 4-digit black register window.
    - Preferred correction path: use Make Sense (or another manual labeling tool), export the corrected box to `assets/`, then repeat the label sync step and rebuild.
+   - When asking for a Make Sense correction, repeat the clickable Make Sense link and the exact local input and output filenames; do not rely on the user finding an earlier message.
    - Re-run `build_roi_dataset.py` after any manifest correction so the generated labels stay aligned.
    - Re-run `visualize_roi_labels.py` after any correction and ask the user to confirm the updated overlay.
    - After the user approves the corrected overlay, scan for stray `:Zone.Identifier` files under `backend/data/roi_dataset/` and delete them before continuing.

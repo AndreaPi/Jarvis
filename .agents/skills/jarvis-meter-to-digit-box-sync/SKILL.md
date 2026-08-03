@@ -116,6 +116,15 @@ unrelated Git and DVC changes. Do not rebuild while
      `output/full-image-digit-review/previews/crops/`. Use
      `digit-box-contact-sheet.jpg` only as an overview; full-resolution images
      are authoritative.
+   - Lead every initial or corrective Make Sense annotation request with a
+     prominent clickable Markdown link to
+     `[Open Make Sense](https://www.makesense.ai/)`; localize the link text to
+     the user's language when useful. Prefer the link over opening an external
+     browser automatically, and never require the user to remember or type the
+     site address.
+   - In the same message, provide clickable local links for every target image,
+     the class-list file, the matching bootstrap annotation files, and the
+     exact ZIP or directory path expected from the user's export.
    - Ask the user to review the batch in Make Sense:
      1. Upload only the target files from
         `output/full-image-digit-review/images/`.
