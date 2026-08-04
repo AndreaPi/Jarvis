@@ -29,6 +29,17 @@ try:
 except ImportError:
   from strip_digit_reader_23xx import StripDigitReader23xx, StripDigitReader23xxUnavailableError
 
+try:
+  from .full_image_digit_shadow import (
+    FullImageDigitShadow,
+    FullImageDigitShadowUnavailableError,
+  )
+except ImportError:
+  from full_image_digit_shadow import (
+    FullImageDigitShadow,
+    FullImageDigitShadowUnavailableError,
+  )
+
 
 def _env_float(name: str, default: float) -> float:
   value = os.getenv(name)
@@ -75,6 +86,33 @@ STRIP_DIGIT_23XX_MODEL_PATH = Path(
 ).expanduser().resolve()
 STRIP_DIGIT_23XX_GUARD_THRESHOLD = _env_float("STRIP_DIGIT_23XX_GUARD_THRESHOLD", 0.98)
 STRIP_DIGIT_23XX_TOP_K = _env_int("STRIP_DIGIT_23XX_TOP_K", 3)
+DEFAULT_FULL_IMAGE_DIGIT_SHADOW_MODEL_PATH = (
+  BASE_DIR / "models" / "full_image_digit_detector.pt"
+)
+FULL_IMAGE_DIGIT_SHADOW_MODEL_PATH = Path(
+  os.getenv(
+    "FULL_IMAGE_DIGIT_SHADOW_MODEL_PATH",
+    str(DEFAULT_FULL_IMAGE_DIGIT_SHADOW_MODEL_PATH),
+  )
+).expanduser().resolve()
+FULL_IMAGE_DIGIT_SHADOW_CONFIDENCE = _env_float(
+  "FULL_IMAGE_DIGIT_SHADOW_CONFIDENCE",
+  0.25,
+)
+FULL_IMAGE_DIGIT_SHADOW_IOU = _env_float("FULL_IMAGE_DIGIT_SHADOW_IOU", 0.7)
+FULL_IMAGE_DIGIT_SHADOW_IMGSZ = _env_int("FULL_IMAGE_DIGIT_SHADOW_IMGSZ", 1280)
+FULL_IMAGE_DIGIT_SHADOW_MAX_DETECTIONS = _env_int(
+  "FULL_IMAGE_DIGIT_SHADOW_MAX_DETECTIONS",
+  300,
+)
+FULL_IMAGE_DIGIT_SHADOW_ROI_EXPAND_X = _env_float(
+  "FULL_IMAGE_DIGIT_SHADOW_ROI_EXPAND_X",
+  0.26,
+)
+FULL_IMAGE_DIGIT_SHADOW_ROI_EXPAND_Y = _env_float(
+  "FULL_IMAGE_DIGIT_SHADOW_ROI_EXPAND_Y",
+  0.16,
+)
 CLASS_INDEX = os.getenv("ROI_CLASS_INDEX")
 DEVICE_RAW = os.getenv("ROI_DEVICE", "cpu").strip()
 if not DEVICE_RAW:
@@ -92,6 +130,17 @@ STRIP_DIGIT_23XX_DEVICE_RAW = os.getenv("STRIP_DIGIT_23XX_DEVICE", STRIP_DIGIT_D
 if not STRIP_DIGIT_23XX_DEVICE_RAW:
   STRIP_DIGIT_23XX_DEVICE_RAW = STRIP_DIGIT_DEVICE_RAW
 STRIP_DIGIT_23XX_DEVICE = None if STRIP_DIGIT_23XX_DEVICE_RAW.lower() == "auto" else STRIP_DIGIT_23XX_DEVICE_RAW
+FULL_IMAGE_DIGIT_SHADOW_DEVICE_RAW = os.getenv(
+  "FULL_IMAGE_DIGIT_SHADOW_DEVICE",
+  DIGIT_DEVICE_RAW,
+).strip()
+if not FULL_IMAGE_DIGIT_SHADOW_DEVICE_RAW:
+  FULL_IMAGE_DIGIT_SHADOW_DEVICE_RAW = DIGIT_DEVICE_RAW
+FULL_IMAGE_DIGIT_SHADOW_DEVICE = (
+  None
+  if FULL_IMAGE_DIGIT_SHADOW_DEVICE_RAW.lower() == "auto"
+  else FULL_IMAGE_DIGIT_SHADOW_DEVICE_RAW
+)
 
 if CLASS_INDEX is None:
   CLASS_INDEX_VALUE = None
@@ -126,6 +175,8 @@ _strip_digit_reader: StripDigitReader | None = None
 _strip_digit_reader_error: str | None = None
 _strip_digit_reader_23xx: StripDigitReader23xx | None = None
 _strip_digit_reader_23xx_error: str | None = None
+_full_image_digit_shadow: FullImageDigitShadow | None = None
+_full_image_digit_shadow_error: str | None = None
 
 
 def get_detector() -> RoiDetector:
@@ -183,6 +234,22 @@ def get_strip_digit_reader_23xx() -> StripDigitReader23xx:
     raise
 
 
+def get_full_image_digit_shadow() -> FullImageDigitShadow:
+  global _full_image_digit_shadow, _full_image_digit_shadow_error
+  if _full_image_digit_shadow:
+    return _full_image_digit_shadow
+  try:
+    _full_image_digit_shadow = FullImageDigitShadow(
+      FULL_IMAGE_DIGIT_SHADOW_MODEL_PATH,
+      device=FULL_IMAGE_DIGIT_SHADOW_DEVICE,
+    )
+    _full_image_digit_shadow_error = None
+    return _full_image_digit_shadow
+  except FullImageDigitShadowUnavailableError as error:
+    _full_image_digit_shadow_error = str(error)
+    raise
+
+
 def _load_rgb_image(file_bytes: bytes) -> np.ndarray:
   try:
     with Image.open(io.BytesIO(file_bytes)) as image:
@@ -207,14 +274,17 @@ def health() -> dict:
   digit_model_exists = DIGIT_MODEL_PATH.exists()
   strip_digit_model_exists = STRIP_DIGIT_MODEL_PATH.exists()
   strip_digit_23xx_model_exists = STRIP_DIGIT_23XX_MODEL_PATH.exists()
+  full_image_digit_shadow_model_exists = FULL_IMAGE_DIGIT_SHADOW_MODEL_PATH.exists()
   roi_ready = False
   digit_ready = False
   strip_digit_ready = False
   strip_digit_23xx_ready = False
+  full_image_digit_shadow_ready = False
   roi_error = _detector_error
   digit_error = _digit_classifier_error
   strip_digit_error = _strip_digit_reader_error
   strip_digit_23xx_error = _strip_digit_reader_23xx_error
+  full_image_digit_shadow_error = _full_image_digit_shadow_error
   try:
     get_detector()
     roi_ready = True
@@ -239,6 +309,12 @@ def health() -> dict:
     strip_digit_23xx_error = None
   except StripDigitReader23xxUnavailableError as reader_error:
     strip_digit_23xx_error = str(reader_error)
+  try:
+    get_full_image_digit_shadow()
+    full_image_digit_shadow_ready = True
+    full_image_digit_shadow_error = None
+  except FullImageDigitShadowUnavailableError as shadow_error:
+    full_image_digit_shadow_error = str(shadow_error)
 
   return {
     "ok": True,
@@ -247,6 +323,7 @@ def health() -> dict:
     "digit_ready": digit_ready,
     "strip_digit_ready": strip_digit_ready,
     "strip_digit_23xx_ready": strip_digit_23xx_ready,
+    "full_image_digit_shadow_ready": full_image_digit_shadow_ready,
     "model_path": str(MODEL_PATH),
     "model_source": MODEL_SOURCE,
     "default_model_path": str(DEFAULT_MODEL_PATH),
@@ -257,10 +334,17 @@ def health() -> dict:
     "strip_digit_model_exists": strip_digit_model_exists,
     "strip_digit_23xx_model_path": str(STRIP_DIGIT_23XX_MODEL_PATH),
     "strip_digit_23xx_model_exists": strip_digit_23xx_model_exists,
+    "full_image_digit_shadow_model_path": str(FULL_IMAGE_DIGIT_SHADOW_MODEL_PATH),
+    "full_image_digit_shadow_model_exists": full_image_digit_shadow_model_exists,
     "device": DEVICE_RAW if roi_ready else (DEVICE or "auto"),
     "digit_device": DIGIT_DEVICE_RAW if digit_ready else (DIGIT_DEVICE or "auto"),
     "strip_digit_device": STRIP_DIGIT_DEVICE_RAW if strip_digit_ready else (STRIP_DIGIT_DEVICE or "auto"),
     "strip_digit_23xx_device": STRIP_DIGIT_23XX_DEVICE_RAW if strip_digit_23xx_ready else (STRIP_DIGIT_23XX_DEVICE or "auto"),
+    "full_image_digit_shadow_device": (
+      FULL_IMAGE_DIGIT_SHADOW_DEVICE_RAW
+      if full_image_digit_shadow_ready
+      else (FULL_IMAGE_DIGIT_SHADOW_DEVICE or "auto")
+    ),
     "default_confidence": DEFAULT_CONFIDENCE,
     "default_iou": DEFAULT_IOU,
     "default_imgsz": DEFAULT_IMGSZ,
@@ -271,10 +355,17 @@ def health() -> dict:
     "strip_digit_top_k": STRIP_DIGIT_TOP_K,
     "strip_digit_23xx_guard_threshold": STRIP_DIGIT_23XX_GUARD_THRESHOLD,
     "strip_digit_23xx_top_k": STRIP_DIGIT_23XX_TOP_K,
+    "full_image_digit_shadow_confidence": FULL_IMAGE_DIGIT_SHADOW_CONFIDENCE,
+    "full_image_digit_shadow_iou": FULL_IMAGE_DIGIT_SHADOW_IOU,
+    "full_image_digit_shadow_imgsz": FULL_IMAGE_DIGIT_SHADOW_IMGSZ,
+    "full_image_digit_shadow_max_detections": FULL_IMAGE_DIGIT_SHADOW_MAX_DETECTIONS,
+    "full_image_digit_shadow_roi_expand_x": FULL_IMAGE_DIGIT_SHADOW_ROI_EXPAND_X,
+    "full_image_digit_shadow_roi_expand_y": FULL_IMAGE_DIGIT_SHADOW_ROI_EXPAND_Y,
     "error": roi_error,
     "digit_error": digit_error,
     "strip_digit_error": strip_digit_error,
-    "strip_digit_23xx_error": strip_digit_23xx_error
+    "strip_digit_23xx_error": strip_digit_23xx_error,
+    "full_image_digit_shadow_error": full_image_digit_shadow_error,
   }
 
 
@@ -467,3 +558,31 @@ async def predict_digit_strip_23xx(image: UploadFile = File(...)) -> dict:
     "suffix_confidences": prediction.suffix_confidences,
     "top_k_by_position": prediction.top_k_by_position
   }
+
+
+@app.post("/digit/predict-full-image-shadow")
+async def predict_full_image_digit_shadow(image: UploadFile = File(...)) -> dict:
+  try:
+    roi_detector = get_detector()
+    shadow = get_full_image_digit_shadow()
+  except (DetectorUnavailableError, FullImageDigitShadowUnavailableError) as error:
+    raise HTTPException(status_code=503, detail=str(error)) from error
+
+  file_bytes = await _read_upload_bytes(image)
+  if not file_bytes:
+    raise HTTPException(status_code=400, detail="Empty upload.")
+
+  image_rgb = _load_rgb_image(file_bytes)
+  return shadow.predict(
+    image_rgb,
+    roi_detector,
+    roi_confidence=DEFAULT_CONFIDENCE,
+    roi_iou=DEFAULT_IOU,
+    roi_imgsz=DEFAULT_IMGSZ,
+    roi_expand_x=FULL_IMAGE_DIGIT_SHADOW_ROI_EXPAND_X,
+    roi_expand_y=FULL_IMAGE_DIGIT_SHADOW_ROI_EXPAND_Y,
+    confidence=FULL_IMAGE_DIGIT_SHADOW_CONFIDENCE,
+    iou=FULL_IMAGE_DIGIT_SHADOW_IOU,
+    imgsz=FULL_IMAGE_DIGIT_SHADOW_IMGSZ,
+    max_detections=FULL_IMAGE_DIGIT_SHADOW_MAX_DETECTIONS,
+  )

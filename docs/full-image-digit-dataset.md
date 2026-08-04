@@ -179,6 +179,82 @@ predictions, settings, hashes, and the Ultralytics version. It never evaluates
 the historical sanity holdout or a source listed in
 `manifests/source_exclusions.csv`.
 
+## Audit cross-validation failures
+
+Once every fold for a recipe has a sequence-evaluation JSON, create a visual
+error audit from the repository root:
+
+```bash
+npm run qa:full-image-digit-errors
+```
+
+The default command audits the frozen balanced48 folds. It keeps their saved
+full-image predictions intact, evaluates the promoted ROI detector followed by
+the corresponding fold-specific digit detector, and compares that cascade with
+two diagnostic views: ground-truth-derived register-context inference and
+one-aperture-at-a-time inference. The
+timestamped output under `output/full-image-digit-error-audit/` includes an
+HTML report, contact sheet, machine-readable JSON, and a transition-review
+worksheet. The worksheet does not edit `annotations.csv`; inspect each wheel
+and explicitly classify it before changing any canonical transition state.
+The cascade mirrors the production ROI confidence, sanity, and expansion
+geometry; reviewed digit boxes are used only for scoring and overlays.
+It also predicts each ROI crop separately to mirror the deployed endpoint.
+Ultralytics can pad a mixed-shape batch differently, and the earlier batched
+audit overstated runtime performance.
+
+The corrected August 4, 2026 out-of-fold cascade is `12/28` exact with `7`
+no-reads and readable `MAE 15.71`; the register-context oracle is `17/28`
+exact with `1` no-read. Every expanded ROI crop covers 100% of its reviewed
+register, so increasing ROI expansion is not the next lever. Investigate and
+standardize the single-image inference canvas/padding behavior before another
+model or crop-geometry decision.
+
+For another recipe, invoke `backend/export_full_image_digit_error_audit.py`
+with one `--evaluation` argument per fold artifact.
+
+## Benchmark one deployable shadow checkpoint
+
+After the cross-validation audit identifies a plausible checkpoint, exercise
+that single checkpoint through the real browser pipeline without changing the
+selected reading:
+
+```bash
+npm run qa:full-image-digit-shadow
+```
+
+The default development checkpoint is the balanced48 fold-4 `best.pt` file;
+override `FULL_IMAGE_DIGIT_SHADOW_MODEL_PATH` and
+`FULL_IMAGE_DIGIT_SHADOW_VALIDATION_FOLD` together for another checkpoint.
+The command starts a disposable backend, records the checkpoint SHA-256, and
+writes a timestamped report under `output/full-image-digit-shadow-qa/`.
+
+The complete UI comparison is useful for finding runtime failures but is not a
+generalization estimate because a fold checkpoint trained on the other active
+folds. Judge unseen-image behavior from the report's matching validation-fold
+slice. Keep the frontend shadow disabled and do not promote a model if that
+slice increases no-read, even when exact match or MAE improves.
+
+August 4, 2026 result for the balanced48 fold-4 checkpoint: the complete
+38-image development comparison was `24/38` exact with `8` no-reads and
+readable `MAE 312.37`, versus production `11/38`, `2`, and `183.83`. That
+headline includes 29 mapped training-overlap images. On the leakage-safe
+seven-image fold-4 slice, the shadow improved exact match from `3/7` to `4/7`
+and readable `MAE` from `40.00` to `17.67`, but no-read regressed from `0` to
+`1`. Keep it shadow-only.
+
+The follow-up bounded sensitivity run used exact single-image runtime inference
+at confidences `0.10` through `0.30` and NMS IoUs `0.50`, `0.70`, and `0.90`.
+Confidence `0.20` with the unchanged IoU `0.70` recovers the missing final `7`
+on `meter_20260423.JPEG` at confidence `0.217`, producing `5/7` exact, `0`
+no-reads, and readable `MAE 15.14` on fold 4. But the complete UI diagnostic
+then admits a wrong leading `5` at confidence `0.218` on
+`meter_20260724.JPEG`, changing its result from no-read to `5348` and worsening
+full shadow `MAE` from `312.37` to `386.59`. Retain the `0.25` runtime default;
+confidence alone cannot separate the recovered true box from the new false
+box. The sensitivity fold is now tuning data and cannot serve as fresh
+promotion evidence.
+
 For the controlled mixed-scale recipe, add one register-context crop for each
 training image:
 

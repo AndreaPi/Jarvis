@@ -9,6 +9,7 @@
 - Digit-classifier inference is mandatory in the frontend OCR flow (`OCR_CONFIG.digitClassifier.enabled` defaults to `true`).
 - The whole-strip digit reader (`OCR_CONFIG.digitStripReader`) runs in shadow mode only. Its predictions are logged for comparison and debug, but they must not change user-visible OCR selection until a benchmark explicitly promotes it.
 - The constrained house-specific `23xx` strip reader (`OCR_CONFIG.digitStripReader23xx`) also runs in shadow mode only. It logs accepted/abstained diagnostics under `selectionLog.stripReader23xx` and must not change user-visible OCR selection.
+- The full-image digit detector (`OCR_CONFIG.fullImageDigitShadow`) is disabled by default. Explicit experiments log ROI-cropped rotation candidates under `selectionLog.fullImageDigitShadow`; they must never influence the selected reading while `shadowOnly=true`.
 - Frontend OCR evaluation is strip-only, classifier-first candidate decoding. The old Tesseract word-pass and sparse-scan stages are not part of the active path.
 - Edge-derived candidate generation is enabled by default and can be toggled with `OCR_CONFIG.roiDeterministic.useEdgeCandidates`.
 - The primary classifier shortlist now mixes high-ranked edge and base strip candidates so valid full-strip rotations are not starved behind edge-only passes.
@@ -25,6 +26,12 @@
 
 ## Active Benchmark Baseline
 - The current UI test-set surface is always the live `assets/meter_readings.csv`; do not hard-code its changing row count here.
+- August 4, 2026 full-image shadow benchmark with the balanced48 fold-4 checkpoint:
+  - Same-run production path: `MAE 183.83`, `Exact Match 11/38`, `No-read 2/38`
+  - Full shadow diagnostic: `MAE 312.37`, `Exact Match 24/38`, `No-read 8/38`; this includes 29 mapped images used to train the checkpoint and is not a generalization estimate
+  - Leakage-safe fold-4 slice: production `MAE 40.00`, `Exact Match 3/7`, `No-read 0/7`; shadow `MAE 17.67`, `Exact Match 4/7`, `No-read 1/7`
+  - Keep the shadow disabled: exact match and MAE improved on the fair slice, but the no-read guardrail regressed
+  - Bounded fold-4 sensitivity found confidence `0.20`/IoU `0.70` at `5/7` exact, `0` no-reads, and `MAE 15.14`, but the complete diagnostic accepted wrong `5348` on `meter_20260724.JPEG` and worsened shadow MAE to `386.59`; retain the `0.25` default
 - The latest verified promoted ROI + restored promoted per-cell classifier benchmark is the 36-image run from July 23, 2026:
   - UI production test-set run: `MAE 104.71`, `Exact Match 11/36`, `No-read 1/36`
   - The one no-read remains `meter_20201111.JPEG` (`no-detection`)
@@ -32,7 +39,7 @@
   - Previous 34-image July 22 snapshot: `MAE 108.76`, `Exact Match 11/34`, `No-read 1/34`
   - Previous 31-image ROI checkpoint diff surface before the June 10/12/28 ingestions: `MAE 106.83`, `Exact Match 11/31`, `No-read 1/31`
   - Previous ROI checkpoint on that 31-image run: `MAE 388.00`, `Exact Match 11/31`, `No-read 1/31`
-  - `npm run test:e2e`: passes (`14/14`)
+  - `npm run test:e2e`: passes; its Playwright case count is separate from the UI benchmark image count
 - Historical restored per-cell classifier baseline with the conservative geometry ranker, measured May 29, 2026:
   - UI test set: `MAE 166.07`, `Exact Match 10/29`, `No-read 1/29`
   - Same-corpus ranker-off control: `MAE 166.57`, `Exact Match 10/29`, `No-read 1/29`
@@ -42,8 +49,9 @@
 
 ## OCR Workflow and Guardrails
 - Before committing OCR changes, run both `npm run test:e2e` and the UI `Run test set`.
+- Treat `npm run test:e2e` as browser regression coverage and the UI `Run test set` plus `qa:*` commands as model/data evaluation; do not combine their case and image counts.
 - Prefer running the test set with the debug overlay enabled.
-- Test-set review should inspect `Detected`, `Absolute Error`, `Failure Reason`, stages `5/6/7/8`, `selectionLog.stripReader`, and `selectionLog.stripReader23xx`.
+- Test-set review should inspect `Detected`, `Absolute Error`, `Failure Reason`, stages `5/6/7/8`, `selectionLog.stripReader`, `selectionLog.stripReader23xx`, and any explicitly enabled `selectionLog.fullImageDigitShadow` result.
 - `npm run benchmark:roi-diff` remains the standard checkpoint comparison workflow.
 - The benchmark requires `backend/models/roi-rotaug-e30-640.pt`, `backend/models/roi.pt`, `backend/models/digit_classifier.pt`, and `backend/models/digit_strip_reader.pt` to exist locally before it will start.
 - OCR QA runners fail fast unless the backend reports `roi_ready` and `digit_ready` with the canonical promoted ROI and digit-classifier checkpoints.
@@ -62,6 +70,8 @@
 10. Do not reintroduce the June 9, 2026 `regwin` register-window crop family without a stronger guard. Its focused run produced near-miss values but no exact expected candidate recovery, and selectable experiments regressed to `MAE 1345.10` (`maxPrimaryCandidates=4`) and `MAE 1378.67` (`maxPrimaryCandidates=20`). The implementation was removed to avoid dead diagnostic code.
 11. Keep `roiDeterministic.cellSplitProbe` shadow-only. The June 11, 2026 QA run found `splitProbeOnlyHitRowCount: 1` (`meter_20200701.JPEG`) and production UI metrics stayed `MAE 106.83`, `Exact Match 11/31`, `No-read 1/31`; this is diagnostic evidence for split placement, not a production promotion.
 12. Medium-term: evaluate YOLO OBB ROI detection only if axis-aligned ROI retrains still leave rotation or edge ambiguity.
+13. Keep the full-image detector disabled in normal use until a leakage-safe evaluation improves MAE and exact match without increasing no-read. Use `npm run qa:full-image-digit-shadow`; never treat its training-overlap rows as generalization evidence.
+14. Do not lower the full-image shadow confidence globally to `0.20`: it recovers the missing `7` on `meter_20260423.JPEG` at confidence `0.217`, but admits a wrong leading `5` on `meter_20260724.JPEG` at `0.218`. The next detector improvement must separate those visually different boxes rather than move the scalar threshold.
 
 ## Digit Classifier Training Guardrail
 - Restore promoted checkpoints from DVC before digit experiments when local model outputs drift.

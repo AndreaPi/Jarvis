@@ -1,6 +1,6 @@
 # ROI Backend
 
-Python service for neural ROI detection (digit window), per-cell digit-classifier inference, and whole-strip shadow-reader inference.
+Python service for neural ROI detection (digit window), per-cell digit-classifier inference, whole-strip shadow-reader inference, and optional ROI-cropped full-image digit-detector shadow inference.
 
 ## 1) Install
 
@@ -200,6 +200,62 @@ complete-reading exact match, no-read, readable digit accuracy, readable
 and never reads the historical sanity holdout or a source listed in
 `manifests/source_exclusions.csv`.
 
+After all folds for one recipe have been evaluated, export the visual error
+audit from the repository root:
+
+```bash
+npm run qa:full-image-digit-errors
+```
+
+The exporter discovers the balanced48 fold evaluation artifacts by default
+and writes a timestamped report under
+`output/full-image-digit-error-audit/`. It preserves the frozen full-image
+predictions, runs the promoted ROI detector with production sanity and crop
+expansion, and applies each image's out-of-fold digit checkpoint to that crop.
+Each cascade crop is inferred separately, matching the deployed endpoint;
+batching differently shaped crops can alter Ultralytics padding and produced
+optimistic historical cascade results.
+It also compares diagnostic ground-truth-derived register and single-aperture
+crops. Its
+`transition-review.csv` is a worksheet only: review the blank fields before
+making any canonical annotation changes. Pass repeated `--evaluation` values
+to the Python script when auditing another recipe.
+
+To exercise one checkpoint through the real browser pipeline without changing
+Jarvis's selected reading, run from the repository root:
+
+```bash
+npm run qa:full-image-digit-shadow
+```
+
+The command records the checkpoint path and SHA-256, compares the shadow with
+the current OCR on the complete live test set, and separately reports the
+checkpoint's leakage-safe validation-fold slice. The August 4, 2026 fold-4
+run improved that seven-image slice from production `3/7` exact and `MAE
+40.00` to shadow `4/7` and `17.67`, but added one no-read. It therefore remains
+disabled and unpromoted.
+
+For a bounded single-image runtime sensitivity check on fold 4:
+
+```bash
+npm run qa:full-image-digit-shadow-sensitivity
+```
+
+The August 4 run found that confidence `0.20` with the existing NMS IoU `0.70`
+recovers `meter_20260423.JPEG` by retaining its final `7` at confidence
+`0.217`. Fold 4 then measures `5/7` exact, `0` no-reads, and `MAE 15.14`.
+However, the paired complete UI diagnostic also accepts a wrong `5348` for
+`meter_20260724.JPEG` at nearly identical minimum confidence `0.218`, worsening
+shadow `MAE` from `312.37` to `386.59`. Keep the runtime default at `0.25`;
+threshold tuning alone cannot separate these cases.
+
+After correcting the error audit to exact one-image runtime inference, the
+28-image out-of-fold cascade is `12/28` exact with `7` no-reads and readable
+`MAE 15.71`, versus the register-context oracle's `17/28`, `1`, and `213.22`.
+Every production-expanded crop covers 100% of its reviewed register. The gap
+therefore points to single-image detector padding/scale sensitivity and digit
+classification, not insufficient ROI expansion.
+
 The selected fold becomes validation, the other four folds become train, and
 the historical one-image sanity holdout remains test-only. It is not a
 statistically meaningful external test set or a promotion gate.
@@ -391,14 +447,19 @@ Run backend regression tests from the repo root:
 npm run test:backend
 ```
 
+This command auto-discovers `backend/test_*.py`. These are fast unit, component,
+and confirmed-regression checks that mock model inference; training runs and
+checkpoint/model-quality comparisons remain separate `qa:*` workflows.
+
 ## 4) Endpoints
 
-- `GET /health`: model readiness (`ready`, `roi_ready`, `digit_ready`, `strip_digit_ready`, `strip_digit_23xx_ready`) + effective model/device config and `max_upload_bytes`.
+- `GET /health`: model readiness (`ready`, `roi_ready`, `digit_ready`, `strip_digit_ready`, `strip_digit_23xx_ready`, `full_image_digit_shadow_ready`) + effective model/device config and `max_upload_bytes`. Missing optional full-image weights do not make the canonical ROI service unready.
 - `POST /roi/detect`: multipart upload (`image`) and returns normalized bbox + confidence.
 - `POST /digit/predict`: multipart upload (`image`) and returns the predicted digit + confidence.
 - `POST /digit/predict-cells`: multipart upload (`images`, repeated field) for batch cell decoding.
 - `POST /digit/predict-strip`: multipart upload (`image`) for direct fixed-length 4-digit strip decoding.
 - `POST /digit/predict-strip-23xx`: multipart upload (`image`) for guarded house-specific `23xx` suffix decoding.
+- `POST /digit/predict-full-image-shadow`: multipart upload (`image`) that reuses the promoted ROI detector, expands the register crop, detects four digit boxes, and returns ordered candidates for each right-angle rotation. It never chooses or promotes a reading.
 
 All image fields default to a 20 MiB per-file limit and return HTTP `413` when exceeded. Override the limit with `MAX_UPLOAD_BYTES`.
 
@@ -407,6 +468,7 @@ Frontend integration defaults:
 - Digit classifier path is `http://127.0.0.1:8001/digit/predict-cells` and is only used when `OCR_CONFIG.digitClassifier.enabled=true`.
 - Strip reader path is `http://127.0.0.1:8001/digit/predict-strip`; frontend OCR runs it shadow-only via `OCR_CONFIG.digitStripReader.shadowOnly=true` and logs results without changing final selection.
 - Constrained `23xx` strip reader path is `http://127.0.0.1:8001/digit/predict-strip-23xx`; frontend OCR runs it shadow-only via `OCR_CONFIG.digitStripReader23xx.shadowOnly=true` and logs accepted/abstained diagnostics without changing final selection.
+- Full-image digit shadow path is `http://127.0.0.1:8001/digit/predict-full-image-shadow`; it is frontend-disabled by default. An explicit run uses the primary OCR angle only to choose which returned rotation to log, and it cannot change final selection.
 - Frontend ROI OCR prioritizes `90/270` edge candidates, but the primary pass also evaluates top base-strip rotations when present. A narrow `scan-roi` / base fallback rerun is only used when base candidates were not already evaluated and the edge evidence remains weak. Final confidence gates can still reject weak edge-only reads.
 
 ## Environment Variables
@@ -433,6 +495,14 @@ Frontend integration defaults:
 - `STRIP_DIGIT_23XX_DEVICE`: inference device for constrained strip reader (default follows `STRIP_DIGIT_DEVICE`)
 - `STRIP_DIGIT_23XX_GUARD_THRESHOLD`: minimum second-digit-is-`3` guard confidence before accepting a forced `23xx` value (default: `0.98`)
 - `STRIP_DIGIT_23XX_TOP_K`: number of top classes returned per constrained strip position (default: `3`)
+- `FULL_IMAGE_DIGIT_SHADOW_MODEL_PATH`: optional full-image detector checkpoint (default: `backend/models/full_image_digit_detector.pt`; the file is intentionally absent until promotion)
+- `FULL_IMAGE_DIGIT_SHADOW_DEVICE`: inference device (default follows `DIGIT_DEVICE`)
+- `FULL_IMAGE_DIGIT_SHADOW_CONFIDENCE`: digit-box confidence threshold (default: `0.25`)
+- `FULL_IMAGE_DIGIT_SHADOW_IOU`: digit-box NMS IoU threshold (default: `0.7`)
+- `FULL_IMAGE_DIGIT_SHADOW_IMGSZ`: digit-detector inference size (default: `1280`)
+- `FULL_IMAGE_DIGIT_SHADOW_MAX_DETECTIONS`: maximum digit detections (default: `300`)
+- `FULL_IMAGE_DIGIT_SHADOW_ROI_EXPAND_X`: horizontal ROI expansion ratio (default: `0.26`)
+- `FULL_IMAGE_DIGIT_SHADOW_ROI_EXPAND_Y`: vertical ROI expansion ratio (default: `0.16`)
 
 ## CPU-only vs GPU
 

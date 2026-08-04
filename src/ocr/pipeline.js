@@ -12,7 +12,11 @@ import {
 import { buildDigitCandidates } from './alignment.js';
 import { readDigitsByCells } from './recognition.js';
 import { detectNeuralRoi } from './neural-roi.js';
-import { predictDigitStrip, predictDigitStrip23xx } from './digit-classifier.js';
+import {
+  predictDigitStrip,
+  predictDigitStrip23xx,
+  predictFullImageDigitShadow
+} from './digit-classifier.js';
 
 const resolveNeuralRoiRect = (canvas, roiDetection, roiConfig) => {
   const rawRect = normalizeRectToCanvas(canvas, {
@@ -517,6 +521,38 @@ const buildStripReader23xxSummary = (stripReaderTrace, finalResult) => {
   };
 };
 
+const buildFullImageDigitShadowSummary = (probe, finalResult) => {
+  if (!probe) {
+    return null;
+  }
+  const candidates = Array.isArray(probe.candidates)
+    ? probe.candidates.map((candidate) => ({ ...candidate }))
+    : [];
+  const selectedRotation = finalResult && Number.isFinite(finalResult.angle)
+    ? normalizeAngle(finalResult.angle)
+    : null;
+  const selectedCandidate = selectedRotation === null
+    ? null
+    : candidates.find((candidate) => candidate.rotation === selectedRotation) || null;
+  return {
+    ok: probe.ok === true,
+    reason: probe.reason || null,
+    model: probe.model || null,
+    roiModel: probe.roiModel || null,
+    device: probe.device || null,
+    confidence: Number.isFinite(probe.confidence) ? probe.confidence : 0,
+    meanConfidence: Number.isFinite(probe.meanConfidence) ? probe.meanConfidence : 0,
+    detectionCount: Number.isFinite(probe.detectionCount) ? probe.detectionCount : 0,
+    value: selectedCandidate && selectedCandidate.value ? selectedCandidate.value : null,
+    selectedRotation,
+    orientationSource: selectedRotation === null ? 'unavailable' : 'primary-selected-angle',
+    selectedCandidate,
+    candidates,
+    detections: Array.isArray(probe.detections) ? probe.detections : [],
+    roi: probe.roi || null
+  };
+};
+
 const resolveStripReaderDebug = (stripReaderTrace, finalResult) => {
   if (!stripReaderTrace) {
     return null;
@@ -545,6 +581,7 @@ const finalizeSelection = ({
   candidateTrace = [],
   stripReaderTrace = null,
   stripReader23xxTrace = null,
+  fullImageDigitShadowProbe = null,
   roiGeometry = null
 }) => {
   const rankedEvidence = rankSelectionEvidence(evidenceMap);
@@ -728,6 +765,10 @@ const finalizeSelection = ({
 
   const stripReader = buildStripReaderSummary(stripReaderTrace, finalResult);
   const stripReader23xx = buildStripReader23xxSummary(stripReader23xxTrace, finalResult);
+  const fullImageDigitShadow = buildFullImageDigitShadowSummary(
+    fullImageDigitShadowProbe,
+    finalResult
+  );
 
   pushSelectionLog({
     image: debugLabel,
@@ -754,6 +795,7 @@ const finalizeSelection = ({
     } : null,
     stripReader,
     stripReader23xx,
+    fullImageDigitShadow,
     roiGeometry,
     topCandidates: buildSelectionSummary(rankedEvidence, 3),
     candidateTrace: Array.isArray(candidateTrace) ? candidateTrace : []
@@ -1843,6 +1885,11 @@ const runMeterOcr = async (file, setProgress) => {
       height: roiProbe.rect.height * baseCanvas.height
     });
     const roiRect = resolveNeuralRoiRect(baseCanvas, roiProbe, neuralRoiConfig);
+    const fullImageDigitShadowConfig = OCR_CONFIG.fullImageDigitShadow || {};
+    const fullImageDigitShadowPromise = predictFullImageDigitShadow(
+      file,
+      fullImageDigitShadowConfig
+    );
     const roiGeometry = {
       baseSize: {
         width: baseCanvas.width,
@@ -1888,6 +1935,7 @@ const runMeterOcr = async (file, setProgress) => {
       setProgress,
       scanCanvas: roiCrop
     });
+    const fullImageDigitShadowProbe = await fullImageDigitShadowPromise;
 
     const finalSelection = finalizeSelection({
       debugLabel,
@@ -1899,6 +1947,7 @@ const runMeterOcr = async (file, setProgress) => {
       candidateTrace: roiBranch.candidateTrace || [],
       stripReaderTrace: roiBranch.stripReaderTrace || null,
       stripReader23xxTrace: roiBranch.stripReader23xxTrace || null,
+      fullImageDigitShadowProbe,
       roiGeometry
     });
     const stripReaderDebug = resolveStripReaderDebug(roiBranch.stripReaderTrace || null, finalSelection);

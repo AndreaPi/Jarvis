@@ -9,6 +9,8 @@ Current baseline policy:
 - Evaluation uses `MAE` as the primary promotion signal; `Exact Match` and `No-read` are guardrails.
 - The active local test-set surface is always the live `assets/meter_readings.csv`; derive its changing row count from the file rather than hard-coding it in this playbook.
 - The latest verified promoted ROI + restored promoted per-cell classifier benchmark is the 36-image run from July 23, 2026: `MAE 104.71`, `Exact Match 11/36`, `No-read 1/36`. A standardized same-run ROI diff measured the same promoted stack at `MAE 103.83`, so use paired runs when small runtime variance matters.
+- August 4, 2026 paired 38-image shadow run measured the current production path at `MAE 183.83`, `Exact Match 11/38`, `No-read 2/38`. The balanced48 fold-4 shadow measured `MAE 312.37`, `Exact Match 24/38`, `No-read 8/38` on the complete development surface, but 29 mapped rows overlap its training data. On its leakage-safe fold-4 slice, production was `MAE 40.00`, `Exact Match 3/7`, `No-read 0/7`, while shadow was `MAE 17.67`, `Exact Match 4/7`, `No-read 1/7`. Keep it disabled because the no-read guardrail failed.
+- August 4 bounded sensitivity: confidence `0.20` with unchanged NMS IoU `0.70` improves tuned fold 4 to `MAE 15.14`, `Exact Match 5/7`, `No-read 0/7` by retaining `meter_20260423`'s final `7` at confidence `0.217`. The complete diagnostic rejects that global change because it also admits wrong `meter_20260724` value `5348` at confidence `0.218`, worsening shadow MAE to `386.59`. Keep confidence `0.25`; fold 4 is now tuning data.
 - Historical May 29, 2026 ranker-on/ranker-off control on the then-29-image corpus: ranker-on `MAE 166.07`, `Exact Match 10/29`, `No-read 1/29`; ranker-off `MAE 166.57`, `Exact Match 10/29`, `No-read 1/29`. The ranker remains enabled because it slightly improved `MAE` without worsening guardrails on that corpus.
 - Re-run the UI `Run test set` before treating any metric as the current promotion target.
 - `meter_20260112.JPEG`, `meter_20260113.jpg`, and `meter_20260219.JPEG` are intentionally removed from the active raw/test/training corpus because their visible readings are ambiguous.
@@ -28,6 +30,15 @@ Digit dataset status (current workflow):
   defines retained legacy-stress sources outside this detector's active scope;
   `meter_20201111.JPEG` is excluded there for severe defocus but remains
   retained in the source and canonical annotation history.
+  Use `npm run qa:full-image-digit-shadow` only after the fold audit selects a
+  checkpoint worth exercising through the browser. Its complete UI comparison
+  contains training overlap; use the matching validation-fold slice or a
+  locked external test set for promotion decisions.
+  The corrected one-image-at-a-time out-of-fold ROI cascade is `12/28` exact,
+  `7` no-reads, and readable `MAE 15.71`, versus register-context oracle
+  `17/28` exact and `1` no-read. All expanded crops cover their reviewed
+  register completely; the material gap is single-image detector
+  padding/scale sensitivity plus digit classification, not ROI coverage.
 - Dataset generation now uses `extract_digit_windows.py` -> `split_digit_windows.py` -> `label_digit_sections.py`.
 - `split_digit_windows.py` canonicalizes orientation (major axis + optional reading-direction `flip180` overrides) before equispaced 4-way split.
 - Small reviewed canonical-strip fixes live in `data/digit_dataset/manifests/canonical_overrides.csv`; regenerate sections, labels, synthetic train sections, and `qa:strip-dataset` after changing it.
@@ -36,15 +47,13 @@ Digit dataset status (current workflow):
 - Synthetic generation remains train-only (`sections_synthetic/train`) and is mixed into training with `--synthetic-target-ratio`.
 - As of May 27, 2026, the digit dataset intentionally has no validation split: `meter_20260323.JPEG` moved into train, while `meter_20260327.JPEG` remains a fixed hard test holdout. Use grouped source-image CV on the train pool for model experiments; the fixed test image is a historical diagnostic, not a promotion gate.
 
-## Immediate Next Steps (July 23, 2026)
+## Immediate Next Steps (August 4, 2026)
 
-1. Keep the whole-strip reader shadow-only until its exact-match rate and `MAE` beat the current per-cell primary path.
-2. Treat the July 23 canonical strip-window QA pass as accepted for the 36-image digit corpus. The seven new June/July sources are readable and label-consistent, including their transition-wheel states.
-3. Do not promote the July four-head strip-reader fine-tune. Focused runtime QA remained `1/7` exact and the fixed hard holdout remained `0/1` exact.
-4. Keep the restored promoted per-cell digit classifier as the safety baseline. The July clean + balanced-synthetic fine-tune improved grouped CV from `48.6%` to `67.9%`, then failed the 36-image UI gate at `MAE 3063.31`, `Exact Match 0/36`, `No-read 1/36`.
-5. Keep the existing `23xx` checkpoint shadow-only and reject the July retrain. Its CV produced `0` guard false positives, `33` false negatives, and no accepted predictions; focused runtime QA also accepted none.
-6. Keep the June 9 ROI checkpoint promoted. The July retrain reduced readable-row `MAE` from `103.83` to `75.50`, but exact match fell from `11/36` to `8/36` and no-read rose from `1/36` to `12/36`.
-7. Verify each OCR tuning change on the full test set with `MAE` + guardrails (`Exact Match`, `No-read`) before keeping it.
+1. Keep the balanced48 fold-4 detector shadow-only. It improved exact match and MAE on its seven unseen fold-4 images but added one no-read, so it fails the promotion guardrail.
+2. Keep full-image shadow confidence at `0.25`. The lower `0.20` setting cannot distinguish the recovered true `7` at confidence `0.217` from the false leading `5` at `0.218`.
+3. Use the reviewed `meter_20260423` versus `meter_20260724` box pair to guide the next model/data improvement; do not spend another iteration on scalar confidence or NMS tuning.
+4. Do not use the shadow's complete development result or now-tuned fold 4 as fresh generalization evidence. Require different unseen images or the locked external set before promotion.
+5. Keep the restored promoted per-cell digit classifier as the safety baseline and keep both strip readers shadow-only.
 
 ## Goals
 
@@ -146,9 +155,12 @@ npm run qa:cell-crops
 npm run qa:runtime-failure-dataset
 npm run qa:runtime-failure-dataset:selected
 npm run qa:digit-classifier-cv
+npm run qa:full-image-digit-errors
+npm run qa:full-image-digit-shadow
+npm run qa:full-image-digit-shadow-sensitivity
 ```
 
-They write timestamped reports under `output/strip-dataset-qa/`, `output/ocr-candidate-oracle/`, `output/strip-runtime-qa/`, `output/cell-crop-failure-qa/`, and `output/runtime-failure-dataset-qa/`. Run `qa:strip-dataset` after digit-window regeneration and visually accept the canonical strips before using them for retraining. Use `qa:runtime-failure-dataset` after exporting runtime failure cells so hard-example crops can be reviewed before any fine-tuning run. Use `qa:runtime-failure-dataset:selected` when the review should focus only on the UI-selected failure candidate for each image.
+They write timestamped reports under `output/strip-dataset-qa/`, `output/ocr-candidate-oracle/`, `output/strip-runtime-qa/`, `output/cell-crop-failure-qa/`, `output/runtime-failure-dataset-qa/`, `output/full-image-digit-error-audit/`, `output/full-image-digit-shadow-qa/`, and `output/full-image-digit-shadow-sensitivity/`. Run `qa:strip-dataset` after digit-window regeneration and visually accept the canonical strips before using them for retraining. Use `qa:runtime-failure-dataset` after exporting runtime failure cells so hard-example crops can be reviewed before any fine-tuning run. Use `qa:runtime-failure-dataset:selected` when the review should focus only on the UI-selected failure candidate for each image. Use `qa:full-image-digit-errors` after a complete detector CV recipe to compare frozen full-image predictions with the production ROI-cropped cascade and ground-truth crop oracles before another training run. Use `qa:full-image-digit-shadow` for the final non-selecting browser comparison of one checkpoint, and judge its fold-matched slice separately from rows it trained on. Use the bounded sensitivity runner only for diagnosis; after tuning, its selected fold is no longer fresh promotion evidence.
 
 ## Digit Classifier Recovery Notes
 

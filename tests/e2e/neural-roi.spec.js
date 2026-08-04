@@ -127,6 +127,23 @@ const buildDigitStripReader23xxPayload = (value = '2311', options = {}) => {
   });
 };
 
+const buildFullImageDigitShadowPayload = (value = '9999') => JSON.stringify({
+  ok: true,
+  reason: null,
+  model: 'mock-full-image-digit.pt',
+  roi_model: 'mock-roi.pt',
+  device: 'cpu',
+  confidence: 0.81,
+  mean_confidence: 0.9,
+  detection_count: 4,
+  detections: [],
+  roi: {
+    status: 'accepted',
+    confidence: 0.9
+  },
+  candidates: [0, 90, 180, 270].map((rotation) => ({ rotation, value }))
+});
+
 const installDigitClassifierMock = async (page, options = {}) => {
   const {
     digits = ['0', '0', '0', '0'],
@@ -256,6 +273,24 @@ const installDigitStripReader23xxMock = async (page, options = {}) => {
     });
   });
 
+  return {
+    getCalls: () => calls
+  };
+};
+
+const installFullImageDigitShadowMock = async (page, value = '9999') => {
+  let calls = 0;
+  await page.route('**/digit/predict-full-image-shadow', async (route) => {
+    calls += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: {
+        'access-control-allow-origin': '*'
+      },
+      body: buildFullImageDigitShadowPayload(value)
+    });
+  });
   return {
     getCalls: () => calls
   };
@@ -475,6 +510,51 @@ test('completes with a detected reading when neural ROI and classifier succeed',
   expect(selectionLog.candidateTrace.some((entry) => (
     entry.stripReader23xx && entry.stripReader23xx.predictedValue === '2311'
   ))).toBe(true);
+});
+
+test('logs the full-image digit detector without changing the selected reading', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__JARVIS_OCR_CONFIG_OVERRIDE__ = {
+      fullImageDigitShadow: {
+        enabled: true
+      }
+    };
+  });
+  await installDigitClassifierMock(page, {
+    digits: ['2', '3', '1', '1'],
+    confidence: 0.98
+  });
+  await installDigitStripReaderMock(page, { value: '2311', confidence: 0.99 });
+  await installDigitStripReader23xxMock(page, { value: '2311', accepted: true });
+  const shadowMock = await installFullImageDigitShadowMock(page, '9999');
+  await page.route('**/roi/detect', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: {
+        'access-control-allow-origin': '*'
+      },
+      body: successPayload
+    });
+  });
+  await openAppAndUploadImage(page);
+
+  await page.getByRole('button', { name: 'Read meter' }).click({ force: true });
+
+  await expect(page.locator('#reading-input')).toHaveValue('2311');
+  const selectionLog = await page.evaluate(() => {
+    const logs = window.__jarvisOcrSelectionLogs || [];
+    return logs[logs.length - 1] || null;
+  });
+  expect(shadowMock.getCalls()).toBe(1);
+  expect(selectionLog.selected.value).toBe('2311');
+  expect(selectionLog.fullImageDigitShadow.value).toBeNull();
+  expect(selectionLog.fullImageDigitShadow.orientationSource).toBe('unavailable');
+  expect(selectionLog.fullImageDigitShadow.candidates).toHaveLength(4);
+  expect(selectionLog.fullImageDigitShadow.candidates.every((candidate) => (
+    candidate.value === '9999'
+  ))).toBe(true);
+  expect(selectionLog.fullImageDigitShadow.model).toBe('mock-full-image-digit.pt');
 });
 
 test('asks for manual input when classifier endpoint fails after ROI success', async ({ page }) => {

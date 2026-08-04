@@ -122,6 +122,14 @@ const OCR_CONFIG = {
     disableAfterFailures: 2,
     cooldownMs: 8000
   },
+  fullImageDigitShadow: {
+    enabled: false,
+    endpoint: 'http://127.0.0.1:8001/digit/predict-full-image-shadow',
+    timeoutMs: 8000,
+    shadowOnly: true,
+    disableAfterFailures: 2,
+    cooldownMs: 8000
+  },
   neuralRoi: {
     enabled: true,
     endpoint: 'http://127.0.0.1:8001/roi/detect',
@@ -166,6 +174,22 @@ const applyRuntimeOverrides = () => {
     OCR_CONFIG.digitStripReader23xx = {
       ...OCR_CONFIG.digitStripReader23xx,
       ...overrides.digitStripReader23xx
+    };
+  }
+  if (overrides.fullImageDigitShadow && typeof overrides.fullImageDigitShadow === 'object') {
+    OCR_CONFIG.fullImageDigitShadow = {
+      ...OCR_CONFIG.fullImageDigitShadow,
+      ...overrides.fullImageDigitShadow
+    };
+  }
+  if (overrides.neuralRoi && typeof overrides.neuralRoi === 'object') {
+    OCR_CONFIG.neuralRoi = {
+      ...OCR_CONFIG.neuralRoi,
+      ...overrides.neuralRoi,
+      sanity: {
+        ...OCR_CONFIG.neuralRoi.sanity,
+        ...(overrides.neuralRoi.sanity || {})
+      }
     };
   }
 };

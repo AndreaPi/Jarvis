@@ -10,7 +10,7 @@
     "serve": "python3 -m http.server 8000",
     "dev": "python3 -m http.server 8000",
     "test:e2e": "playwright test",
-    "test:backend": "backend/.venv/bin/python -m unittest backend.test_app backend.test_build_roi_dataset backend.test_build_full_image_digit_dataset backend.test_train_full_image_digit_detector backend.test_evaluate_full_image_digit_detector backend.test_runtime_digit_pipeline",
+    "test:backend": "backend/.venv/bin/python -m unittest discover -s backend -p 'test_*.py'",
     "test:scripts": "node --test scripts/test-*.cjs && python3 -m unittest discover -s scripts -p 'test_*.py'",
     "test:e2e:headed": "playwright test --headed",
     "benchmark:roi-diff": "node scripts/compare-roi-checkpoints.cjs",
@@ -21,7 +21,10 @@
     "qa:roi-geometry-audit": "node scripts/export-roi-geometry-audit.cjs",
     "qa:runtime-failure-dataset": "backend/.venv/bin/python backend/export_runtime_failure_dataset_qa.py",
     "qa:runtime-failure-dataset:selected": "backend/.venv/bin/python backend/export_runtime_failure_dataset_qa.py --selected-only",
-    "qa:digit-classifier-cv": "backend/.venv/bin/python backend/evaluate_digit_classifier_finetune.py"
+    "qa:digit-classifier-cv": "backend/.venv/bin/python backend/evaluate_digit_classifier_finetune.py",
+    "qa:full-image-digit-errors": "backend/.venv/bin/python backend/export_full_image_digit_error_audit.py",
+    "qa:full-image-digit-shadow": "node scripts/export-full-image-digit-shadow-qa.cjs",
+    "qa:full-image-digit-shadow-sensitivity": "backend/.venv/bin/python backend/evaluate_full_image_digit_shadow_sensitivity.py"
   },
   "devDependencies": {
     "@playwright/test": "1.58.1"
