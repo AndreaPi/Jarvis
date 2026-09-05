@@ -340,5 +340,50 @@
       "width": 0.117891,
       "height": 0.231631
     }
+  },
+  {
+    "filename": "meter_20260805.jpeg",
+    "rectNorm": {
+      "x": 0.2941055,
+      "y": 0.4209215,
+      "width": 0.139477,
+      "height": 0.257783
+    }
+  },
+  {
+    "filename": "meter_20260818.jpeg",
+    "rectNorm": {
+      "x": 0.317352,
+      "y": 0.34122,
+      "width": 0.129514,
+      "height": 0.252802
+    }
+  },
+  {
+    "filename": "meter_20260821.jpeg",
+    "rectNorm": {
+      "x": 0.257576,
+      "y": 0.3349935,
+      "width": 0.127854,
+      "height": 0.239103
+    }
+  },
+  {
+    "filename": "meter_20260828.jpeg",
+    "rectNorm": {
+      "x": 0.2741805,
+      "y": 0.349938,
+      "width": 0.116231,
+      "height": 0.237858
+    }
+  },
+  {
+    "filename": "meter_20260903.jpeg",
+    "rectNorm": {
+      "x": 0.2775015,
+      "y": 0.2714815,
+      "width": 0.141137,
+      "height": 0.292653
+    }
   }
 ]

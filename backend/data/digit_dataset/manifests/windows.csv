@@ -36,4 +36,9 @@ train,meter_20260719.JPEG,windows/train/meter_20260719.png,2346,1019,1611,359,92
 train,meter_20260721.JPEG,windows/train/meter_20260721.png,2347,1049,1469,419,1014
 train,meter_20260724.JPEG,windows/train/meter_20260724.png,2348,974,1513,410,880
 train,meter_20260803.JPEG,windows/train/meter_20260803.png,2349,977,1267,542,1232
+train,meter_20260805.jpeg,windows/train/meter_20260805.png,2350,780,1531,641,1372
+train,meter_20260818.jpeg,windows/train/meter_20260818.png,2351,858,1213,595,1345
+train,meter_20260821.jpeg,windows/train/meter_20260821.png,2352,678,1196,588,1273
+train,meter_20260828.jpeg,windows/train/meter_20260828.png,2353,738,1258,534,1265
+train,meter_20260903.jpeg,windows/train/meter_20260903.png,2354,728,906,649,1557
 test,meter_20260327.JPEG,windows/test/meter_20260327.png,2321,614,669,128,300
