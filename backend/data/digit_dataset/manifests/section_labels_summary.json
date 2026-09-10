@@ -1,19 +1,19 @@
 {
-  "labels_exported": 172,
+  "labels_exported": 176,
   "labels_skipped": 0,
   "section_count": 4,
   "split_counts": {
-    "train": 168,
+    "train": 172,
     "val": 0,
     "test": 4
   },
   "digit_counts": {
     "0": 6,
     "1": 16,
-    "2": 55,
-    "3": 54,
+    "2": 56,
+    "3": 55,
     "4": 10,
-    "5": 9,
+    "5": 11,
     "6": 4,
     "7": 7,
     "8": 7,
