@@ -5,6 +5,12 @@
 - Backend-specific runtime, training, and API instructions live in `backend/AGENTS.md`.
 - OCR-specific behavior, benchmarks, and tuning policy live in `src/ocr/AGENTS.md`.
 
+## Task Scope and Completion
+- Read the guidance and source relevant to the requested change; a small edit does not require a full repository or documentation audit.
+- Follow the user's requested scope and existing session authorization. Continue routine authorized work through implementation and relevant validation; do not add a first-draft approval stop.
+- Reuse human annotation review for the same unchanged source and annotation. For user-supplied manual ROI and digit-box exports, verified equivalent import plus agent visual QA satisfies the corresponding review gate without a second human preview confirmation; follow the relevant ingestion skill for checks and exceptions. Automatically generated boxes still require human Make Sense review. Changed source/annotation geometry or unresolved QA requires renewed review. ROI and digit-box review remain distinct, and artifact-retention and model-promotion gates still apply.
+- When human input is pending, finish independent authorized checks and report the prepared result, pending decision, and next step. Do not describe pending annotations as training-ready.
+
 ## Project Structure & Module Organization
 - `index.html`: Single-page UI layout and content.
 - `styles.css`: Global styles and visual system.
@@ -44,6 +50,7 @@ Open `http://localhost:8000` after starting the frontend server.
 - `test:e2e` contains Playwright browser integration and user-flow regressions; mock the backend unless the behavior specifically requires a live service.
 - `qa:*` commands and the UI `Run test set` are model/data benchmarks, not automated code-test cases. Their image counts must not be added to the automated test count.
 - Add an automated test when it protects durable behavior, retained data/artifacts, a user-facing workflow, or a confirmed regression. Prefer one table-driven test over several near-identical helper tests, and keep one-off experiment/report checks in the relevant QA workflow.
+- Run checks appropriate to the changed behavior. Documentation-only edits need source/link validation and `git diff --check`; they do not trigger OCR benchmarks merely because they describe OCR. After relevant checks pass, repeat them only for further changes, failures, or unresolved concerns.
 - CI: `.github/workflows/e2e.yml` runs on each pull request and on pushes to `master`.
 - Frontend manual checks: upload an image, run OCR, verify the email draft fields, and confirm the Gmail draft link.
 - Backend sanity checks: `GET /health` and confirm `ready: true`, `roi_ready: true`, `digit_ready: true`, `strip_digit_ready: true`, and the expected model paths when all checkpoints are present.

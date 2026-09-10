@@ -117,7 +117,12 @@ previews from the canonical manifest.
 Before any training:
 
 1. Confirm `manifests/summary.json` contains no `pending` review status.
-2. Inspect the regenerated contact sheet.
+2. Verify the imported boxes match the user's Make Sense export, source-image
+   identity, and approved orientation. Inspect the regenerated target previews
+   at full resolution; the contact sheet is only an overview. A faithful import
+   with passing consistency checks and agent visual QA needs no second human
+   preview approval. Bootstrap boxes still require human review; discrepancies,
+   changed geometry/orientation, or visual ambiguity require renewed review.
 3. Run `npm run test:backend`.
 4. Keep the historical sanity holdout out of all model-selection and
    augmentation inputs.

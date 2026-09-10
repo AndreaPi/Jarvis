@@ -1,4 +1,4 @@
 interface:
   display_name: "Jarvis Meter To ROI Sync"
-  short_description: "Ingest meter photos and sync ROI labels in one run."
-  default_prompt: "Use $jarvis-meter-to-roi-sync to ingest new meter photos, collect and validate manual YOLO ROI labels, rebuild the ROI dataset, stop for overlay approval, and publish only the approved DVC artifacts."
+  short_description: "Ingest photos or resume manual ROI review."
+  default_prompt: "Use $jarvis-meter-to-roi-sync to ingest or resume the requested batch with manual ROI labels, verify import consistency and inspect previews, requesting human review only for missing labels or unresolved discrepancies before authorized publication."
