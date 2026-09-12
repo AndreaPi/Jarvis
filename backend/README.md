@@ -134,6 +134,10 @@ python build_full_image_digit_dataset.py
 This writes the canonical review manifest and derived YOLO labels under
 `data/full_image_digit_dataset/`. It also creates a disposable Make Sense
 review package under `../output/full-image-digit-review/`.
+Rebuilds stop if a retained annotation's reading, split, orientation, or source
+dimensions have changed. Reconcile and review those changes before rebuilding.
+Training checks each class/box pair against canonical reviewed coordinates,
+allowing only YOLO serialization rounding; rebuild stale labels first.
 
 `data/full_image_digit_dataset/manifests/source_exclusions.csv` retains
 legacy-stress sources for diagnostics while omitting them from active labels,
@@ -186,6 +190,14 @@ arguments or a stripped/completed checkpoint, and lets Ultralytics restore the
 epoch, optimizer, scheduler, and early-stopping state. Repeat any crop-recipe
 flags from the original command exactly.
 
+New runs save `dataset_provenance.json` in the actual run directory before
+the first epoch, so interruptions retain it. Resume requires unchanged fold,
+annotation/fold/exclusion manifests, materialized image and label contents,
+crop recipe, augmentation settings, and Ultralytics version. The original
+provenance is preserved on resume. Older runs without the required provenance
+cannot be resumed safely; start a new run instead of reconstructing it from
+the current dataset. Device and worker settings may still change.
+
 Evaluate its best checkpoint on that same full-image validation fold:
 
 ```bash
@@ -200,6 +212,13 @@ complete-reading exact match, no-read, readable digit accuracy, readable
 and never reads the historical sanity holdout or a source listed in
 `manifests/source_exclusions.csv`.
 
+Before reading the dataset or loading the model, the evaluator requires
+`dataset_provenance.json` in the checkpoint's run directory and checks that
+its recorded `selected_fold` matches `--fold`. Missing or invalid provenance
+and a different fold stop evaluation. Keep the original training provenance
+with copied checkpoints; directory names are not evidence of the training fold.
+The evaluation JSON records the validated provenance path, hash, and fold.
+
 After all folds for one recipe have been evaluated, export the visual error
 audit from the repository root:
 
@@ -212,9 +231,16 @@ and writes a timestamped report under
 `output/full-image-digit-error-audit/`. It preserves the frozen full-image
 predictions, runs the promoted ROI detector with production sanity and crop
 expansion, and applies each image's out-of-fold digit checkpoint to that crop.
+Before inference, each checkpoint must match the SHA-256 in its evaluation;
+missing or mismatched hashes stop the audit. Reports represent undefined error
+statistics as `null` in JSON and `n/a` in HTML, including all-no-read runs.
 Each cascade crop is inferred separately, matching the deployed endpoint;
 batching differently shaped crops can alter Ultralytics padding and produced
 optimistic historical cascade results.
+The runtime and audit also convert RGB crops to the BGR NumPy format expected
+by Ultralytics. All August 4 cascade, shadow, and sensitivity results below
+predate this color-channel fix; retain them as historical evidence and rerun
+the corrected paths before drawing quality or threshold conclusions.
 It also compares diagnostic ground-truth-derived register and single-aperture
 crops. Its
 `transition-review.csv` is a worksheet only: review the blank fields before
@@ -249,12 +275,12 @@ However, the paired complete UI diagnostic also accepts a wrong `5348` for
 shadow `MAE` from `312.37` to `386.59`. Keep the runtime default at `0.25`;
 threshold tuning alone cannot separate these cases.
 
-After correcting the error audit to exact one-image runtime inference, the
-28-image out-of-fold cascade is `12/28` exact with `7` no-reads and readable
+The historical August 4 audit, after the batching fix but before the color fix,
+measured its 28-image out-of-fold cascade at `12/28` exact with `7` no-reads and readable
 `MAE 15.71`, versus the register-context oracle's `17/28`, `1`, and `213.22`.
-Every production-expanded crop covers 100% of its reviewed register. The gap
-therefore points to single-image detector padding/scale sensitivity and digit
-classification, not insufficient ROI expansion.
+Every production-expanded crop covered 100% of its reviewed register. That
+prompted investigation of padding/scale sensitivity and digit classification;
+the color correction requires a fresh comparison before retaining that diagnosis.
 
 The selected fold becomes validation, the other four folds become train, and
 the historical one-image sanity holdout remains test-only. It is not a
@@ -453,7 +479,7 @@ checkpoint/model-quality comparisons remain separate `qa:*` workflows.
 
 ## 4) Endpoints
 
-- `GET /health`: model readiness (`ready`, `roi_ready`, `digit_ready`, `strip_digit_ready`, `strip_digit_23xx_ready`, `full_image_digit_shadow_ready`) + effective model/device config and `max_upload_bytes`. Missing optional full-image weights do not make the canonical ROI service unready.
+- `GET /health`: model readiness (`ready`, `roi_ready`, `digit_ready`, `strip_digit_ready`, `strip_digit_23xx_ready`, `full_image_digit_shadow_ready`) + effective model/device config and `max_upload_bytes`. Missing or unloadable optional full-image weights report a shadow error without making the canonical ROI service unready.
 - `POST /roi/detect`: multipart upload (`image`) and returns normalized bbox + confidence.
 - `POST /digit/predict`: multipart upload (`image`) and returns the predicted digit + confidence.
 - `POST /digit/predict-cells`: multipart upload (`images`, repeated field) for batch cell decoding.

@@ -256,10 +256,47 @@ def detections_from_result(result: object) -> list[dict[str, float | int]]:
   return detections
 
 
-def default_output_path(checkpoint_path: Path, fold: int) -> Path:
+def checkpoint_run_dir(checkpoint_path: Path) -> Path:
   parent = checkpoint_path.parent
-  run_dir = parent.parent if parent.name == "weights" else parent
-  return run_dir / f"sequence_evaluation_fold{fold}.json"
+  return parent.parent if parent.name == "weights" else parent
+
+
+def validate_checkpoint_fold(
+  checkpoint_path: Path,
+  selected_fold: int,
+) -> dict[str, object]:
+  provenance_path = checkpoint_run_dir(checkpoint_path) / "dataset_provenance.json"
+  try:
+    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+  except FileNotFoundError as error:
+    raise FileNotFoundError(
+      f"Missing checkpoint training provenance: {provenance_path}. "
+      "Evaluation requires the original dataset_provenance.json from the training run."
+    ) from error
+  except json.JSONDecodeError as error:
+    raise ValueError(f"Invalid checkpoint training provenance JSON: {provenance_path}") from error
+
+  recorded_fold = provenance.get("selected_fold") if isinstance(provenance, dict) else None
+  if type(recorded_fold) is not int or recorded_fold not in range(CV_FOLD_COUNT):
+    raise ValueError(
+      f"Checkpoint training provenance must record an integer selected_fold "
+      f"in 0..{CV_FOLD_COUNT - 1}: {provenance_path}"
+    )
+  if recorded_fold != selected_fold:
+    raise ValueError(
+      f"Checkpoint was trained with validation fold {recorded_fold}, "
+      f"but --fold {selected_fold} was requested. "
+      f"Use --fold {recorded_fold} to avoid evaluating a training fold."
+    )
+  return {
+    "path": str(provenance_path),
+    "sha256": file_sha256(provenance_path),
+    "selected_fold": recorded_fold,
+  }
+
+
+def default_output_path(checkpoint_path: Path, fold: int) -> Path:
+  return checkpoint_run_dir(checkpoint_path) / f"sequence_evaluation_fold{fold}.json"
 
 
 def main() -> None:
@@ -285,6 +322,7 @@ def main() -> None:
   )
   if not checkpoint_path.exists():
     raise FileNotFoundError(f"Checkpoint does not exist: {checkpoint_path}")
+  checkpoint_provenance = validate_checkpoint_fold(checkpoint_path, args.fold)
 
   source_exclusions = read_source_exclusions(source_exclusions_path)
   annotation_rows = filter_excluded_annotations(
@@ -381,6 +419,7 @@ def main() -> None:
       "fold": args.fold,
       "checkpoint": str(checkpoint_path),
       "checkpoint_sha256": file_sha256(checkpoint_path),
+      "checkpoint_training_provenance": checkpoint_provenance,
       "annotations_sha256": file_sha256(annotations_path),
       "cv_folds_sha256": file_sha256(folds_path),
       "source_exclusions_sha256": (

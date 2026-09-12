@@ -552,9 +552,23 @@ def materialize_fold_dataset(
       raise FileNotFoundError(f"Missing source label: {source_label}")
     label_rows = parse_label_rows(source_label)
     label_classes = [class_id for class_id, *_ in label_rows]
-    expected_classes = sorted(int(row["class_id"]) for row in rows)
-    if sorted(label_classes) != expected_classes:
-      raise ValueError(f"Label classes differ from reviewed annotations for {filename}")
+    unmatched = list(label_rows)
+    for row in rows:
+      expected = tuple(float(row[key]) for key in ("x_center", "y_center", "width", "height"))
+      match = next((
+        index for index, label in enumerate(unmatched)
+        if label[0] == int(row["class_id"])
+        and all(
+          math.isfinite(actual) and math.isclose(actual, value, rel_tol=0, abs_tol=5.1e-7)
+          for actual, value in zip(label[1:], expected, strict=True)
+        )
+      ), None)
+      if match is None:
+        raise ValueError(
+          f"Label geometry or classes differ from reviewed annotations for {filename}. "
+          "Rebuild labels from the canonical annotations before training."
+        )
+      unmatched.pop(match)
 
     target_image_dir = destination / "images" / target_split
     target_label_dir = destination / "labels" / target_split
@@ -691,11 +705,92 @@ def resolve_device(value: str) -> str | None:
   return normalized
 
 
+RESUME_PROVENANCE_FIELDS = (
+  "selected_fold",
+  "annotations_sha256",
+  "cv_folds_sha256",
+  "source_exclusions_sha256",
+  "materialized_dataset_sha256",
+  "train_register_crops",
+  "train_balanced_digit_crops",
+  "augmentation",
+  "ultralytics_version",
+)
+
+
+def materialized_dataset_sha256(dataset_root: Path) -> str:
+  artifacts = {
+    path.relative_to(dataset_root).as_posix(): file_sha256(path)
+    for directory in ("images", "labels")
+    for path in sorted((dataset_root / directory).rglob("*"))
+    if path.is_file() and (directory == "images" or path.suffix == ".txt")
+  }
+  return hashlib.sha256(
+    json.dumps(artifacts, sort_keys=True).encode("utf-8")
+  ).hexdigest()
+
+
+def validate_resume_provenance(
+  run_dir: Path,
+  requested: dict[str, object],
+) -> None:
+  path = run_dir / "dataset_provenance.json"
+  try:
+    original = json.loads(path.read_text(encoding="utf-8"))
+  except FileNotFoundError as error:
+    raise ValueError(
+      f"Cannot resume without original training provenance: {path}. "
+      "Start a new run if the original provenance was not retained."
+    ) from error
+  except json.JSONDecodeError as error:
+    raise ValueError(f"Invalid training provenance JSON: {path}") from error
+  if not isinstance(original, dict):
+    raise ValueError(f"Invalid training provenance object: {path}")
+  missing = [key for key in RESUME_PROVENANCE_FIELDS if key not in original]
+  if missing:
+    raise ValueError(
+      "Original provenance cannot verify a safe resume; missing fields: "
+      + ", ".join(missing)
+      + ". Start a new run; do not reconstruct provenance from the current dataset."
+    )
+  mismatches = [
+    key for key in RESUME_PROVENANCE_FIELDS
+    if key not in requested or json.dumps(original[key], sort_keys=True)
+    != json.dumps(requested[key], sort_keys=True)
+  ]
+  if mismatches:
+    raise ValueError(
+      "Resume dataset or recipe differs from original training provenance: "
+      + ", ".join(mismatches)
+    )
+
+
+def record_training_provenance(
+  trainer: object,
+  provenance: dict[str, object],
+  *,
+  resume: bool,
+) -> None:
+  run_dir = Path(trainer.save_dir)
+  if resume:
+    validate_resume_provenance(run_dir, provenance)
+    # Resume can reuse a surviving temporary dataset from the checkpoint.
+    # Verify that actual input too, not only the newly materialized copy.
+    actual_dataset = Path(trainer.args.data).parent
+    if materialized_dataset_sha256(actual_dataset) != provenance["materialized_dataset_sha256"]:
+      raise ValueError("Ultralytics selected a resume dataset with different image or label contents.")
+    return
+  # Ultralytics may suffix the requested run name; use its actual save_dir.
+  with (run_dir / "dataset_provenance.json").open("x", encoding="utf-8") as handle:
+    handle.write(json.dumps(provenance, indent=2) + "\n")
+
+
 def validate_resume_checkpoint(
   checkpoint_path: Path,
   checkpoint: dict,
   args: argparse.Namespace,
   expected_run_dir: Path,
+  provenance: dict[str, object],
 ) -> int:
   if checkpoint_path.name != "last.pt":
     raise ValueError("--resume-from must point to an interrupted run's weights/last.pt")
@@ -737,6 +832,7 @@ def validate_resume_checkpoint(
     raise ValueError(
       f"Checkpoint already completed {epoch + 1} of {args.epochs} epochs"
     )
+  validate_resume_provenance(actual_run_dir, provenance)
   return epoch + 1
 
 
@@ -784,6 +880,7 @@ def main() -> None:
       **dataset_summary,
       "annotations_sha256": file_sha256(annotations_path),
       "cv_folds_sha256": file_sha256(folds_path),
+      "materialized_dataset_sha256": materialized_dataset_sha256(dataset_root),
       "source_exclusions_sha256": (
         file_sha256(source_exclusions_path)
         if source_exclusions_path.exists()
@@ -810,6 +907,10 @@ def main() -> None:
       print(f"Validated temporary dataset: {dataset_yaml}")
       return
 
+    resume = resume_from_path is not None
+    if resume:
+      validate_resume_provenance(run_dir, provenance)
+
     matplotlib_cache = Path(tempfile.gettempdir()) / "jarvis-matplotlib-cache"
     matplotlib_cache.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("MPLCONFIGDIR", str(matplotlib_cache))
@@ -818,7 +919,6 @@ def main() -> None:
     except ImportError as error:
       raise RuntimeError("ultralytics is required. Install backend/requirements.txt.") from error
 
-    resume = resume_from_path is not None
     if resume:
       if not resume_from_path.exists():
         raise FileNotFoundError(f"Resume checkpoint does not exist: {resume_from_path}")
@@ -828,6 +928,7 @@ def main() -> None:
         model.ckpt or {},
         args,
         run_dir,
+        provenance,
       )
       print(
         f"Resuming {run_name} after {completed_epochs} completed epochs "
@@ -863,6 +964,10 @@ def main() -> None:
     )
     if resume:
       train_kwargs["resume"] = True
+    model.add_callback(
+      "on_pretrain_routine_start",
+      lambda trainer: record_training_provenance(trainer, provenance, resume=resume),
+    )
     model.train(**train_kwargs)
 
     trainer = getattr(model, "trainer", None)
@@ -873,10 +978,6 @@ def main() -> None:
     best_path = Path(getattr(trainer, "best", "") or save_dir / "weights" / "best.pt")
     if not best_path.exists():
       raise FileNotFoundError(f"Training completed but best checkpoint is missing: {best_path}")
-    (save_dir / "dataset_provenance.json").write_text(
-      json.dumps(provenance, indent=2) + "\n",
-      encoding="utf-8",
-    )
     print(f"Best checkpoint: {best_path}")
 
     if copy_to_path is not None:

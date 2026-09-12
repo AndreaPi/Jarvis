@@ -4,11 +4,16 @@ This playbook documents the practical loop used to improve OCR quality in Jarvis
 
 Current baseline policy:
 
+The August 4 full-image cascade, shadow, and sensitivity measurements and next
+steps below predate the RGB/BGR input correction. They are historical evidence;
+rerun the corrected paths before using their quality or threshold conclusions.
+Keep the detector unpromoted and its default confidence unchanged meanwhile.
+
 - Use the latest UI **Run test set** histogram as source of truth (`window.__jarvisLastTestSetHistogram`).
 - Treat fixed numeric snapshots as historical only; they go stale quickly as thresholds/ranking change.
 - Evaluation uses `MAE` as the primary promotion signal; `Exact Match` and `No-read` are guardrails.
 - The active local test-set surface is always the live `assets/meter_readings.csv`; derive its changing row count from the file rather than hard-coding it in this playbook.
-- The latest verified promoted ROI + restored promoted per-cell classifier benchmark is the 36-image run from July 23, 2026: `MAE 104.71`, `Exact Match 11/36`, `No-read 1/36`. A standardized same-run ROI diff measured the same promoted stack at `MAE 103.83`, so use paired runs when small runtime variance matters.
+- Historical July 23, 2026 promoted ROI + restored promoted per-cell classifier benchmark on 36 images: `MAE 104.71`, `Exact Match 11/36`, `No-read 1/36`. A standardized same-run ROI diff measured the same promoted stack at `MAE 103.83`, so use paired runs when small runtime variance matters. The September 12 verification on the first PR's 43-photo snapshot is recorded in `docs/full-image-digit-dataset.md`.
 - August 4, 2026 paired 38-image shadow run measured the current production path at `MAE 183.83`, `Exact Match 11/38`, `No-read 2/38`. The balanced48 fold-4 shadow measured `MAE 312.37`, `Exact Match 24/38`, `No-read 8/38` on the complete development surface, but 29 mapped rows overlap its training data. On its leakage-safe fold-4 slice, production was `MAE 40.00`, `Exact Match 3/7`, `No-read 0/7`, while shadow was `MAE 17.67`, `Exact Match 4/7`, `No-read 1/7`. Keep it disabled because the no-read guardrail failed.
 - August 4 bounded sensitivity: confidence `0.20` with unchanged NMS IoU `0.70` improves tuned fold 4 to `MAE 15.14`, `Exact Match 5/7`, `No-read 0/7` by retaining `meter_20260423`'s final `7` at confidence `0.217`. The complete diagnostic rejects that global change because it also admits wrong `meter_20260724` value `5348` at confidence `0.218`, worsening shadow MAE to `386.59`. Keep confidence `0.25`; fold 4 is now tuning data.
 - Historical May 29, 2026 ranker-on/ranker-off control on the then-29-image corpus: ranker-on `MAE 166.07`, `Exact Match 10/29`, `No-read 1/29`; ranker-off `MAE 166.57`, `Exact Match 10/29`, `No-read 1/29`. The ranker remains enabled because it slightly improved `MAE` without worsening guardrails on that corpus.
@@ -34,11 +39,11 @@ Digit dataset status (current workflow):
   checkpoint worth exercising through the browser. Its complete UI comparison
   contains training overlap; use the matching validation-fold slice or a
   locked external test set for promotion decisions.
-  The corrected one-image-at-a-time out-of-fold ROI cascade is `12/28` exact,
+  The historical August 4 one-image-at-a-time out-of-fold ROI cascade was `12/28` exact,
   `7` no-reads, and readable `MAE 15.71`, versus register-context oracle
   `17/28` exact and `1` no-read. All expanded crops cover their reviewed
-  register completely; the material gap is single-image detector
-  padding/scale sensitivity plus digit classification, not ROI coverage.
+  register completely; rerun with corrected colors before attributing the gap
+  to padding/scale sensitivity or digit classification.
 - Dataset generation now uses `extract_digit_windows.py` -> `split_digit_windows.py` -> `label_digit_sections.py`.
 - `split_digit_windows.py` canonicalizes orientation (major axis + optional reading-direction `flip180` overrides) before equispaced 4-way split.
 - Small reviewed canonical-strip fixes live in `data/digit_dataset/manifests/canonical_overrides.csv`; regenerate sections, labels, synthetic train sections, and `qa:strip-dataset` after changing it.

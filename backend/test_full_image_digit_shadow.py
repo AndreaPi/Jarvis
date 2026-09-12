@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
@@ -48,6 +51,7 @@ class FakeModel:
 
   def predict(self, *, source, **_kwargs):
     self.last_source_shape = source.shape
+    self.last_source_pixel = source[0, 0].tolist()
     return [type("Result", (), {"boxes": FakeBoxes()})()]
 
 
@@ -64,6 +68,29 @@ class StubUpload:
 
 
 class FullImageDigitShadowTests(unittest.TestCase):
+  def test_unloadable_optional_checkpoint_does_not_break_canonical_health(self) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+      checkpoint = Path(directory) / "broken.pt"
+      checkpoint.write_bytes(b"invalid checkpoint")
+      for error in (RuntimeError("incompatible model"), EOFError("truncated"), OSError("unreadable")):
+        with (
+          self.subTest(error=type(error).__name__),
+          patch("ultralytics.YOLO", side_effect=error),
+          patch.object(app_module, "FULL_IMAGE_DIGIT_SHADOW_MODEL_PATH", checkpoint),
+          patch.object(app_module, "_full_image_digit_shadow", None),
+          patch.object(app_module, "_full_image_digit_shadow_error", None),
+          patch.object(app_module, "get_detector"),
+          patch.object(app_module, "get_digit_classifier"),
+          patch.object(app_module, "get_strip_digit_reader"),
+          patch.object(app_module, "get_strip_digit_reader_23xx"),
+        ):
+          payload = app_module.health()
+          self.assertTrue(payload["ready"])
+          self.assertTrue(payload["digit_ready"])
+          self.assertTrue(payload["strip_digit_ready"])
+          self.assertFalse(payload["full_image_digit_shadow_ready"])
+          self.assertIn(str(error), payload["full_image_digit_shadow_error"])
+
   def test_rotation_candidates_preserve_all_four_reading_directions(self) -> None:
     detections = [
       {"class_id": digit, "x_center": 0.5, "y_center": y}
@@ -99,11 +126,12 @@ class FullImageDigitShadowTests(unittest.TestCase):
     shadow._model = FakeModel()
 
     payload = shadow.predict(
-      np.zeros((100, 100, 3), dtype=np.uint8),
+      np.full((100, 100, 3), [255, 40, 10], dtype=np.uint8),
       FakeRoiDetector(),
     )
 
     self.assertTrue(payload["ok"])
+    self.assertEqual(shadow._model.last_source_pixel, [10, 40, 255])
     self.assertEqual(payload["detection_count"], 4)
     self.assertEqual(payload["confidence"], 0.6)
     self.assertEqual(len(payload["candidates"]), 4)

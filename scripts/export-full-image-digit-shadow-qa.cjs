@@ -6,7 +6,6 @@ const fsp = require('node:fs/promises');
 const http = require('node:http');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const { chromium } = require('playwright');
 
 const ROOT_DIR = path.resolve(__dirname, '..');
 const FRONTEND_URL = process.env.JARVIS_FRONTEND_URL || 'http://127.0.0.1:8000';
@@ -90,6 +89,8 @@ const trackedProcess = (command, args, options = {}) => {
   });
   let stdout = '';
   let stderr = '';
+  let startupError = null;
+  child.on('error', (error) => { startupError = error; });
   child.stdout.on('data', (chunk) => {
     stdout = `${stdout}${chunk}`.slice(-8000);
   });
@@ -99,8 +100,9 @@ const trackedProcess = (command, args, options = {}) => {
   return {
     child,
     output: () => ({ stdout, stderr }),
+    startupError: () => startupError,
     stop: async () => {
-      if (child.exitCode !== null || child.signalCode !== null) {
+      if (!child.pid || child.exitCode !== null || child.signalCode !== null) {
         return;
       }
       child.kill('SIGTERM');
@@ -118,10 +120,25 @@ const trackedProcess = (command, args, options = {}) => {
 };
 
 const waitFor = async (probe, tracked, label, timeoutMs = 120000) => {
+  try {
+    return await waitForReady(probe, tracked, label, timeoutMs);
+  } catch (error) {
+    // Startup failed before the caller could receive this process handle.
+    if (tracked) {
+      await tracked.stop();
+    }
+    throw error;
+  }
+};
+
+const waitForReady = async (probe, tracked, label, timeoutMs) => {
   const deadline = Date.now() + timeoutMs;
   let lastError = null;
   while (Date.now() < deadline) {
-    if (tracked && tracked.child.exitCode !== null) {
+    if (tracked?.startupError?.()) {
+      throw new Error(`${label} could not start: ${tracked.startupError().message}`);
+    }
+    if (tracked && (tracked.child.exitCode !== null || tracked.child.signalCode !== null)) {
       const output = tracked.output();
       throw new Error(
         `${label} exited early.\nstdout:\n${output.stdout}\nstderr:\n${output.stderr}`
@@ -212,6 +229,7 @@ const summarize = (rows, valueKey) => {
 };
 
 const runUiBenchmark = async () => {
+  const { chromium } = require('playwright');
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
   try {
@@ -424,7 +442,11 @@ const main = async () => {
   }
 };
 
-main().catch((error) => {
-  process.stderr.write(`${error && error.stack ? error.stack : error}\n`);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    process.stderr.write(`${error && error.stack ? error.stack : error}\n`);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { trackedProcess, waitFor };

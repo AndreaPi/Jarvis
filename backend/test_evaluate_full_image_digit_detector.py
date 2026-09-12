@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+import backend.evaluate_full_image_digit_detector as evaluator
 
 from backend.evaluate_full_image_digit_detector import (
   build_sequence_record,
   sort_detections_in_reading_order,
   summarize_sequence_records,
   validation_annotation_groups,
+  validate_checkpoint_fold,
 )
 
 
@@ -26,6 +33,55 @@ def detection(
 
 
 class FullImageDigitDetectorEvaluationTests(unittest.TestCase):
+  def test_rejects_unverified_checkpoint_fold_before_dataset_or_inference(self) -> None:
+    cases = [
+      ("wrong fold with default CLI fold", '{"selected_fold": 1}', "validation fold 1"),
+      ("missing provenance", None, "original dataset_provenance.json"),
+      ("malformed JSON", "{", "Invalid checkpoint training provenance JSON"),
+      ("missing fold", "{}", "integer selected_fold"),
+      ("invalid root", "[]", "integer selected_fold"),
+      ("boolean fold", '{"selected_fold": false}', "integer selected_fold"),
+      ("string fold", '{"selected_fold": "0"}', "integer selected_fold"),
+      ("fractional fold", '{"selected_fold": 0.5}', "integer selected_fold"),
+      ("out of range", '{"selected_fold": 5}', "integer selected_fold"),
+    ]
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      checkpoint = root / "weights" / "best.pt"
+      checkpoint.parent.mkdir()
+      checkpoint.write_bytes(b"unused checkpoint")
+      provenance = root / "dataset_provenance.json"
+      for label, contents, message in cases:
+        with self.subTest(label=label):
+          if contents is None:
+            provenance.unlink(missing_ok=True)
+          else:
+            provenance.write_text(contents, encoding="utf-8")
+          with (
+            patch("sys.argv", ["evaluate", "--checkpoint", str(checkpoint)]),
+            patch.object(evaluator, "read_source_exclusions") as read_dataset,
+            patch.object(evaluator.tempfile, "mkdtemp") as materialize,
+          ):
+            with self.assertRaisesRegex((ValueError, FileNotFoundError), message):
+              evaluator.main()
+            read_dataset.assert_not_called()
+            materialize.assert_not_called()
+
+  def test_accepts_recorded_fold_independently_of_checkpoint_directory_name(self) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+      run_dir = Path(directory) / "misleading-fold0"
+      run_dir.mkdir()
+      provenance = run_dir / "dataset_provenance.json"
+      provenance.write_text(json.dumps({"selected_fold": 1}), encoding="utf-8")
+      for checkpoint in (run_dir / "weights" / "best.pt", run_dir / "best.pt"):
+        with self.subTest(checkpoint=str(checkpoint)):
+          result = validate_checkpoint_fold(checkpoint, 1)
+          self.assertEqual(result, {
+            "path": str(provenance),
+            "sha256": evaluator.file_sha256(provenance),
+            "selected_fold": 1,
+          })
+
   def test_sorts_detections_for_each_supported_rotation(self) -> None:
     horizontal = [
       detection(3, 0.7, 0.5),

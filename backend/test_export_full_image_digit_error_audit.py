@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from PIL import Image
 
 from backend.detector import RoiDetection
 from backend.export_full_image_digit_error_audit import (
+  aggregate_summary,
+  build_audit_rows,
+  build_sequence_record,
   choose_aperture_detection,
+  display_oriented_crop,
   evaluate_runtime_roi_sanity,
   expand_normalized_bbox,
   failure_bucket,
@@ -21,7 +27,10 @@ from backend.export_full_image_digit_error_audit import (
   match_detections_by_iou,
   prepare_roi_cascade_images,
   predict_runtime_images_one_at_a_time,
+  run_oracles,
   write_transition_review,
+  write_html_report,
+  write_markdown_summary,
 )
 
 
@@ -54,6 +63,20 @@ def detection(digit: int, x_center: float, confidence: float = 0.9) -> dict[str,
 
 
 class GeometryTests(unittest.TestCase):
+  def test_audit_crop_rotates_clockwise_like_the_review_and_runtime(self) -> None:
+    source = Image.new("RGB", (2, 4), "red")
+    source.paste("blue", (0, 2, 2, 4))
+    for rotation, size, first_pixel in (
+      (0, (2, 4), (255, 0, 0)), (90, (4, 2), (0, 0, 255)),
+      (180, (2, 4), (0, 0, 255)), (270, (4, 2), (255, 0, 0)),
+    ):
+      with self.subTest(rotation=rotation):
+        crop = display_oriented_crop(source, rotation)
+        self.assertEqual(crop.size, size)
+        self.assertEqual(crop.getpixel((0, 0)), first_pixel)
+    with self.assertRaisesRegex(ValueError, "Unsupported display rotation"):
+      display_oriented_crop(source, 45)
+
   def test_intersection_over_union(self) -> None:
     self.assertEqual(intersection_over_union((0, 0, 1, 1), (2, 2, 3, 3)), 0)
     self.assertAlmostEqual(
@@ -153,6 +176,29 @@ class GeometryTests(unittest.TestCase):
 
 
 class ClassificationTests(unittest.TestCase):
+  def test_oracle_checkpoint_must_match_recorded_evaluation_hash(self) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      checkpoint = root / "best.pt"
+      checkpoint.write_bytes(b"evaluated model")
+      digest = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+      valid = {"fold": 0, "checkpoint": str(checkpoint), "checkpoint_sha256": digest, "predictions": []}
+      args = SimpleNamespace(device="cpu", skip_oracles=True, skip_roi_cascade=True)
+      for recorded_hash in (None, "", "different-model"):
+        with self.subTest(recorded_hash=recorded_hash), patch("ultralytics.YOLO") as model:
+          with self.assertRaisesRegex(ValueError, "Checkpoint SHA256"):
+            run_oracles([valid, {**valid, "fold": 1, "checkpoint_sha256": recorded_hash}], {}, root, args)
+          model.assert_not_called()
+      checkpoint.write_bytes(b"replaced checkpoint at same path")
+      with patch("ultralytics.YOLO") as model:
+        with self.assertRaisesRegex(ValueError, "Checkpoint SHA256"):
+          run_oracles([valid], {}, root, args)
+        model.assert_not_called()
+      checkpoint.write_bytes(b"evaluated model")
+      with patch("ultralytics.YOLO") as model:
+        self.assertEqual(run_oracles([valid], {}, root, args), ({}, {}, {}))
+        model.assert_called_once_with(str(checkpoint))
+
   def test_runtime_cascade_predicts_each_image_separately(self) -> None:
     class FakeModel:
       def __init__(self) -> None:
@@ -165,7 +211,7 @@ class ClassificationTests(unittest.TestCase):
     model = FakeModel()
     results = predict_runtime_images_one_at_a_time(
       model,
-      [Image.new("RGB", (20, 30)), Image.new("RGB", (40, 50))],
+      [Image.new("RGB", (20, 30), (255, 40, 10)), Image.new("RGB", (40, 50))],
       imgsz=1280,
       device="cpu",
       confidence=0.25,
@@ -176,6 +222,8 @@ class ClassificationTests(unittest.TestCase):
     self.assertEqual(results, ["result-1", "result-2"])
     self.assertEqual(len(model.sources), 2)
     self.assertEqual(model.sources[0].shape, (30, 20, 3))
+    self.assertEqual(model.sources[0][0, 0].tolist(), [10, 40, 255])
+    self.assertTrue(model.sources[0].flags.c_contiguous)
     self.assertEqual(model.sources[1].shape, (50, 40, 3))
 
   def test_failure_buckets_distinguish_count_geometry_and_classification(self) -> None:
@@ -204,6 +252,57 @@ class ClassificationTests(unittest.TestCase):
     self.assertIsNotNone(selected)
     self.assertEqual(selected["class_id"], 4)
     self.assertIsNone(choose_aperture_detection([]))
+
+
+class ReportTests(unittest.TestCase):
+  def test_reports_handle_zero_or_one_readable_result_and_skipped_paths(self) -> None:
+    for readable_count in (0, 1, 2):
+      for mode in ("both", "register", "cascade", "skipped", "roi-rejected"):
+        with self.subTest(readable=readable_count, mode=mode), tempfile.TemporaryDirectory() as directory:
+          records = [
+            build_sequence_record(
+              f"meter-{index}.jpg", "1234", 0,
+              [detection(digit, 0.2 + position * 0.2) for position, digit in enumerate((1, 2, 3, 5))]
+              if index < readable_count else [],
+            )
+            for index in range(2)
+          ]
+          evaluations = [{"fold": 0, "predictions": records}]
+          annotations = {
+            record["filename"]: [box(digit, 0.2 + position * 0.2, position=position) for position, digit in enumerate((1, 2, 3, 4))]
+            for record in records
+          }
+          register = {record["filename"]: record for record in records} if mode in ("both", "register", "roi-rejected") else {}
+          cascade = {
+            record["filename"]: {
+              **(build_sequence_record(record["filename"], "1234", 0, []) if mode == "roi-rejected" else record),
+              "roi": {"status": "not-detected" if mode == "roi-rejected" else "accepted",
+                      "confidence": None if mode == "roi-rejected" else 0.9,
+                      "truth_register_coverage": None if mode == "roi-rejected" else 1.0},
+            }
+            for record in records
+          } if mode in ("both", "cascade", "roi-rejected") else {}
+          rows = build_audit_rows(evaluations, annotations, register, {}, cascade)
+          summary = aggregate_summary(evaluations, rows, register, {}, cascade)
+          for key in ("register_oracle_diagnostics", "roi_cascade_diagnostics"):
+            if key in summary:
+              diagnostics = summary[key]
+              effective_count = 0 if mode == "roi-rejected" and key.startswith("roi") else readable_count
+              self.assertEqual(diagnostics["median_absolute_error"], 1.0 if effective_count else None)
+              self.assertEqual(diagnostics["mean_absolute_error_excluding_worst"], 1.0 if effective_count == 2 else None)
+              self.assertEqual(diagnostics["worst_absolute_error"], 1 if effective_count else None)
+          if mode == "roi-rejected":
+            self.assertIsNone(summary["roi_cascade_diagnostics"]["minimum_truth_register_coverage"])
+            self.assertIn("no readable sequence", summary["decision"]["finding"])
+          for row in rows:
+            row["crop_hrefs"] = ["crop.jpg"] * 4
+            row["overlay_href"] = "overlay.jpg"
+          path = Path(directory) / "index.html"
+          write_html_report(rows, summary, path, "test")
+          write_markdown_summary(summary, Path(directory) / "summary.md", "test")
+          self.assertIn("Jarvis Full-Image Digit Error Audit", path.read_text())
+          if readable_count < 2 or mode == "roi-rejected":
+            self.assertIn("n/a", path.read_text())
 
 
 class TransitionWorksheetTests(unittest.TestCase):

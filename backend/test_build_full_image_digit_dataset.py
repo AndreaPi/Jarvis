@@ -14,6 +14,7 @@ from PIL import Image
 from backend.build_full_image_digit_dataset import (
   build_digit_boxes,
   orient_review_crop,
+  seed_or_preserve_annotations,
   seed_or_preserve_cv_folds,
 )
 from backend.import_full_image_digit_annotations import merge_reviewed_export
@@ -32,6 +33,24 @@ def write_csv(path: Path, headers: list[str], rows: list[list[str]]) -> None:
 
 
 class FullImageDigitDatasetTests(unittest.TestCase):
+  def test_changed_source_metadata_cannot_silently_preserve_review_approval(self) -> None:
+    source = {
+      "filename": "meter.JPEG", "position": "0", "reading": "1234",
+      "split": "train", "direction_rotation": "90", "image_width": "100",
+      "image_height": "200", "review_status": "reviewed", "x_center": "0.49",
+    }
+    for field, value in (
+      ("reading", "1235"), ("split", "test"), ("direction_rotation", "270"),
+      ("image_width", "200"), ("image_height", "100"),
+    ):
+      with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "annotations.csv"
+        seed_or_preserve_annotations(path, [source])
+        original = path.read_bytes()
+        with self.assertRaisesRegex(ValueError, f"Source metadata changed.*{field}"):
+          seed_or_preserve_annotations(path, [{**source, field: value}])
+        self.assertEqual(path.read_bytes(), original)
+
   def test_review_crop_rotation_matches_clockwise_runtime_convention(self) -> None:
     source = Image.new("RGB", (2, 4), color=(0, 0, 0))
     for y in range(2):

@@ -358,6 +358,16 @@ def seed_or_preserve_annotations(
       merged.append({header: bootstrap.get(header, "") for header in ANNOTATION_HEADERS})
       seeded_count += 1
     else:
+      changed_fields = [
+        field for field in ("reading", "split", "direction_rotation", "image_width", "image_height")
+        if existing.get(field, "") != bootstrap.get(field, "")
+      ]
+      if changed_fields:
+        raise ValueError(
+          f"Source metadata changed for {key[0]}: {', '.join(changed_fields)}. "
+          "Review and reconcile the canonical annotations before rebuilding; "
+          "existing annotations have not been overwritten."
+        )
       merged.append({header: existing.get(header, "") for header in ANNOTATION_HEADERS})
   write_csv(path, merged, ANNOTATION_HEADERS)
   return merged, seeded_count
