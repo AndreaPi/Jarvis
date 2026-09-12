@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import backend.evaluate_full_image_digit_detector as evaluator
+import backend.evaluate_full_image_digit_shadow_sensitivity as sensitivity
 
 from backend.evaluate_full_image_digit_detector import (
   build_sequence_record,
@@ -51,36 +52,82 @@ class FullImageDigitDetectorEvaluationTests(unittest.TestCase):
       checkpoint.parent.mkdir()
       checkpoint.write_bytes(b"unused checkpoint")
       provenance = root / "dataset_provenance.json"
+      folds = root / "folds.csv"
+      folds.write_text("filename,fold\nold-validation.jpg,0\nold-training.jpg,1\n")
+      original_hash = evaluator.file_sha256(folds)
+      cases.extend([
+        ("missing membership", '{"selected_fold": 0}', "original cv_folds_sha256"),
+        ("invalid membership hash", '{"selected_fold": 0, "cv_folds_sha256": 123}',
+         "original cv_folds_sha256"),
+        ("reassigned training image", json.dumps({
+          "selected_fold": 0, "cv_folds_sha256": original_hash,
+        }), "does not match"),
+      ])
+      # Keep fold 0 present, but swap its validation source with a training source.
+      folds.write_text("filename,fold\nold-validation.jpg,1\nold-training.jpg,0\n")
       for label, contents, message in cases:
         with self.subTest(label=label):
           if contents is None:
             provenance.unlink(missing_ok=True)
           else:
             provenance.write_text(contents, encoding="utf-8")
-          with (
-            patch("sys.argv", ["evaluate", "--checkpoint", str(checkpoint)]),
-            patch.object(evaluator, "read_source_exclusions") as read_dataset,
-            patch.object(evaluator.tempfile, "mkdtemp") as materialize,
-          ):
-            with self.assertRaisesRegex((ValueError, FileNotFoundError), message):
-              evaluator.main()
-            read_dataset.assert_not_called()
-            materialize.assert_not_called()
+          for runner in (evaluator, sensitivity):
+            with (
+              self.subTest(runner=runner.__name__),
+              patch("sys.argv", ["evaluate", "--checkpoint", str(checkpoint),
+                                 "--fold", "0", "--folds", str(folds)]),
+              patch.object(runner, "read_csv_rows") as read_dataset,
+              patch.object(evaluator.tempfile, "mkdtemp") as materialize,
+              patch.object(sensitivity, "RoiDetector") as roi_model,
+              patch.object(sensitivity, "FullImageDigitShadow") as digit_model,
+              patch.object(sensitivity.Image, "open") as open_image,
+            ):
+              with self.assertRaisesRegex((ValueError, FileNotFoundError), message):
+                runner.main()
+              read_dataset.assert_not_called()
+              materialize.assert_not_called()
+              roi_model.assert_not_called()
+              digit_model.assert_not_called()
+              open_image.assert_not_called()
 
   def test_accepts_recorded_fold_independently_of_checkpoint_directory_name(self) -> None:
     with tempfile.TemporaryDirectory() as directory:
       run_dir = Path(directory) / "misleading-fold0"
       run_dir.mkdir()
       provenance = run_dir / "dataset_provenance.json"
-      provenance.write_text(json.dumps({"selected_fold": 1}), encoding="utf-8")
+      folds = run_dir / "folds.csv"
+      folds.write_text("filename,fold\nvalidation.jpg,1\ntraining.jpg,0\n")
+      folds_hash = evaluator.file_sha256(folds)
+      provenance.write_text(json.dumps({
+        "selected_fold": 1, "cv_folds_sha256": folds_hash,
+      }), encoding="utf-8")
       for checkpoint in (run_dir / "weights" / "best.pt", run_dir / "best.pt"):
         with self.subTest(checkpoint=str(checkpoint)):
-          result = validate_checkpoint_fold(checkpoint, 1)
+          result = validate_checkpoint_fold(checkpoint, 1, folds)
           self.assertEqual(result, {
             "path": str(provenance),
             "sha256": evaluator.file_sha256(provenance),
             "selected_fold": 1,
+            "cv_folds_path": str(folds),
+            "cv_folds_sha256": folds_hash,
+            "fold_assignments": {"validation.jpg": 1, "training.jpg": 0},
           })
+
+  def test_verified_fold_membership_is_retained_after_manifest_changes(self) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      checkpoint = root / "best.pt"
+      folds = root / "folds.csv"
+      folds.write_text("filename,fold\nvalidation.jpg,0\ntraining.jpg,1\n")
+      (root / "dataset_provenance.json").write_text(json.dumps({
+        "selected_fold": 0, "cv_folds_sha256": evaluator.file_sha256(folds),
+      }))
+      verified = validate_checkpoint_fold(checkpoint, None, folds)
+      folds.write_text("filename,fold\nvalidation.jpg,1\ntraining.jpg,0\n")
+      groups = {filename: [{"split": "train", "position": "0"}] for filename in verified["fold_assignments"]}
+      self.assertEqual(list(validation_annotation_groups(
+        groups, verified["fold_assignments"], verified["selected_fold"],
+      )), ["validation.jpg"])
 
   def test_sorts_detections_for_each_supported_rotation(self) -> None:
     horizontal = [

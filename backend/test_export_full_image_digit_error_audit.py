@@ -63,6 +63,42 @@ def detection(digit: int, x_center: float, confidence: float = 0.9) -> dict[str,
 
 
 class GeometryTests(unittest.TestCase):
+  def test_transition_findings_follow_actual_reviewed_states(self) -> None:
+    cases = (
+      (["unknown"] * 4, {"unknown": 4}),
+      (["stable", "transitioning", "uncertain", "unknown"],
+       {"stable": 1, "transitioning": 1, "uncertain": 1, "unknown": 1}),
+      (["stable"] * 4, {"stable": 4}),
+    )
+    for states, counts in cases:
+      with self.subTest(states=states):
+        record = build_sequence_record("meter.jpg", "1234", 0, [])
+        evaluations = [{"fold": 0, "predictions": [record]}]
+        annotations = {"meter.jpg": [
+          {**box(digit, 0.2 + position * 0.2, position=position), "transition_state": state}
+          for position, (digit, state) in enumerate(zip((1, 2, 3, 4), states))
+        ]}
+        register = {"meter.jpg": record}
+        cascade = {"meter.jpg": {**record, "roi": {
+          "status": "accepted", "confidence": 0.9, "truth_register_coverage": 1.0,
+        }}}
+        rows = build_audit_rows(evaluations, annotations, register, {}, cascade)
+        summary = aggregate_summary(evaluations, rows, register, {}, cascade)
+        self.assertEqual(summary["transition_state_counts"], counts)
+        finding = summary["decision"]["supporting_findings"][-1]
+        for state, count in counts.items():
+          self.assertIn(f"{count} {state}", finding)
+        if "unknown" in counts:
+          self.assertIn(f"Review the {counts['unknown']} unknown states", finding)
+        else:
+          self.assertIn("No audited state is unknown", finding)
+          self.assertNotIn("remain unknown", summary["decision"]["promotion_status"])
+        self.assertIn("not a locked external test", summary["decision"]["promotion_status"])
+        with tempfile.TemporaryDirectory() as directory:
+          output = Path(directory) / "summary.md"
+          write_markdown_summary(summary, output, "test")
+          self.assertIn(finding, output.read_text())
+
   def test_audit_crop_rotates_clockwise_like_the_review_and_runtime(self) -> None:
     source = Image.new("RGB", (2, 4), "red")
     source.paste("blue", (0, 2, 2, 4))

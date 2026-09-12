@@ -166,9 +166,15 @@ python train_full_image_digit_detector.py \
 ```
 
 The trainer rebuilds the deleted temporary dataset before Ultralytics restores
-the completed epoch, optimizer, scheduler, and early-stopping state. It rejects
-core argument mismatches, a checkpoint from another run name, and stripped or
-already-completed checkpoints.
+the completed epoch, optimizer, and scheduler. Jarvis restores early stopping
+from `early_stopping_state.json`, saved after each checkpoint: best fitness,
+best epoch, and pending-stop flag resume without a new patience window. The
+state must match the exact `last.pt` SHA-256, epoch, and original patience.
+Missing or mismatched state, including an interruption between the two saves,
+blocks resume; start a new run instead of reconstructing state from rounded
+metrics. Keep this file with `weights/last.pt`. Core argument mismatches,
+a checkpoint from another run name, and stripped, completed, or already
+patience-exhausted checkpoints are also rejected.
 
 Resume also requires the original `dataset_provenance.json` and verifies the
 fold, annotation/fold/exclusion manifest hashes, materialized image and label
@@ -186,13 +192,21 @@ python evaluate_full_image_digit_detector.py \
   --fold 0
 ```
 
-The evaluator requires the original `dataset_provenance.json` in the run
-directory (the parent of `weights/`, or beside a checkpoint stored directly
-in the run directory). Its integer `selected_fold` must match `--fold`;
-otherwise evaluation stops before dataset preparation or model loading.
-Missing or invalid provenance is also rejected. Preserve this file when moving
-a checkpoint; the evaluator does not infer the fold from a directory name.
-The result records the validated provenance path, SHA-256, and fold.
+The sequence evaluator, UI shadow benchmark, and sensitivity sweep require the
+original `dataset_provenance.json` in the run directory (the parent of `weights/`,
+or beside a checkpoint stored directly in the run directory). Its integer
+`selected_fold` must match any requested fold, and the supplied CV manifest must
+match the recorded `cv_folds_sha256`. Verification happens before image
+preparation, model loading, or service startup. Missing or invalid provenance,
+a different fold, and changed manifest bytes all stop evaluation.
+
+Preserve original provenance and the original CV manifest when moving a
+checkpoint. After adding photos or rebuilding folds, use that manifest via
+`--folds`; the sequence evaluator also needs a compatible annotation/label
+snapshot with the same active train sources. Do not rewrite old provenance to
+match current data. Reports record the verified provenance and manifest paths,
+SHA-256 hashes, fold, and source assignments; inference uses those verified
+assignments even if the manifest changes during the run.
 
 The evaluator defaults to CPU and reads only uncropped full images from the
 selected CV validation fold. It reproduces precision, recall, `mAP50`, and
@@ -258,12 +272,18 @@ npm run qa:full-image-digit-shadow
 ```
 
 The default development checkpoint is the balanced48 fold-4 `best.pt` file;
-override `FULL_IMAGE_DIGIT_SHADOW_MODEL_PATH` and
-`FULL_IMAGE_DIGIT_SHADOW_VALIDATION_FOLD` together for another checkpoint.
-The command starts a disposable backend, records the checkpoint SHA-256, and
-writes a timestamped report under `output/full-image-digit-shadow-qa/`.
-If frontend or backend readiness fails, it stops the disposable process before
-reporting the startup error.
+override `FULL_IMAGE_DIGIT_SHADOW_MODEL_PATH` for another checkpoint. The UI
+reads its validation fold from original training provenance, not the directory
+name. An optional `FULL_IMAGE_DIGIT_SHADOW_VALIDATION_FOLD` must agree with it.
+Use `FULL_IMAGE_DIGIT_SHADOW_CV_FOLDS_PATH` to select the original manifest if
+the repository copy has changed. Images absent from that manifest remain
+unmapped in the full-corpus diagnostic and never enter the validation slice.
+After provenance verification, the command starts a disposable backend,
+records the checkpoint SHA-256, and writes a timestamped report under `output/full-image-digit-shadow-qa/`.
+Backend readiness verifies both canonical primary checkpoints (ROI and digit
+classifier) as well as the selected shadow checkpoint. Environment overrides
+that substitute a primary model are rejected. If frontend or backend readiness
+fails, it stops the disposable process before reporting the startup error.
 
 The complete UI comparison is useful for finding runtime failures but is not a
 generalization estimate because a fold checkpoint trained on the other active
@@ -276,9 +296,15 @@ September 12, 2026 verification of the color-corrected code on this branch's
 confidence `0.25`: production was `11/43` exact, `4` no-reads, readable
 `MAE 349.67`; the shadow was `30/43` exact, `4` no-reads, `MAE 247.67`.
 All four interruptions were `Neural ROI failed (no-detection)` before the
-shadow call. On the eight-image fold-4 slice, production was `3/8` exact with
+shadow call. On the then-current eight-image fold-4 slice, production was `3/8` exact with
 `MAE 907.38`, and shadow `5/8` with `MAE 25.38`; neither had no-reads.
 The local report is `output/full-image-digit-shadow-qa/20260912-223428/`.
+The subsequent provenance check recovered the original manifest from commit
+`8c0ad69` (SHA-256 `fd7a1d720b3f36265f793ed46692abaf8cec0d8252c5c4b328c24bcdc08ede21`):
+its fold 4 contains seven images. `meter_20260828.jpeg` was added later and must
+remain outside this checkpoint's original validation slice. Filtering the
+existing report to those seven sources, without rerunning inference, gives
+production `3/7` exact, `MAE 40.00`, and shadow `5/7`, `MAE 14.57`, with no no-reads.
 This is a development diagnostic on an already tuned fold, not fresh promotion
 evidence or a controlled comparison against the older 38-photo results.
 

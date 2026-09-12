@@ -187,8 +187,12 @@ python train_full_image_digit_detector.py \
 
 The trainer rematerializes the temporary fold, rejects mismatched core
 arguments or a stripped/completed checkpoint, and lets Ultralytics restore the
-epoch, optimizer, scheduler, and early-stopping state. Repeat any crop-recipe
-flags from the original command exactly.
+epoch, optimizer, and scheduler. Jarvis saves `early_stopping_state.json` after
+each checkpoint and restores the best fitness, best epoch, and pending-stop flag
+before the first resumed epoch. It verifies the checkpoint SHA-256, epoch, and
+patience; missing or mismatched state blocks resume rather than resetting the
+patience window. Keep this file with `weights/last.pt`. Older runs without it
+must start a new run. Repeat the original patience and crop-recipe flags.
 
 New runs save `dataset_provenance.json` in the actual run directory before
 the first epoch, so interruptions retain it. Resume requires unchanged fold,
@@ -212,12 +216,23 @@ complete-reading exact match, no-read, readable digit accuracy, readable
 and never reads the historical sanity holdout or a source listed in
 `manifests/source_exclusions.csv`.
 
-Before reading the dataset or loading the model, the evaluator requires
-`dataset_provenance.json` in the checkpoint's run directory and checks that
-its recorded `selected_fold` matches `--fold`. Missing or invalid provenance
-and a different fold stop evaluation. Keep the original training provenance
-with copied checkpoints; directory names are not evidence of the training fold.
-The evaluation JSON records the validated provenance path, hash, and fold.
+Before preparing images or loading models, all three full-image evaluators
+(sequence, UI shadow, and sensitivity) require the original
+`dataset_provenance.json` in the checkpoint's run directory. They verify both
+`selected_fold` and the SHA-256 of the supplied CV manifest against the recorded
+`cv_folds_sha256`, then use those verified assignments throughout the run.
+Missing or invalid provenance, a different fold, or a changed manifest blocks
+evaluation. Keep original provenance and `cv_folds.csv` with copied checkpoints;
+do not reconstruct training evidence from today's dataset.
+
+After a dataset rebuild or additive ingestion, supply the original manifest via
+`--folds` (Python) or `FULL_IMAGE_DIGIT_SHADOW_CV_FOLDS_PATH` (UI). The sequence
+evaluator also requires annotations and labels whose active train sources match
+that manifest; use a compatible dataset snapshot. Even harmless CSV formatting
+changes require the original file because verification compares exact bytes.
+The UI derives its fold from provenance; an optional
+`FULL_IMAGE_DIGIT_SHADOW_VALIDATION_FOLD` must agree. Reports retain the verified
+provenance path/hash, manifest path/hash, fold, and source assignments.
 
 After all folds for one recipe have been evaluated, export the visual error
 audit from the repository root:
@@ -266,6 +281,13 @@ For a bounded single-image runtime sensitivity check on fold 4:
 ```bash
 npm run qa:full-image-digit-shadow-sensitivity
 ```
+
+The sweep applies `manifests/source_exclusions.csv` before checking annotation
+review or selecting validation images; use `--source-exclusions` for another
+dataset snapshot. Excluded legacy-stress sources never reach inference, even
+when retained annotations are pending. Reports record the exclusion manifest
+SHA-256 and excluded filenames.
+
 
 The August 4 run found that confidence `0.20` with the existing NMS IoU `0.70`
 recovers `meter_20260423.JPEG` by retaining its final `7` at confidence

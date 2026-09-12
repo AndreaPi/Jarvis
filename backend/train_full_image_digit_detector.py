@@ -218,11 +218,16 @@ def parse_label_rows(
       raise ValueError(f"{path}:{line_number}: invalid YOLO row") from error
     if class_id not in range(10):
       raise ValueError(f"{path}:{line_number}: class must be in 0..9")
+    if not all(math.isfinite(value) for value in (x_center, y_center, width, height)):
+      raise ValueError(f"{path}:{line_number}: box coordinates must be finite")
     if width <= 0 or height <= 0:
       raise ValueError(f"{path}:{line_number}: box size must be positive")
-    if x_center - width * 0.5 < 0 or x_center + width * 0.5 > 1:
+    # Six-decimal export can shift an edge by 0.5e-6 + 0.5 * 0.5e-6.
+    # Keep full precision for the canonical-manifest comparison below.
+    edge_tolerance = 7.6e-7
+    if x_center - width * 0.5 < -edge_tolerance or x_center + width * 0.5 > 1 + edge_tolerance:
       raise ValueError(f"{path}:{line_number}: horizontal bounds exceed image")
-    if y_center - height * 0.5 < 0 or y_center + height * 0.5 > 1:
+    if y_center - height * 0.5 < -edge_tolerance or y_center + height * 0.5 > 1 + edge_tolerance:
       raise ValueError(f"{path}:{line_number}: vertical bounds exceed image")
     labels.append((class_id, x_center, y_center, width, height))
   if len(labels) != expected_count:
@@ -785,6 +790,57 @@ def record_training_provenance(
     handle.write(json.dumps(provenance, indent=2) + "\n")
 
 
+EARLY_STOPPING_STATE_FILE = "early_stopping_state.json"
+
+
+def save_early_stopping_state(trainer: object) -> None:
+  """Publish state after last.pt is saved, bound to that exact checkpoint."""
+  state = {
+    "checkpoint_sha256": file_sha256(Path(trainer.last)),
+    "epoch": trainer.epoch,
+    "patience": trainer.args.patience,
+    "best_epoch": trainer.stopper.best_epoch,
+    "best_fitness": trainer.stopper.best_fitness,
+    "possible_stop": trainer.stopper.possible_stop,
+  }
+  destination = Path(trainer.save_dir) / EARLY_STOPPING_STATE_FILE
+  temporary = destination.with_suffix(".json.tmp")
+  temporary.write_text(json.dumps(state, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+  temporary.replace(destination)
+
+
+def read_early_stopping_state(checkpoint_path: Path, epoch: int, patience: int) -> dict:
+  state_path = checkpoint_path.parent.parent / EARLY_STOPPING_STATE_FILE
+  try:
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+  except (FileNotFoundError, json.JSONDecodeError) as error:
+    raise ValueError(
+      f"Cannot resume without valid original early-stopping state: {state_path}. "
+      "Start a new run; do not reconstruct this state from rounded training metrics."
+    ) from error
+  if not isinstance(state, dict) or (
+    state.get("checkpoint_sha256") != file_sha256(checkpoint_path)
+    or type(state.get("epoch")) is not int or state["epoch"] != epoch
+    or type(state.get("patience")) is not int or state["patience"] != patience
+    or type(state.get("best_epoch")) is not int or not 0 <= state["best_epoch"] <= epoch + 1
+    or type(state.get("best_fitness")) not in (int, float)
+    or not math.isfinite(state["best_fitness"])
+    or type(state.get("possible_stop")) is not bool
+  ):
+    raise ValueError("Early-stopping state is invalid or does not match this checkpoint/patience.")
+  if patience and epoch + 1 - state["best_epoch"] >= patience:
+    raise ValueError("Checkpoint already reached early-stopping patience; start a new run.")
+  return state
+
+
+def restore_early_stopping_state(trainer: object, state: dict) -> None:
+  # on_train_start runs after Ultralytics constructs its fresh stopper.
+  if trainer.start_epoch != state["epoch"] + 1 or trainer.args.patience != state["patience"]:
+    raise ValueError("Ultralytics resume epoch/patience differs from verified early-stopping state.")
+  for field in ("best_epoch", "best_fitness", "possible_stop"):
+    setattr(trainer.stopper, field, state[field])
+
+
 def validate_resume_checkpoint(
   checkpoint_path: Path,
   checkpoint: dict,
@@ -816,6 +872,7 @@ def validate_resume_checkpoint(
     "imgsz": args.imgsz,
     "batch": args.batch,
     "seed": args.seed,
+    "patience": args.patience,
   }
   mismatches = {
     key: (checkpoint_args.get(key), value)
@@ -833,6 +890,7 @@ def validate_resume_checkpoint(
       f"Checkpoint already completed {epoch + 1} of {args.epochs} epochs"
     )
   validate_resume_provenance(actual_run_dir, provenance)
+  read_early_stopping_state(checkpoint_path, epoch, args.patience)
   return epoch + 1
 
 
@@ -968,6 +1026,15 @@ def main() -> None:
       "on_pretrain_routine_start",
       lambda trainer: record_training_provenance(trainer, provenance, resume=resume),
     )
+    model.add_callback("on_model_save", save_early_stopping_state)
+    if resume:
+      stopping_state = read_early_stopping_state(
+        resume_from_path, completed_epochs - 1, args.patience,
+      )
+      model.add_callback(
+        "on_train_start",
+        lambda trainer: restore_early_stopping_state(trainer, stopping_state),
+      )
     model.train(**train_kwargs)
 
     trainer = getattr(model, "trainer", None)

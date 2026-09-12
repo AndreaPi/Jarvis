@@ -5,7 +5,8 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const http = require('node:http');
 const path = require('node:path');
-const { spawn } = require('node:child_process');
+const { spawn, execFileSync } = require('node:child_process');
+const { validateQaBackendHealth } = require('./lib/qa-services.cjs');
 
 const ROOT_DIR = path.resolve(__dirname, '..');
 const FRONTEND_URL = process.env.JARVIS_FRONTEND_URL || 'http://127.0.0.1:8000';
@@ -18,16 +19,23 @@ const CHECKPOINT_PATH = path.resolve(
     )
 );
 const OUTPUT_ROOT = path.join(ROOT_DIR, 'output', 'full-image-digit-shadow-qa');
-const CV_FOLDS_PATH = path.join(
-  ROOT_DIR,
-  'backend/data/full_image_digit_dataset/manifests/cv_folds.csv'
+const CV_FOLDS_PATH = path.resolve(
+  process.env.FULL_IMAGE_DIGIT_SHADOW_CV_FOLDS_PATH
+    || path.join(ROOT_DIR, 'backend/data/full_image_digit_dataset/manifests/cv_folds.csv')
 );
-const checkpointFoldMatch = path.basename(path.dirname(path.dirname(CHECKPOINT_PATH))).match(/fold(\d+)/);
-const CHECKPOINT_VALIDATION_FOLD = Number.parseInt(
-  process.env.FULL_IMAGE_DIGIT_SHADOW_VALIDATION_FOLD
-    || (checkpointFoldMatch ? checkpointFoldMatch[1] : ''),
-  10
-);
+
+const validateCheckpointProvenance = (checkpointPath, foldsPath, requestedFold) => {
+  const args = [
+    path.join(ROOT_DIR, 'backend/full_image_checkpoint_provenance.py'),
+    '--checkpoint', checkpointPath, '--folds', foldsPath
+  ];
+  if (requestedFold !== undefined) {
+    // Pass the exact value: argparse rejects partial numbers such as "4junk".
+    args.push('--fold', String(requestedFold));
+  }
+  const output = execFileSync('python3', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  return JSON.parse(output);
+};
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -174,6 +182,18 @@ const ensureFrontend = async () => {
   return frontend;
 };
 
+const validateShadowBackendHealth = (payload, checkpointPath) => {
+  validateQaBackendHealth(payload, ROOT_DIR);
+  if (payload.full_image_digit_shadow_ready !== true) {
+    throw new Error('full_image_digit_shadow_ready is not true');
+  }
+  if (typeof payload.full_image_digit_shadow_model_path !== 'string'
+      || path.resolve(payload.full_image_digit_shadow_model_path) !== checkpointPath) {
+    throw new Error(`unexpected shadow model: ${payload.full_image_digit_shadow_model_path}`);
+  }
+  return payload;
+};
+
 const startBackend = async () => {
   const parsed = new URL(BACKEND_URL);
   const backend = trackedProcess(
@@ -192,16 +212,7 @@ const startBackend = async () => {
   );
   const health = await waitFor(async () => {
     const payload = await requestJson(`${BACKEND_URL}/health`);
-    if (!payload.roi_ready || !payload.digit_ready || !payload.full_image_digit_shadow_ready) {
-      throw new Error(
-        `health incomplete: roi=${!!payload.roi_ready} digit=${!!payload.digit_ready} `
-          + `shadow=${!!payload.full_image_digit_shadow_ready}`
-      );
-    }
-    if (path.resolve(payload.full_image_digit_shadow_model_path) !== CHECKPOINT_PATH) {
-      throw new Error(`unexpected shadow model: ${payload.full_image_digit_shadow_model_path}`);
-    }
-    return payload;
+    return validateShadowBackendHealth(payload, CHECKPOINT_PATH);
   }, backend, 'shadow backend');
   return { backend, health };
 };
@@ -293,22 +304,6 @@ const sha256 = async (filePath) => {
   return hash.digest('hex');
 };
 
-const readCvFolds = async () => {
-  const lines = (await fsp.readFile(CV_FOLDS_PATH, 'utf8'))
-    .split(/\r?\n/)
-    .filter(Boolean);
-  const headers = (lines.shift() || '').split(',');
-  const filenameIndex = headers.indexOf('filename');
-  const foldIndex = headers.indexOf('fold');
-  if (filenameIndex < 0 || foldIndex < 0) {
-    throw new Error(`Invalid CV fold manifest: ${CV_FOLDS_PATH}`);
-  }
-  return new Map(lines.map((line) => {
-    const values = line.split(',');
-    return [values[filenameIndex], Number.parseInt(values[foldIndex], 10)];
-  }));
-};
-
 const buildRows = (uiRows, cvFolds) => uiRows.map((row) => {
   const shadow = row.selectionLog && row.selectionLog.fullImageDigitShadow
     ? row.selectionLog.fullImageDigitShadow
@@ -360,7 +355,7 @@ const writeReport = async (payload) => {
     `- Production: ${payload.validation_slice.production_metrics.exact_match_count}/${payload.validation_slice.production_metrics.image_count} exact, ${payload.validation_slice.production_metrics.no_read_count} no-read, MAE ${payload.validation_slice.production_metrics.readable_mae}.`,
     `- Shadow: ${payload.validation_slice.shadow_metrics.exact_match_count}/${payload.validation_slice.shadow_metrics.image_count} exact, ${payload.validation_slice.shadow_metrics.no_read_count} no-read, MAE ${payload.validation_slice.shadow_metrics.readable_mae}.`,
     '',
-    `The complete ${payload.shadow_metrics.image_count}-image comparison is a development diagnostic, not an unbiased generalization estimate: ${payload.known_training_overlap_count} mapped images belong to folds used to train this checkpoint, and ${payload.unmapped_image_count} images have no active CV assignment.`,
+    `The complete ${payload.shadow_metrics.image_count}-image comparison is a development diagnostic, not an unbiased generalization estimate: ${payload.known_training_overlap_count} mapped images belong to folds used to train this checkpoint, and ${payload.unmapped_image_count} images have no assignment in the original training manifest.`,
     '',
     'The shadow is orientation-assisted by the current primary OCR angle and never changes the selected reading.',
     '',
@@ -379,6 +374,11 @@ const main = async () => {
   if (!fs.existsSync(CHECKPOINT_PATH)) {
     throw new Error(`Missing shadow checkpoint: ${CHECKPOINT_PATH}`);
   }
+  const checkpointProvenance = validateCheckpointProvenance(
+    CHECKPOINT_PATH, CV_FOLDS_PATH, process.env.FULL_IMAGE_DIGIT_SHADOW_VALIDATION_FOLD
+  );
+  const validationFold = checkpointProvenance.selected_fold;
+  const cvFolds = new Map(Object.entries(checkpointProvenance.fold_assignments));
   let frontend = null;
   let backend = null;
   try {
@@ -387,17 +387,10 @@ const main = async () => {
     backend = started.backend;
     const backendHealth = started.health;
     const ui = await runUiBenchmark();
-    const cvFolds = await readCvFolds();
     const rows = buildRows(ui.rows, cvFolds);
-    if (!Number.isFinite(CHECKPOINT_VALIDATION_FOLD)) {
-      throw new Error(
-        'Cannot infer the checkpoint validation fold; set '
-          + 'FULL_IMAGE_DIGIT_SHADOW_VALIDATION_FOLD.'
-      );
-    }
-    const validationRows = rows.filter((row) => row.cv_fold === CHECKPOINT_VALIDATION_FOLD);
+    const validationRows = rows.filter((row) => row.cv_fold === validationFold);
     if (!validationRows.length) {
-      throw new Error(`No UI rows belong to checkpoint fold ${CHECKPOINT_VALIDATION_FOLD}.`);
+      throw new Error(`No UI rows belong to checkpoint fold ${validationFold}.`);
     }
     const payload = {
       version: 1,
@@ -405,7 +398,8 @@ const main = async () => {
       ui_status: ui.status,
       checkpoint: CHECKPOINT_PATH,
       checkpoint_sha256: await sha256(CHECKPOINT_PATH),
-      checkpoint_validation_fold: CHECKPOINT_VALIDATION_FOLD,
+      checkpoint_validation_fold: validationFold,
+      checkpoint_training_provenance: checkpointProvenance,
       runtime_settings: {
         confidence: backendHealth.full_image_digit_shadow_confidence,
         iou: backendHealth.full_image_digit_shadow_iou,
@@ -425,7 +419,7 @@ const main = async () => {
         ).length
       },
       known_training_overlap_count: rows.filter((row) => (
-        Number.isFinite(row.cv_fold) && row.cv_fold !== CHECKPOINT_VALIDATION_FOLD
+        Number.isFinite(row.cv_fold) && row.cv_fold !== validationFold
       )).length,
       unmapped_image_count: rows.filter((row) => !Number.isFinite(row.cv_fold)).length,
       rows
@@ -449,4 +443,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { trackedProcess, waitFor };
+module.exports = { trackedProcess, waitFor, validateCheckpointProvenance, validateShadowBackendHealth };

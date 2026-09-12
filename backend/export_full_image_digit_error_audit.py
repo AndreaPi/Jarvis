@@ -1072,14 +1072,18 @@ def aggregate_summary(
           "should preserve whole-register context."
         ) if aperture_records else "Single-aperture inference was skipped.",
         (
-          f"All {sum(transition_counts.values())} audited transition states remain "
-          "unknown; the supplied worksheet is the next label-quality check."
+          f"Transition states across {sum(transition_counts.values())} audited apertures: "
+          + ", ".join(f"{count} {state}" for state, count in sorted(transition_counts.items()))
+          + (f". Review the {transition_counts['unknown']} unknown states using the supplied worksheet."
+             if transition_counts["unknown"] else ". No audited state is unknown.")
         ),
       ],
       "recommended_next_step": recommended_next_step,
       "promotion_status": (
-        "Do not promote yet: transition states remain unreviewed and this is a "
-        "small development cross-validation scope, not a locked external test."
+        "Do not promote yet: "
+        + (f"{transition_counts['unknown']} transition states remain unknown, and "
+           if transition_counts["unknown"] else "")
+        + "this is a small development cross-validation scope, not a locked external test."
       ),
     }
   elif register_records:
