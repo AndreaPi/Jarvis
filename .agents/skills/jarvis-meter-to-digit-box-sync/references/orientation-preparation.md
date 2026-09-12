@@ -28,6 +28,32 @@ canonical manifest row is insufficient evidence of approval. Reuse approval
 when the reviewed strip, source photo, reading, ROI, and orientation inputs are
 unchanged.
 
+## Orientation review log
+
+Keep `backend/data/digit_dataset/manifests/orientation_reviews.csv` as retained
+Git metadata. Record actual human responses with the source and shown canonical
+strip SHA-256 hashes, expected reading, applied rotation, `attempt` (`initial`,
+`corrected`, or `unknown`), and `decision` (`confirmed`, `rejected`, or `unclear`).
+Use `reported_order` only when established by the user's reply; leave it empty
+when unknown. Keep the user-response evidence, the known agent model context
+(otherwise `unknown`), and UTC recording time; recording time is not the time
+of a retrospectively recovered review.
+
+Reuse the row for the same filename/source hash/strip hash/reading/rotation
+on resume. A corrected strip gets a new row and retains the earlier rejection.
+If the user changes a verdict for the same strip, record the correction and its
+evidence without treating it as another independent trial. Silence or a pending
+reply is not a rejection. Backfill only responses with traceable image/strip
+identity; do not infer historical success from a manifest row alone.
+
+Report confirmations, rejections, and unclear outcomes, counting first attempts
+per source separately from corrections. This measures the complete preparation
+and review workflow, not model accuracy alone. A streak of confirmations does
+not automatically remove the human gate; revisit it with the user after varied
+cases have accumulated. Preserve this log during dataset regeneration.
+
+## Corrections and publication
+
 For an incorrect direction, correct
 `backend/data/digit_dataset/manifests/direction_overrides.csv`, regenerate from
 `split_digit_windows.py` onward, validate, and repeat affected QA and review.

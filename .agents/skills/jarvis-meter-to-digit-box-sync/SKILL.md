@@ -70,6 +70,10 @@ boxes alone never establish human review.
    - Require explicit human confirmation of left-to-right reading order. Reuse
      existing approval only when its inputs and canonical strip are unchanged;
      otherwise show the target QA previews and request that review.
+   - Record each explicit confirmation, rejection, or unclear result in
+     `backend/data/digit_dataset/manifests/orientation_reviews.csv`, following
+     the review-log rules in [orientation preparation](references/orientation-preparation.md).
+     Preserve earlier failures and avoid counting a resumed approval twice.
 
 3. Snapshot the full-image dataset boundary.
    - Read, do not infer, the existing:

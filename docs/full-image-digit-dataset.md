@@ -21,6 +21,11 @@ the active Jarvis OCR runtime.
 - A wheel between two digits is still one object. Keep the class from the
   verified reading and record its transition state separately in the canonical
   manifest.
+- Track explicit canonical-strip orientation review outcomes in
+  `backend/data/digit_dataset/manifests/orientation_reviews.csv` (from the repo
+  root), retaining image/strip hashes and first-attempt failures separately from
+  corrections. Reused approvals do not add trials; a success streak does not
+  automatically waive human orientation review.
 - Do not train from annotations whose `review_status` is `pending`.
 - `manifests/source_exclusions.csv` is the explicit active-scope boundary.
   Excluded sources retain their photo, reading, bootstrap rows, and reviewed
