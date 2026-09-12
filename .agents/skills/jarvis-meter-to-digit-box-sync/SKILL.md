@@ -35,6 +35,11 @@ the final digit-box gate without a second human preview confirmation. Bootstrap
 boxes alone never establish human review.
 
 1. Establish the approved batch.
+   - Carry forward the upstream batch DVC upload authorization and its QA
+     evidence under [AGENTS.md](../../../AGENTS.md#artifact-retention). Check
+     its filenames, artifact categories, and resolved destination. Consent
+     covering this batch's digit derivatives is reusable without another
+     upload question; consent limited to photos and ROI does not cover them.
    - Use canonical filenames from the user's request, a verified export, or the
      upstream handoff. Preserve their actual extension/case.
    - Do not silently add every unannotated file in the worktree to the batch.
@@ -161,7 +166,9 @@ boxes alone never establish human review.
      targets pass this gate. Unresolved validation/review blocks training-ready
      claims and publication or commit of affected annotations. If unrelated
      pending rows remain, report the target as validated but the dataset as not
-     training-ready. Passing this gate does not itself authorize training or upload.
+     training-ready. Passing this gate does not itself authorize training or
+     upload, but an existing batch authorization covering the requested upload
+     remains valid; do not ask again just because the workflow changed skills.
 
 8. Report completion or the precise pending gate.
    - Report the target filenames and readings, imported row count, review

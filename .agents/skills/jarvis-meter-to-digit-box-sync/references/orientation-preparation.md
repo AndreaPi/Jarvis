@@ -33,7 +33,12 @@ For an incorrect direction, correct
 `split_digit_windows.py` onward, validate, and repeat affected QA and review.
 
 When preparation changed the standard digit datasets and orientation is
-approved, refresh only the changed targets from this set:
+approved, refresh only the changed targets from this set. Before the push,
+reuse the batch upload authorization checked in the main skill. If these
+derivatives or the destination are not covered, finish local preparation and
+ask for the missing scope once, following
+[AGENTS.md](../../../../AGENTS.md#artifact-retention). A prior authorization
+covering these derivatives applies even when they were generated after consent:
 
 ```bash
 backend/.venv/bin/python -m dvc add \

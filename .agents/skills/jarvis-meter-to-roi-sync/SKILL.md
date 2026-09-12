@@ -131,6 +131,13 @@ define that boundary. Complete independent authorized work while input is pendin
    - Remove any batch-specific `:Zone.Identifier` sidecars in the ROI outputs.
 
 11. Refresh DVC-tracked artifacts.
+   - Apply the batch DVC authorization policy in
+     [AGENTS.md](../../../AGENTS.md#artifact-retention). Reuse existing consent
+     covering these photos and this destination. If missing, request one
+     authorization for the full requested import after preparing the first
+     upload: name the canonical photos, ROI images, and any requested downstream
+     windows, canonical windows, sections, and labeled sections. Identify the
+     actual remote destination and distinguish prepared from pending artifacts.
    - Run `backend/.venv/bin/python -m dvc add backend/data/roi_dataset/images`.
    - Run `backend/.venv/bin/python -m dvc add assets/<new-meter-file>` for each newly ingested canonical photo.
    - For Mac/iCloud imports, DVC-track the converted `meter_YYYYMMDD.JPEG`, not the original `IMG_*.HEIC`/`IMG_*.HEIF`.
@@ -138,7 +145,9 @@ define that boundary. Complete independent authorized work while input is pendin
    - Run `scripts/dvc-push-safe.sh` only with a configured off-machine remote. The guard refuses plain local paths and `file://` URLs.
    - Push only the updated pointers for this batch, then run target-specific `dvc status` on those pointers. A global DVC status may expose unrelated dirty outputs; report them but do not repair or include them.
    - Proceed only after the ROI review gate in step 9 passes and publication is
-     authorized. Resolving the annotation gate does not bypass upload permissions.
+     covered by that authorization. Record the user's consent, batch filenames,
+     artifact scope, and destination in batch QA evidence for downstream reuse.
+     Resolving the annotation gate does not bypass upload permissions.
 
 12. Validate and summarize.
    - Confirm no batch sidecars or successfully converted batch HEIC/HEIF sources
@@ -161,8 +170,9 @@ define that boundary. Complete independent authorized work while input is pendin
    - After the ROI review gate passes and the batch's canonical photos and ROI
      images are published, hand off the canonical filenames to
      `jarvis-meter-to-digit-box-sync` when the new photos should join the
-     full-image digit-detector dataset. The ROI review result does not replace
-     the separate digit-box review.
+     full-image digit-detector dataset. Include the batch upload authorization
+     and its QA evidence; covered digit derivatives need no second upload
+     consent. The ROI review result does not replace the separate digit-box review.
 
 For a full ingestion request, completion means the batch has manual ROI labels,
 passes the ROI review gate, and its changed canonical photo/ROI binaries are safely
