@@ -18,6 +18,8 @@ except ImportError:
 
 VALID_SPLITS = ("train", "val", "test")
 CLASS_NAMES = tuple(str(value) for value in range(10))
+# Six-decimal center and size rounding can shift an edge by up to 0.75e-6.
+YOLO_EDGE_TOLERANCE = 7.6e-7
 ANNOTATION_HEADERS = [
   "split",
   "filename",

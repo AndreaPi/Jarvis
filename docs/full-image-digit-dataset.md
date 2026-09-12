@@ -105,7 +105,8 @@ python build_full_image_digit_dataset.py
 The importer:
 
 - rejects unknown or missing active images by default;
-- requires exactly four in-bounds boxes per image;
+- requires exactly four finite, in-bounds boxes per image, allowing only
+  six-decimal YOLO edge rounding while preserving imported coordinates;
 - sorts boxes into reading order using the stored orientation;
 - rejects class sequences that differ from the verified meter reading;
 - marks imported rows as `human-makesense` and `reviewed`;
@@ -207,6 +208,9 @@ snapshot with the same active train sources. Do not rewrite old provenance to
 match current data. Reports record the verified provenance and manifest paths,
 SHA-256 hashes, fold, and source assignments; inference uses those verified
 assignments even if the manifest changes during the run.
+The sequence evaluator removes currently excluded sources from both annotations
+and verified fold assignments before preparing its evaluation subset; the
+original membership remains intact in the report's provenance.
 
 The evaluator defaults to CPU and reads only uncropped full images from the
 selected CV validation fold. It reproduces precision, recall, `mAP50`, and
@@ -340,6 +344,9 @@ python train_full_image_digit_detector.py \
 ```
 
 The crop is derived only from images assigned to training for that fold.
+Register and digit-centred crop labels clip tolerated source-edge rounding
+before scaling it into crop coordinates. Canonical annotations and full-image
+labels retain their original coordinates.
 Validation and test inputs remain uncropped full images. Use this option first
 on one fold; run its checkpoint through the sequence evaluator and run all
 five folds only if both detection and complete-reading metrics support it.

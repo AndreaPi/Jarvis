@@ -16,8 +16,10 @@ from backend.build_full_image_digit_dataset import (
   orient_review_crop,
   seed_or_preserve_annotations,
   seed_or_preserve_cv_folds,
+  write_yolo_labels,
 )
-from backend.import_full_image_digit_annotations import merge_reviewed_export
+from backend.import_full_image_digit_annotations import merge_reviewed_export, parse_yolo_rows
+from backend.test_train_full_image_digit_detector import annotation_rows
 
 
 BACKEND_DIR = Path(__file__).resolve().parent
@@ -33,6 +35,30 @@ def write_csv(path: Path, headers: list[str], rows: list[list[str]]) -> None:
 
 
 class FullImageDigitDatasetTests(unittest.TestCase):
+  def test_import_roundtrips_rounded_edge_boxes_and_rejects_real_overflow(self) -> None:
+    for rotation in (0, 90, 180, 270):
+      with self.subTest(rotation=rotation), tempfile.TemporaryDirectory() as directory:
+        rows = annotation_rows("edge.jpg", "1234", "train")
+        for index, row in enumerate(rows):
+          axis = (0.0166664, 0.05, 0.08, 0.11)[index]
+          if rotation in (90, 180):
+            axis = 1 - axis
+          x, y = (axis, 0.5) if rotation in (0, 180) else (0.5, axis)
+          w, h = (0.0333328, 0.02) if rotation in (0, 180) else (0.02, 0.0333328)
+          row.update(x_center=f"{x:.8f}", y_center=f"{y:.8f}", width=f"{w:.8f}", height=f"{h:.8f}",
+                     direction_rotation=str(rotation), image_width="1000", image_height="1000")
+        labels = Path(directory) / "labels"
+        write_yolo_labels(labels, rows)
+        exported = (labels / "train/edge.txt").read_text()
+        merged = merge_reviewed_export(rows, {"edge": exported})
+        self.assertTrue(all(row["review_status"] == "reviewed" for row in merged))
+        for row, line in zip(merged, exported.splitlines()):
+          self.assertEqual([float(row[k]) for k in ("x_center", "y_center", "width", "height")],
+                           [float(value) for value in line.split()[1:]])
+        for invalid in ("1 -0.01 0.5 0.03 0.02", "1 nan 0.5 0.03 0.02", "1 0.5 0.5 inf 0.02"):
+          with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+            parse_yolo_rows(invalid + "\n" + "\n".join(exported.splitlines()[1:]), "edge")
+
   def test_changed_source_metadata_cannot_silently_preserve_review_approval(self) -> None:
     source = {
       "filename": "meter.JPEG", "position": "0", "reading": "1234",

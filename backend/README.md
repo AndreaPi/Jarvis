@@ -228,7 +228,9 @@ do not reconstruct training evidence from today's dataset.
 After a dataset rebuild or additive ingestion, supply the original manifest via
 `--folds` (Python) or `FULL_IMAGE_DIGIT_SHADOW_CV_FOLDS_PATH` (UI). The sequence
 evaluator also requires annotations and labels whose active train sources match
-that manifest; use a compatible dataset snapshot. Even harmless CSV formatting
+that manifest after current source exclusions are applied to both annotations
+and verified assignments; use a compatible dataset snapshot. The report retains
+the original membership as provenance. Even harmless CSV formatting
 changes require the original file because verification compares exact bytes.
 The UI derives its fold from provenance; an optional
 `FULL_IMAGE_DIGIT_SHADOW_VALIDATION_FOLD` must agree. Reports retain the verified

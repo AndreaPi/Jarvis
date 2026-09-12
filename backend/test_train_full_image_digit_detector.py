@@ -151,6 +151,34 @@ class FullImageDigitDetectorTrainingTests(unittest.TestCase):
             with self.assertRaises(ValueError):
               training.parse_label_rows(label, expected_count=1)
 
+  def test_rounded_source_edges_remain_valid_in_generated_training_crops(self) -> None:
+    for rotation in (0, 90, 180, 270):
+      with self.subTest(rotation=rotation), tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        source = root / "source.jpg"
+        Image.new("RGB", (1000, 1000)).save(source)
+        rows = annotation_rows("source.jpg", "1234", "train")
+        labels = []
+        for index, row in enumerate(rows):
+          axis = (0.016666, 0.05, 0.08, 0.11)[index]
+          if rotation in (90, 180):
+            axis = 1 - axis
+          x, y = (axis, 0.5) if rotation in (0, 180) else (0.5, axis)
+          w, h = (0.033333, 0.02) if rotation in (0, 180) else (0.02, 0.033333)
+          row.update(x_center=str(x), y_center=str(y), width=str(w), height=str(h), direction_rotation=str(rotation))
+          labels.append((int(row["class_id"]), x, y, w, h))
+        original = copy.deepcopy(rows), list(labels), source.read_bytes()
+        training.write_register_crop(source, root / "register.jpg", root / "register.txt", labels, 0.75)
+        training.write_digit_centered_crop(source, root / "digit.jpg", root / "digit.txt", rows, rows[0], 0)
+        for name, count in (("register", 4), ("digit", 1)):
+          parsed = training.parse_label_rows(root / f"{name}.txt", expected_count=count)
+          for _, x, y, w, h in parsed:
+            self.assertGreaterEqual(x - w / 2, -1e-8)
+            self.assertGreaterEqual(y - h / 2, -1e-8)
+            self.assertLessEqual(x + w / 2, 1 + 1e-8)
+            self.assertLessEqual(y + h / 2, 1 + 1e-8)
+        self.assertEqual((rows, labels, source.read_bytes()), original)
+
   def test_resume_preserves_early_stopping_deadline_and_rejects_stale_state(self) -> None:
     from ultralytics.utils.torch_utils import EarlyStopping
 

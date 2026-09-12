@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import csv
 import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
+
+from backend.test_train_full_image_digit_detector import annotation_rows, write_sample
 
 import backend.evaluate_full_image_digit_detector as evaluator
 import backend.evaluate_full_image_digit_shadow_sensitivity as sensitivity
@@ -34,6 +38,58 @@ def detection(
 
 
 class FullImageDigitDetectorEvaluationTests(unittest.TestCase):
+  def test_evaluation_applies_current_exclusions_to_original_fold_membership(self) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      checkpoint = root / "weights/best.pt"
+      checkpoint.parent.mkdir()
+      checkpoint.write_bytes(b"mock checkpoint")
+      folds = root / "folds.csv"
+      folds.write_text("filename,fold\nactive.jpg,0\nlegacy-val.jpg,0\ntrain.jpg,1\nlegacy-train.jpg,1\n")
+      (root / "dataset_provenance.json").write_text(json.dumps({
+        "selected_fold": 0, "cv_folds_sha256": evaluator.file_sha256(folds),
+      }))
+      exclusions = root / "exclusions.csv"
+      exclusions.write_text(
+        "filename,scope,reason,retention\n"
+        "legacy-val.jpg,full_image_digit_detection,defocus,legacy_stress\n"
+        "legacy-train.jpg,full_image_digit_detection,defocus,legacy_stress\n"
+      )
+      rows = []
+      for name, split in (("active.jpg", "train"), ("train.jpg", "train"), ("holdout.jpg", "test")):
+        rows += annotation_rows(name, "1234", split)
+        write_sample(root / "images", root / "labels", name, "1234", split)
+      for name in ("legacy-val.jpg", "legacy-train.jpg"):
+        rows += annotation_rows(name, "1234", "train", review_status="pending")
+      annotations = root / "annotations.csv"
+      with annotations.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+      original = annotations.read_bytes(), folds.read_bytes()
+      output = root / "evaluation.json"
+      with (
+        patch("sys.argv", ["evaluate", "--checkpoint", str(checkpoint), "--fold", "0",
+                           "--folds", str(folds), "--annotations", str(annotations),
+                           "--source-exclusions", str(exclusions), "--source-images", str(root / "images"),
+                           "--labels", str(root / "labels"), "--output", str(output)]),
+        patch("ultralytics.YOLO") as model, patch("builtins.print"),
+      ):
+        model.return_value.val.return_value = SimpleNamespace(
+          box=SimpleNamespace(map50=0.8, map=0.44, mp=0.7, mr=0.6), fitness=0.44,
+        )
+        model.return_value.predict.return_value = [SimpleNamespace(boxes=None)]
+        evaluator.main()
+        self.assertEqual(model.return_value.predict.call_args.kwargs["source"],
+                         [str(root / "images/train/active.jpg")])
+      payload = json.loads(output.read_text())
+      self.assertEqual([row["filename"] for row in payload["predictions"]], ["active.jpg"])
+      self.assertEqual(payload["cv_folds_sha256"], evaluator.file_sha256(folds))
+      self.assertIn("legacy-val.jpg", payload["checkpoint_training_provenance"]["fold_assignments"])
+      self.assertEqual({row["filename"] for row in payload["source_exclusions"]},
+                       {"legacy-val.jpg", "legacy-train.jpg"})
+      self.assertEqual((annotations.read_bytes(), folds.read_bytes()), original)
+
   def test_rejects_unverified_checkpoint_fold_before_dataset_or_inference(self) -> None:
     cases = [
       ("wrong fold with default CLI fold", '{"selected_fold": 1}', "validation fold 1"),

@@ -294,7 +294,10 @@ def main() -> None:
     read_csv_rows(annotations_path),
     set(source_exclusions),
   )
-  fold_assignments = checkpoint_provenance["fold_assignments"]
+  fold_assignments = {
+    filename: fold for filename, fold in checkpoint_provenance["fold_assignments"].items()
+    if filename not in source_exclusions
+  }
   grouped_annotations = group_annotations(annotation_rows)
   validation_groups = validation_annotation_groups(
     grouped_annotations,

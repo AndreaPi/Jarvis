@@ -18,6 +18,7 @@ from PIL import Image
 try:
   from backend.build_full_image_digit_dataset import (
     CLASS_NAMES,
+    YOLO_EDGE_TOLERANCE,
     filter_excluded_annotations,
     read_source_exclusions,
     validate_annotations,
@@ -25,6 +26,7 @@ try:
 except ModuleNotFoundError:
   from build_full_image_digit_dataset import (
     CLASS_NAMES,
+    YOLO_EDGE_TOLERANCE,
     filter_excluded_annotations,
     read_source_exclusions,
     validate_annotations,
@@ -224,7 +226,7 @@ def parse_label_rows(
       raise ValueError(f"{path}:{line_number}: box size must be positive")
     # Six-decimal export can shift an edge by 0.5e-6 + 0.5 * 0.5e-6.
     # Keep full precision for the canonical-manifest comparison below.
-    edge_tolerance = 7.6e-7
+    edge_tolerance = YOLO_EDGE_TOLERANCE
     if x_center - width * 0.5 < -edge_tolerance or x_center + width * 0.5 > 1 + edge_tolerance:
       raise ValueError(f"{path}:{line_number}: horizontal bounds exceed image")
     if y_center - height * 0.5 < -edge_tolerance or y_center + height * 0.5 > 1 + edge_tolerance:
@@ -276,10 +278,16 @@ def write_register_crop(
 
   transformed_lines = []
   for class_id, x_center, y_center, width, height in labels:
-    transformed_x_center = (x_center * image_width - crop_left) / crop_width
-    transformed_y_center = (y_center * image_height - crop_top) / crop_height
-    transformed_width = width * image_width / crop_width
-    transformed_height = height * image_height / crop_height
+    # Clip the tolerated source-edge rounding before zoom magnifies it.
+    # Canonical annotations and full-image labels remain unchanged.
+    left = max(0.0, (x_center - width * 0.5) * image_width)
+    top = max(0.0, (y_center - height * 0.5) * image_height)
+    right = min(float(image_width), (x_center + width * 0.5) * image_width)
+    bottom = min(float(image_height), (y_center + height * 0.5) * image_height)
+    transformed_x_center = ((left + right) * 0.5 - crop_left) / crop_width
+    transformed_y_center = ((top + bottom) * 0.5 - crop_top) / crop_height
+    transformed_width = (right - left) / crop_width
+    transformed_height = (bottom - top) / crop_height
     transformed_lines.append(
       f"{class_id} {transformed_x_center:.8f} {transformed_y_center:.8f} "
       f"{transformed_width:.8f} {transformed_height:.8f}"
@@ -449,6 +457,10 @@ def write_digit_centered_crop(
     image_width,
     image_height,
   )
+  # The canonical box may contain tolerated rounding at a source edge too.
+  target_left, target_top = max(0.0, target_left), max(0.0, target_top)
+  target_right = min(float(image_width), target_right)
+  target_bottom = min(float(image_height), target_bottom)
   x_center = ((target_left + target_right) * 0.5 - crop_left) / crop_width
   y_center = ((target_top + target_bottom) * 0.5 - crop_top) / crop_height
   width = (target_right - target_left) / crop_width
