@@ -416,7 +416,7 @@ def main() -> None:
         "recall": float(box_metrics.mr),
         "map50": map50,
         "map50_95": map50_95,
-        "fitness": 0.1 * map50 + 0.9 * map50_95,
+      "fitness": float(validation_metrics.fitness),
       },
       "sequence_metrics": summarize_sequence_records(records),
       "predictions": records,

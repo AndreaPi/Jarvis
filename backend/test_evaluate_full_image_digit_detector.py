@@ -83,6 +83,7 @@ class FullImageDigitDetectorEvaluationTests(unittest.TestCase):
         self.assertEqual(model.return_value.predict.call_args.kwargs["source"],
                          [str(root / "images/train/active.jpg")])
       payload = json.loads(output.read_text())
+      self.assertEqual(payload["detection_metrics"]["fitness"], 0.44)
       self.assertEqual([row["filename"] for row in payload["predictions"]], ["active.jpg"])
       self.assertEqual(payload["cv_folds_sha256"], evaluator.file_sha256(folds))
       self.assertIn("legacy-val.jpg", payload["checkpoint_training_provenance"]["fold_assignments"])
