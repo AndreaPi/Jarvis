@@ -913,7 +913,8 @@ def aggregate_summary(
     coverages = sorted(
       float(record["roi"]["truth_register_coverage"])
       for record in cascade_records.values()
-      if record["roi"].get("truth_register_coverage") is not None
+      if record["roi"]["status"] == "accepted"
+      and record["roi"].get("truth_register_coverage") is not None
     )
     coverage_midpoint = len(coverages) // 2
     median_coverage = (
@@ -956,6 +957,8 @@ def aggregate_summary(
     )
     summary["roi_cascade_diagnostics"] = {
       "roi_status_counts": dict(sorted(roi_status_counts.items())),
+      "roi_rejected_count": len(cascade_records) - roi_status_counts["accepted"],
+      "coverage_image_count": len(coverages),
       "median_truth_register_coverage": median_coverage,
       "minimum_truth_register_coverage": min(coverages) if coverages else None,
       "rescued_exact_count": cascade_rescued_exact,
@@ -1019,6 +1022,16 @@ def aggregate_summary(
     if minimum_coverage is None or not int(cascade_metrics["readable_count"]):
       finding = "The production ROI cascade produced no readable sequence or no measurable register coverage."
       recommended_next_step = "Inspect ROI rejection reasons and detector outputs before comparing sequence quality."
+    elif cascade_diagnostics["roi_rejected_count"]:
+      finding = (
+        f"The production ROI stage rejects {cascade_diagnostics['roi_rejected_count']}/"
+        f"{cascade_metrics['image_count']} images before digit inference. Coverage of "
+        "accepted crops cannot explain those upstream no-reads."
+      )
+      recommended_next_step = (
+        "Inspect ROI rejection reasons and failed source images before attributing "
+        "the no-read gap to the digit detector."
+      )
     elif minimum_coverage >= 0.98 and int(cascade_metrics["no_read_count"]) > 3:
       finding = (
         "The production ROI crops fully cover every reviewed register, but "
@@ -1063,8 +1076,9 @@ def aggregate_summary(
           "previous failures."
         ),
         (
-          "The production-expanded ROI crops cover at least "
-          f"{minimum_coverage:.1%} of every reviewed register."
+          f"Coverage was measured for {cascade_diagnostics['coverage_image_count']}/"
+          f"{cascade_metrics['image_count']} images with accepted ROI crops; "
+          f"minimum reviewed-register coverage in that subset is {minimum_coverage:.1%}."
         ) if minimum_coverage is not None else "No register coverage could be measured.",
         (
           "Single-aperture inference is correct on only "

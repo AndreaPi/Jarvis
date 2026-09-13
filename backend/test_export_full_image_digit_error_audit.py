@@ -291,6 +291,34 @@ class ClassificationTests(unittest.TestCase):
 
 
 class ReportTests(unittest.TestCase):
+  def test_partial_roi_rejections_are_not_diagnosed_as_digit_padding_failures(self) -> None:
+    records = [
+      build_sequence_record(f"meter-{index}.jpg", "1234", 0,
+                            [detection(digit, 0.2 + p * 0.2) for p, digit in enumerate((1, 2, 3, 4))])
+      for index in range(5)
+    ]
+    evaluations = [{"fold": 0, "predictions": records}]
+    annotations = {record["filename"]: [
+      box(digit, 0.2 + p * 0.2, position=p) for p, digit in enumerate((1, 2, 3, 4))
+    ] for record in records}
+    register = {record["filename"]: record for record in records}
+    for rejection in ("no-detection", "invalid-center-x", "empty-crop"):
+      with self.subTest(rejection=rejection):
+        cascade = {record["filename"]: {
+          **(record if index == 0 else build_sequence_record(record["filename"], "1234", 0, [])),
+          "roi": {"status": "accepted", "truth_register_coverage": 1.0} if index == 0 else {"status": rejection},
+        } for index, record in enumerate(records)}
+        rows = build_audit_rows(evaluations, annotations, register, {}, cascade)
+        summary = aggregate_summary(evaluations, rows, register, {}, cascade)
+        self.assertEqual(summary["roi_cascade_diagnostics"]["roi_rejected_count"], 4)
+        self.assertEqual(summary["roi_cascade_diagnostics"]["coverage_image_count"], 1)
+        decision = summary["decision"]
+        self.assertIn("4/5", decision["finding"])
+        self.assertIn("ROI rejection", decision["recommended_next_step"])
+        self.assertNotIn("padding", decision["recommended_next_step"])
+        self.assertIn("1/5", decision["supporting_findings"][2])
+        self.assertNotIn("every reviewed register", " ".join(decision["supporting_findings"]))
+
   def test_reports_handle_zero_or_one_readable_result_and_skipped_paths(self) -> None:
     for readable_count in (0, 1, 2):
       for mode in ("both", "register", "cascade", "skipped", "roi-rejected"):

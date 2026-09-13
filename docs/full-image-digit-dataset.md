@@ -248,6 +248,8 @@ any fresh inference. Missing or mismatched hashes require restoring the
 evaluated checkpoint or regenerating its evaluation. Undefined statistics
 remain `null` in JSON and appear as `n/a` in HTML, even for all-no-read runs.
 Review crops use the same clockwise rotation convention as the runtime.
+The audit distinguishes upstream ROI rejections from digit-detector no-reads
+and reports how many accepted crops contribute to register-coverage statistics.
 Ultralytics can pad a mixed-shape batch differently, and the earlier batched
 audit overstated runtime performance.
 
