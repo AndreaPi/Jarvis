@@ -12,24 +12,17 @@ const validHealth = () => ({
   digit_model_path: path.join(ROOT_DIR, 'backend', 'models', 'digit_classifier.pt')
 });
 
-test('accepts the canonical ready backend', () => {
+test('requires ready models and canonical checkpoints', () => {
   assert.doesNotThrow(() => validateQaBackendHealth(validHealth(), ROOT_DIR));
-});
-
-test('rejects a backend whose required models are not ready', () => {
-  const health = validHealth();
-  health.digit_ready = false;
-  assert.throws(
-    () => validateQaBackendHealth(health, ROOT_DIR),
-    /digit_ready is not true/
-  );
-});
-
-test('rejects a backend serving a non-canonical checkpoint', () => {
-  const health = validHealth();
-  health.model_path = path.join(ROOT_DIR, 'backend', 'runs', 'challenger.pt');
-  assert.throws(
-    () => validateQaBackendHealth(health, ROOT_DIR),
-    /ROI checkpoint is .*challenger\.pt/
-  );
+  for (const [overrides, error] of [
+    [{ digit_ready: false }, /digit_ready is not true/],
+    [{ model_path: path.join(ROOT_DIR, 'backend', 'runs', 'challenger.pt') },
+      /ROI checkpoint is .*challenger\.pt/]
+  ]) {
+    assert.throws(
+      () => validateQaBackendHealth({ ...validHealth(), ...overrides }, ROOT_DIR),
+      error,
+      JSON.stringify(overrides)
+    );
+  }
 });

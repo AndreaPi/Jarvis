@@ -255,36 +255,14 @@ class FullImageDigitDetectorTrainingTests(unittest.TestCase):
 
       self.assertEqual(completed_epochs, 60)
 
-  def test_rejects_resume_without_optimizer_state(self) -> None:
-    with tempfile.TemporaryDirectory(prefix="jarvis-full-digit-resume-") as temp_dir:
-      run_dir = Path(temp_dir) / "runs" / "balanced-fold1"
-      checkpoint_path = run_dir / "weights" / "last.pt"
-      checkpoint = {
-        "epoch": 59,
-        "optimizer": None,
-        "train_args": {
-          "epochs": 120,
-          "imgsz": 1280,
-          "batch": 4,
-          "seed": 42,
-          "patience": 25,
-        },
-      }
-      args = type("Args", (), {
-        "epochs": 120,
-        "imgsz": 1280,
-        "batch": 4,
-        "seed": 42,
-        "patience": 25,
-      })()
-
+      checkpoint["optimizer"] = None
       with self.assertRaisesRegex(ValueError, "no optimizer state"):
         validate_resume_checkpoint(
           checkpoint_path,
           checkpoint,
           args,
           run_dir,
-          resume_provenance(),
+          provenance,
         )
 
   def test_resume_rejects_changed_or_missing_provenance(self) -> None:

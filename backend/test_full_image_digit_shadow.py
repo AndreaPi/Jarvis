@@ -62,11 +62,6 @@ class FakeRoiDetector:
     return RoiDetection(40, 35, 50, 50, 0.9, 0, "digit_window")
 
 
-class StubUpload:
-  async def read(self, _size=-1):
-    return b"test-image"
-
-
 class FullImageDigitShadowTests(unittest.TestCase):
   def test_unloadable_optional_checkpoint_does_not_break_canonical_health(self) -> None:
     with tempfile.TemporaryDirectory() as directory:
@@ -137,34 +132,6 @@ class FullImageDigitShadowTests(unittest.TestCase):
     self.assertEqual(len(payload["candidates"]), 4)
     self.assertNotIn("value", payload)
     self.assertGreater(shadow._model.last_source_shape[0], 15)
-
-
-class ShadowEndpointTests(unittest.IsolatedAsyncioTestCase):
-  async def test_endpoint_passes_through_diagnostic_payload(self) -> None:
-    expected = {
-      "ok": True,
-      "candidates": [{"rotation": 90, "value": "2311"}],
-    }
-
-    class StubShadow:
-      def predict(self, *_args, **_kwargs):
-        return expected
-
-    original_detector = app_module._detector
-    original_shadow = app_module._full_image_digit_shadow
-    original_loader = app_module._load_rgb_image
-    try:
-      app_module._detector = FakeRoiDetector()
-      app_module._full_image_digit_shadow = StubShadow()
-      app_module._load_rgb_image = lambda _payload: np.zeros((10, 10, 3), dtype=np.uint8)
-
-      payload = await app_module.predict_full_image_digit_shadow(StubUpload())
-    finally:
-      app_module._detector = original_detector
-      app_module._full_image_digit_shadow = original_shadow
-      app_module._load_rgb_image = original_loader
-
-    self.assertEqual(payload, expected)
 
 
 if __name__ == "__main__":

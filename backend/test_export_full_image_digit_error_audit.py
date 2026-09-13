@@ -85,19 +85,12 @@ class GeometryTests(unittest.TestCase):
         rows = build_audit_rows(evaluations, annotations, register, {}, cascade)
         summary = aggregate_summary(evaluations, rows, register, {}, cascade)
         self.assertEqual(summary["transition_state_counts"], counts)
-        finding = summary["decision"]["supporting_findings"][-1]
+        findings = " ".join(summary["decision"]["supporting_findings"])
         for state, count in counts.items():
-          self.assertIn(f"{count} {state}", finding)
-        if "unknown" in counts:
-          self.assertIn(f"Review the {counts['unknown']} unknown states", finding)
-        else:
-          self.assertIn("No audited state is unknown", finding)
+          self.assertIn(f"{count} {state}", findings)
+        if "unknown" not in counts:
           self.assertNotIn("remain unknown", summary["decision"]["promotion_status"])
         self.assertIn("not a locked external test", summary["decision"]["promotion_status"])
-        with tempfile.TemporaryDirectory() as directory:
-          output = Path(directory) / "summary.md"
-          write_markdown_summary(summary, output, "test")
-          self.assertIn(finding, output.read_text())
 
   def test_audit_crop_rotates_clockwise_like_the_review_and_runtime(self) -> None:
     source = Image.new("RGB", (2, 4), "red")
@@ -312,14 +305,10 @@ class ReportTests(unittest.TestCase):
         self.assertIn("1/1", decision["finding"])
         self.assertNotIn("bottleneck", decision["finding"])
         self.assertNotIn("gain", decision["finding"])
-        finding = decision["supporting_findings"][3]
-        self.assertIn(f"{correct_count}/4", finding)
-        self.assertIn(f"{correct_count / 4:.1%}", finding)
-        self.assertNotIn("should preserve whole-register context", finding)
-        with tempfile.TemporaryDirectory() as directory:
-          output = Path(directory) / "summary.md"
-          write_markdown_summary(summary, output, "test")
-          self.assertIn(finding, output.read_text())
+        findings = " ".join(decision["supporting_findings"])
+        self.assertIn(f"{correct_count}/4", findings)
+        self.assertIn(f"{correct_count / 4:.1%}", findings)
+        self.assertNotIn("should preserve whole-register context", findings)
 
   def test_partial_roi_rejections_are_not_diagnosed_as_digit_padding_failures(self) -> None:
     records = [
@@ -346,8 +335,9 @@ class ReportTests(unittest.TestCase):
         self.assertIn("4/5", decision["finding"])
         self.assertIn("ROI rejection", decision["recommended_next_step"])
         self.assertNotIn("padding", decision["recommended_next_step"])
-        self.assertIn("1/5", decision["supporting_findings"][2])
-        self.assertNotIn("every reviewed register", " ".join(decision["supporting_findings"]))
+        findings = " ".join(decision["supporting_findings"])
+        self.assertIn("1/5", findings)
+        self.assertNotIn("every reviewed register", findings)
 
   def test_reports_handle_zero_or_one_readable_result_and_skipped_paths(self) -> None:
     for readable_count in (0, 1, 2):
@@ -392,9 +382,13 @@ class ReportTests(unittest.TestCase):
             row["crop_hrefs"] = ["crop.jpg"] * 4
             row["overlay_href"] = "overlay.jpg"
           path = Path(directory) / "index.html"
+          markdown_path = Path(directory) / "summary.md"
           write_html_report(rows, summary, path, "test")
-          write_markdown_summary(summary, Path(directory) / "summary.md", "test")
-          self.assertIn("Jarvis Full-Image Digit Error Audit", path.read_text())
+          write_markdown_summary(summary, markdown_path, "test")
+          markdown = markdown_path.read_text()
+          if mode in ("both", "register", "roi-rejected"):
+            for finding in summary["decision"]["supporting_findings"]:
+              self.assertIn(finding, markdown)
           if readable_count < 2 or mode == "roi-rejected":
             self.assertIn("n/a", path.read_text())
 

@@ -38,25 +38,21 @@ class JarvisLocalLauncherTests(unittest.TestCase):
       )
     }
 
-  def test_accepts_complete_canonical_health(self):
-    self.assertEqual(
-      jarvis_local.backend_health_issues(self.valid_health(), self.repo_root),
-      []
+  def test_health_requires_ready_models_and_canonical_checkpoints(self):
+    cases = (
+      ({}, None),
+      ({"strip_digit_23xx_ready": False}, "strip_digit_23xx_ready is not true"),
+      ({"model_path": str(self.repo_root / "backend" / "runs" / "challenger.pt")},
+       "challenger.pt"),
     )
-
-  def test_rejects_missing_shadow_model_readiness(self):
-    health = self.valid_health()
-    health["strip_digit_23xx_ready"] = False
-    self.assertIn(
-      "strip_digit_23xx_ready is not true",
-      jarvis_local.backend_health_issues(health, self.repo_root)
-    )
-
-  def test_rejects_noncanonical_checkpoint(self):
-    health = self.valid_health()
-    health["model_path"] = str(self.repo_root / "backend" / "runs" / "challenger.pt")
-    issues = jarvis_local.backend_health_issues(health, self.repo_root)
-    self.assertTrue(any("challenger.pt" in issue for issue in issues))
+    for overrides, expected_issue in cases:
+      with self.subTest(overrides=overrides):
+        health = {**self.valid_health(), **overrides}
+        issues = jarvis_local.backend_health_issues(health, self.repo_root)
+        if expected_issue is None:
+          self.assertEqual(issues, [])
+        else:
+          self.assertTrue(any(expected_issue in issue for issue in issues), issues)
 
   def test_process_identity_requires_every_marker(self):
     command = (
