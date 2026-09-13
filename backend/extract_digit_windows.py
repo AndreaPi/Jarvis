@@ -128,7 +128,7 @@ def snapshot_review_manifests(out_dir: Path) -> dict[str, str]:
   if not manifests_dir.exists():
     return {}
   snapshots: dict[str, str] = {}
-  for path in manifests_dir.glob("*overrides.csv"):
+  for path in [*manifests_dir.glob("*overrides.csv"), manifests_dir / "orientation_reviews.csv"]:
     if path.is_file():
       snapshots[path.name] = path.read_text(encoding="utf-8")
   return snapshots

@@ -77,10 +77,17 @@ Current recommended flow:
 ```bash
 cd backend
 source .venv/bin/activate
-python extract_digit_windows.py --clean
+python extract_digit_windows.py
 python split_digit_windows.py --clean
 python label_digit_sections.py --clean
 ```
+
+For additive ingestion, keep `extract_digit_windows.py` incremental as above.
+Its `--clean` option deletes the entire digit-dataset output root, including
+synthetic artifacts and DVC pointers, before restoring selected review manifests.
+Use it only for an explicitly requested full regeneration that rebuilds every
+affected derived dataset and restores its tracking. The `--clean` options on
+the two subsequent scripts clear their respective derived output directories.
 
 This creates:
 

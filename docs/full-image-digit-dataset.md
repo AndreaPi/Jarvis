@@ -21,6 +21,11 @@ the active Jarvis OCR runtime.
 - A wheel between two digits is still one object. Keep the class from the
   verified reading and record its transition state separately in the canonical
   manifest.
+- Track explicit canonical-strip orientation review outcomes in
+  `backend/data/digit_dataset/manifests/orientation_reviews.csv` (from the repo
+  root), retaining image/strip hashes and first-attempt failures separately from
+  corrections. Reused approvals do not add trials; a success streak does not
+  automatically waive human orientation review.
 - Do not train from annotations whose `review_status` is `pending`.
 - `manifests/source_exclusions.csv` is the explicit active-scope boundary.
   Excluded sources retain their photo, reading, bootstrap rows, and reviewed
@@ -125,7 +130,12 @@ including their association, with tolerance for six-decimal YOLO serialization.
 Stale derived labels must be rebuilt before training.
 
 1. Confirm `manifests/summary.json` contains no `pending` review status.
-2. Inspect the regenerated contact sheet.
+2. Verify the imported boxes match the user's Make Sense export, source-image
+   identity, and approved orientation. Inspect the regenerated target previews
+   at full resolution; the contact sheet is only an overview. A faithful import
+   with passing consistency checks and agent visual QA needs no second human
+   preview approval. Bootstrap boxes still require human review; discrepancies,
+   changed geometry/orientation, or visual ambiguity require renewed review.
 3. Run `npm run test:backend`.
 4. Keep the historical sanity holdout out of all model-selection and
    augmentation inputs.

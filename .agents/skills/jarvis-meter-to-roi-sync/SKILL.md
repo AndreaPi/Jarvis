@@ -1,6 +1,6 @@
 ---
 name: jarvis-meter-to-roi-sync
-description: "Run a full Jarvis meter-image ingestion flow: clean assets sidecars, normalize JPEG/PNG/HEIC photos from capture metadata, read and confirm meter values, prompt for manual ROI labels, update assets/meter_readings.csv, then rebuild backend/data/roi_dataset from the ROI manifest with QA previews. Use when new water-meter photos are added to assets/ and should immediately be reflected in both CSV readings and ROI training data."
+description: "Ingest Jarvis meter photos into readings and the ROI dataset, or resume and correct their manual ROI annotation review."
 ---
 
 # Jarvis Meter To ROI Sync
@@ -13,29 +13,41 @@ Run mutating command sequences fail-fast. Use separate checked commands or `set 
 
 ## Workflow
 
-1. Remove Windows sidecars every run.
-   - `find assets -type f -name '*:Zone.Identifier' -delete`
+Choose the entry point from the requested batch and verified artifact state:
+
+- New photos: normalize, establish readings, then collect ROI labels.
+- Supplied labels or a resumed review: verify the existing canonical photos,
+  readings, manifest, and persistent splits, then continue at the first unmet step.
+- ROI corrections: update only the requested targets, rebuild, and review the
+  changed overlays. Do not repeat ingestion or change existing split assignments.
+
+A manual export supplied by the user establishes human review of that ROI on
+the annotated canonical image. A verified equivalent import and agent visual QA
+satisfy the ROI review gate without a second human overlay confirmation. Reuse
+that result on resumed work with unchanged inputs. Changed source/box geometry
+or unresolved QA requires review of the affected targets; the checks below
+define that boundary. Complete independent authorized work while input is pending.
+
+1. Establish the batch and remove its Windows sidecars.
+   - Record target filenames and existing split assignments. Delete only
+     `:Zone.Identifier` sidecars belonging to this batch; preserve unrelated files.
 
 2. Ingest new photos in `assets/`.
-   - Always start by scanning `assets/` for import candidates instead of waiting for the user to name files.
+   - Use the user's named files when supplied. Otherwise scan `assets/` for
+     import candidates; report the selected batch before normalization.
    - Suggested scan: `find assets -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.heic' -o -iname '*.heif' \) -print`
-   - Treat `jpg|jpeg|png|heic|heif` (any case) files not already named `meter_*` as candidates.
-   - Exclude names already listed in `assets/meter_readings.csv`.
-   - Report detected candidates before normalization so the user can catch accidental imports early.
+   - For discovery, treat `jpg|jpeg|png|heic|heif` (any case) files not already
+     named `meter_*` or listed in `assets/meter_readings.csv` as candidates.
+     These filters do not exclude explicitly selected canonical files from a
+     resumed review. Do not add other discovered files to an explicit batch.
    - HEIC/HEIF is a Mac/iCloud import format only for this repo; do not keep HEIC/HEIF as canonical assets.
 
 3. Normalize each candidate from capture metadata.
-   - For JPEG/PNG, read EXIF when available: `identify -format '%[EXIF:DateTimeOriginal]\n' assets/<file>`.
-   - If `identify` is unavailable on macOS, use `sips -g creation assets/<file>` as a fallback capture timestamp.
-   - Before renaming or converting, force a full pixel decode with `backend/.venv` Pillow. For HEIC/HEIF, register the `pillow-heif` opener and call `load()`; metadata and dimensions reported by `sips` are not proof that an iCloud-backed file contains image pixels.
-   - If full decode fails, stop and keep the source file. Ask the user to download/export the original again. With explicit approval, searching and exporting the matching original from Photos is an acceptable recovery path.
-   - Rename JPEG/PNG to `meter_yyyymmdd` while preserving extension/case.
-   - Convert HEIC/HEIF to a canonical JPEG named `meter_yyyymmdd.JPEG` with `backend/.venv` Pillow plus `pillow-heif`; prefer this over `sips` so orientation is applied consistently.
-   - Write conversion output to a temporary sibling file. Reopen it with Pillow, call `load()`, and verify positive dimensions before atomically replacing the canonical target.
-   - If target exists, append `_1`, `_2`, `_3`, ...
-   - Delete the original HEIC/HEIF from `assets/` only after the canonical target passes full pixel validation. A failed conversion or validation must leave the source untouched.
-   - Treat HEIC/HEIF deletion as required cleanup, not a review gate. If the execution environment requires explicit approval for `rm`, request that approval immediately and continue deletion as soon as it is granted.
-   - Never write HEIC/HEIF filenames to `assets/meter_readings.csv`, `backend/data/roi_boxes_manifest.json`, or DVC metadata; use the converted JPEG filename everywhere downstream.
+   - For raw imports, read [photo normalization](references/photo-normalization.md).
+     Skip normalization for already verified canonical images.
+   - Fully decode source pixels before renaming/conversion and validate the
+     converted JPEG before deleting a HEIC/HEIF source. Keep a failed source.
+   - Use the canonical JPEG/PNG filename in CSV, ROI, and DVC metadata.
 
 4. Read and record the meter value.
    - Read the 4-digit black register only.
@@ -50,21 +62,16 @@ Run mutating command sequences fail-fast. Use separate checked commands or `set 
    - Do not duplicate existing filenames.
 
 6. Collect manual ROI labels for the new images.
-   - Do not auto-estimate ROI boxes as the default path. After canonical photo normalization and meter-value confirmation, ask the user to label the 4-digit black register in a suitable annotation app such as Make Sense.
-   - Lead every Make Sense labeling request with a prominent clickable Markdown link to `[Open Make Sense](https://www.makesense.ai/)`; localize the link text to the user's language when useful. Prefer the link over opening an external browser automatically so the user keeps control of focus and the workflow remains reliable across execution environments. Never require the user to remember or type the site address.
-   - Build and report the complete batch of newly ingested canonical image filenames that need labels.
-   - In the same message as the Make Sense link, provide clickable local links for every canonical input image and list the exact output TXT filename expected for each one.
-   - Tell the user to label every image in that batch, and wait until they upload one exported label file per new image into `assets/`.
-   - Expected label format is YOLO TXT with one row per image:
-     - `0 x_center y_center width height`
-     - all coordinates normalized to the full image
-     - class id `0`
-   - Expected label filename is the canonical image stem plus `.txt`, for example `assets/meter_20260521.txt` for `assets/meter_20260521.JPEG`.
-   - Before continuing, verify the uploaded TXT filenames exactly match the renamed canonical image stems for the whole batch.
-   - If labels are missing, extra, or named for the pre-normalized import files, stop and report the expected filenames.
-   - If the user uploads differently named TXT files, inspect them only to help diagnose the mismatch; do not guess silently. Ask the user to confirm the intended mapping, then rename/move only after the mapping is clear.
+   - Read [manual ROI labels](references/manual-roi-labels.md) when requesting,
+     importing, or correcting labels. Do not auto-estimate boxes as the default.
+   - Reuse matching labels already supplied for the batch; request only missing
+     or corrected labels. Require one valid manual box per target, with an
+     unambiguous filename mapping, before syncing the batch.
 
 7. Sync uploaded ROI labels into the repo workflow.
+   - Retain the original export coordinates and the annotated canonical image's
+     hash, dimensions, and EXIF orientation in batch QA evidence before moving
+     labels. Keep this evidence available for post-build and resumed checks.
    - Parse each uploaded YOLO TXT label in the batch and convert it to manifest rect format:
      - `x = x_center - width / 2`
      - `y = y_center - height / 2`
@@ -72,50 +79,84 @@ Run mutating command sequences fail-fast. Use separate checked commands or `set 
      - `height = height`
    - Upsert the converted entry in `backend/data/roi_boxes_manifest.json`:
      - `{"filename": "meter_YYYYMMDD.JPEG", "rectNorm": {"x": ..., "y": ..., "width": ..., "height": ...}}`
-   - Move each consumed TXT label from `assets/` to `backend/data/roi_dataset/labels/train/<stem>.txt`.
+   - Move each consumed TXT label from `assets/` to
+     `backend/data/roi_dataset/labels/<assigned-split>/<stem>.txt`; use the
+     persistent split for existing images and `train` for new images.
    - Run label validation and moves from the repository root, or use absolute paths. Do not rely on a `cd backend` from an earlier command.
    - Do not rebuild the ROI dataset until every image in the new batch has a matching manifest entry.
    - Keep `backend/data/roi_boxes_manifest.json` as the source of truth; generated label files must stay aligned with it after rebuild.
-   - Do not use the old external `jarvis-roi-dataset-sync` helper path; the repo now expects `backend/build_roi_dataset.py` with a manifest input.
 
 8. Rebuild the ROI dataset from the current CSV + ROI manifest.
    - From the repository root, run `backend/.venv/bin/python backend/build_roi_dataset.py --roi-json data/roi_boxes_manifest.json`. The script resolves relative arguments from `backend/`, not from the shell's working directory.
    - The builder persists split assignments in `backend/data/roi_dataset/splits.json`.
    - Existing images keep their assigned split; new images default to `train` unless you edit `splits.json`.
    - The builder updates the ROI dataset to match the CSV + manifest without recomputing old splits from CSV order.
-   - Treat newly imported manual ROI boxes as pending review until the user checks the generated previews.
+   - Treat imported boxes as pending validation until the consistency and
+     agent visual checks below pass; a builder exit code alone is insufficient.
 
 9. Review generated ROI previews.
    - Check `backend/data/roi_dataset/previews/*_bbox.jpg` for quick bounding-box QA.
    - Re-render full QA overlays from the repository root with `backend/.venv/bin/python backend/visualize_roi_labels.py`.
-   - Review outputs under `backend/data/roi_dataset/qa_previews/`.
-   - Explicitly prompt the user to inspect the new image overlays before treating the labels as training-ready.
-   - Do not continue to DVC push, final summary, commit, or promotion language until the user either approves the labels or asks for corrections.
+   - Compare the generated ROI dataset image to the reviewed canonical photo:
+     filename mapping, file hash, dimensions, and orientation must agree.
+   - Compare the original exported box, manifest rectangle, and generated YOLO
+     label numerically, allowing only the label's six-decimal serialization
+     rounding. Reject silent clipping, padding, coordinate swaps, or rotations.
+   - Inspect target overlays under `backend/data/roi_dataset/qa_previews/` at
+     full resolution and confirm the box covers the complete black register.
+   - If the manual export, image identity, numerical checks, and agent visual QA
+     agree, mark the ROI validated and continue authorized work. Show or link the
+     preview for transparency without asking for a second human confirmation.
+     Report manual annotation and agent QA accurately; do not claim the user
+     approved a generated overlay they did not inspect.
+   - If an import defect can be corrected to match the supplied export exactly,
+     fix it and rerun affected checks. Ask for human review only when equivalence
+     cannot be established, the annotated image/box geometry changes, or visual
+     ambiguity remains. Explain the discrepancy and show the affected overlay.
+   - Unresolved validation or required review blocks DVC publication, commit of
+     affected annotations, and training-ready claims. Continue independent checks
+     and report pending work. Annotation review does not authorize training,
+     model promotion, or a previously unauthorized external upload.
 
 10. Correct labels when needed.
    - Edit the source-of-truth entry in `backend/data/roi_boxes_manifest.json`, not the generated label file.
    - Keep rect format: `{"x": ..., "y": ..., "width": ..., "height": ...}` normalized to the full image.
    - Target only the 4-digit black register window.
-   - Preferred correction path: use Make Sense (or another manual labeling tool), export the corrected box to `assets/`, then repeat the label sync step and rebuild.
-   - When asking for a Make Sense correction, repeat the clickable Make Sense link and the exact local input and output filenames; do not rely on the user finding an earlier message.
+   - Follow the manual-label reference for corrections and repeat the label
+     sync step for the affected targets.
    - Re-run `build_roi_dataset.py` after any manifest correction so the generated labels stay aligned.
-   - Re-run `visualize_roi_labels.py` after any correction and ask the user to confirm the updated overlay.
-   - After the user approves the corrected overlay, scan for stray `:Zone.Identifier` files under `backend/data/roi_dataset/` and delete them before continuing.
+   - Re-run `visualize_roi_labels.py` after a correction and apply the checks in
+     step 9. A corrected manual export supplies the human review for that box;
+     agent-proposed geometry changes require human review before acceptance.
+   - Remove any batch-specific `:Zone.Identifier` sidecars in the ROI outputs.
 
 11. Refresh DVC-tracked artifacts.
+   - Apply the batch DVC authorization policy in
+     [AGENTS.md](../../../AGENTS.md#artifact-retention). Reuse existing consent
+     covering these photos and this destination. If missing, request one
+     authorization for the full requested import after preparing the first
+     upload: name the canonical photos, ROI images, and any requested downstream
+     windows, canonical windows, sections, and labeled sections. Identify the
+     actual remote destination and distinguish prepared from pending artifacts.
    - Run `backend/.venv/bin/python -m dvc add backend/data/roi_dataset/images`.
    - Run `backend/.venv/bin/python -m dvc add assets/<new-meter-file>` for each newly ingested canonical photo.
    - For Mac/iCloud imports, DVC-track the converted `meter_YYYYMMDD.JPEG`, not the original `IMG_*.HEIC`/`IMG_*.HEIF`.
    - If DVC tries to use an unwritable system cache such as `/Library/Caches/dvc`, rerun with `DVC_SITE_CACHE_DIR=/tmp/dvc-site-cache`.
    - Run `scripts/dvc-push-safe.sh` only with a configured off-machine remote. The guard refuses plain local paths and `file://` URLs.
    - Push only the updated pointers for this batch, then run target-specific `dvc status` on those pointers. A global DVC status may expose unrelated dirty outputs; report them but do not repair or include them.
-   - Only do this after the user has approved the ROI overlays for the new image(s).
+   - Proceed only after the ROI review gate in step 9 passes and publication is
+     covered by that authorization. Record the user's consent, batch filenames,
+     artifact scope, and destination in batch QA evidence for downstream reuse.
+     Resolving the annotation gate does not bypass upload permissions.
 
 12. Validate and summarize.
-   - Confirm no sidecars remain.
-   - Confirm no HEIC/HEIF files remain in `assets/` after conversion.
+   - Confirm no batch sidecars or successfully converted batch HEIC/HEIF sources
+     remain. Report failed sources as pending; preserve unrelated imports.
    - Confirm every CSV filename exists in `assets/`.
-   - Confirm every newly ingested filename has a moved manual TXT label and an ROI manifest entry before rebuilding.
+   - Confirm every target has its manual label and manifest entry, generated
+     labels agree with the manifest, and existing split assignments are unchanged.
+   - Reuse passing checks for unchanged inputs and outputs; a user confirmation
+     alone does not require rebuilding datasets or rerunning QA.
    - Report:
      - renamed files
      - CSV rows added/updated
@@ -124,36 +165,20 @@ Run mutating command sequences fail-fast. Use separate checked commands or `set 
      - final label files updated
      - DVC pointers pushed and their target-specific status
      - unrelated pre-existing Git or DVC changes, if any
-     - whether the user explicitly approved the new ROI labels or whether further Make Sense correction is still pending
-   - After the ROI overlay is approved and the batch's canonical photos and ROI
+     - manual-export provenance, consistency/agent visual QA results, and any
+       exceptional human review or Make Sense correction still pending
+   - After the ROI review gate passes and the batch's canonical photos and ROI
      images are published, hand off the canonical filenames to
      `jarvis-meter-to-digit-box-sync` when the new photos should join the
-     full-image digit-detector dataset. Do not treat ROI approval as digit-box
-     approval.
+     full-image digit-detector dataset. Include the batch upload authorization
+     and its QA evidence; covered digit derivatives need no second upload
+     consent. The ROI review result does not replace the separate digit-box review.
 
-## Command Snippets
-
-- Sidecars left:
-  - `find assets -type f -name '*:Zone.Identifier' -print`
-- HEIC/HEIF imports left after conversion:
-  - `find assets -type f \( -iname '*.heic' -o -iname '*.heif' \) -print`
-- ROI sidecars left:
-  - `find backend/data/roi_dataset -type f -name '*:Zone.Identifier' -print`
-- CSV to file consistency:
-  - `awk -F, 'NR>1 {print $1}' assets/meter_readings.csv | while read -r f; do [ -f "assets/$f" ] || echo "missing: $f"; done`
-- Rebuild ROI dataset:
-  - `backend/.venv/bin/python backend/build_roi_dataset.py --roi-json data/roi_boxes_manifest.json`
-- Re-render ROI QA overlays:
-  - `backend/.venv/bin/python backend/visualize_roi_labels.py`
-- Check only the DVC targets updated in the current batch:
-  - `backend/.venv/bin/python -m dvc status <updated-pointer.dvc> [...]`
-
-## Notes
-
-- The old external sync helper path is obsolete for this repo; use manual YOLO TXT labels, sync them into `backend/data/roi_boxes_manifest.json`, then rebuild with `backend/build_roi_dataset.py`.
-- Mac/iCloud HEIC/HEIF images are temporary import sources only. Convert them to canonical JPEG assets, verify the JPEGs, then delete the HEIC/HEIF originals before any CSV, ROI, DVC, commit, or final-summary step.
-- The browser-assisted OCR path is not authoritative for CSV updates. Always confirm readings manually before writing `assets/meter_readings.csv`.
-- New ROI labels are not training-ready until the user has provided manual labels and reviewed the generated overlays.
-- Canonical meter photos and ROI image binaries are retained with DVC; do not leave new ingested JPEG/PNG files outside DVC tracking.
-- Full-image digit-aperture annotations have a separate downstream human-review
-  gate in `jarvis-meter-to-digit-box-sync`.
+For a full ingestion request, completion means the batch has manual ROI labels,
+passes the ROI review gate, and its changed canonical photo/ROI binaries are safely
+published through DVC. For a narrower preparation, review, or correction
+request, complete the requested outputs and report remaining gates without
+expanding into publication or downstream work outside that scope. When a gate
+is pending, report completed work, exact review links or missing inputs, and
+remaining steps. Git commit/push and training require authorization in the
+user's request; reuse existing authorization once applicable gates pass.

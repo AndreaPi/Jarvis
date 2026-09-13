@@ -26,7 +26,8 @@
 
 ## Dataset and Training Commands
 - `cd backend && source .venv/bin/activate && python train_roi.py --data data/roi_dataset.yaml --base-model yolov8n.pt --rotation-angles 90,180,270,360 --heavy-augment`: Fine-tune the ROI detector.
-- `cd backend && source .venv/bin/activate && python extract_digit_windows.py --clean`: Rebuild split-wise digit windows from ROI labels.
+- `cd backend && source .venv/bin/activate && python extract_digit_windows.py`: Incrementally extract split-wise digit windows from ROI labels for additive ingestion.
+- Reserve `extract_digit_windows.py --clean` for an explicitly requested full regeneration: it removes the entire digit-dataset output root before restoring selected review manifests. It also removes synthetic artifacts and DVC pointers; rebuild every affected derived dataset and restore its tracking as part of that full regeneration. Never use it for routine additive ingestion.
 - `cd backend && source .venv/bin/activate && python split_digit_windows.py --clean`: Canonicalize and split digit windows into 4 equispaced sections.
 - `cd backend && source .venv/bin/activate && python label_digit_sections.py --clean`: Build labeled section datasets.
 - `cd backend && source .venv/bin/activate && python validate_digit_dataset.py`: Validate the current windows/canonical/sections digit dataset.
