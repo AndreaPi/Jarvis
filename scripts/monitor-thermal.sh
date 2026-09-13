@@ -10,12 +10,13 @@ usage() {
 Sample macOS thermal pressure every 30 seconds and log non-nominal events.
 
 Usage:
-  scripts/monitor-thermal.sh [log-file]
+  scripts/monitor-thermal.sh [-v|--verbose] [log-file]
 
 The default log is:
   backend/runs/thermal/thermal-events-YYYYMMDD-HHMMSS.log
 
-All samples are shown in the terminal. Only complete samples whose current
+The first sample is shown in the terminal, followed only by non-nominal samples.
+Use -v or --verbose to show all samples. Only complete samples whose current
 pressure level is not Nominal are appended to the log. Pass a path to append
 to a different log. Press Ctrl-C to stop monitoring.
 EOF
@@ -23,8 +24,9 @@ EOF
 
 filter_thermal_events() {
   local log_file="$1"
+  local verbose="${2:-0}"
 
-  awk -v log_file="$log_file" '
+  awk -v log_file="$log_file" -v verbose="$verbose" '
     function flush_sample() {
       if (sample_started && non_nominal) {
         printf "%s", sample >> log_file
@@ -33,15 +35,15 @@ filter_thermal_events() {
       sample = ""
       sample_started = 0
       non_nominal = 0
+      pending_display = ""
     }
 
     {
-      print
-      fflush()
-
       if ($0 ~ /^\*\*\* Sampled system activity/) {
         flush_sample()
         sample_started = 1
+        sample_count++
+        show_sample = verbose || sample_count == 1
       }
 
       if (sample_started) {
@@ -52,8 +54,18 @@ filter_thermal_events() {
           sub(/[[:space:]]*$/, "", pressure)
           if (pressure != "Nominal") {
             non_nominal = 1
+            show_sample = 1
           }
         }
+        pending_display = pending_display $0 ORS
+        if (show_sample) {
+          printf "%s", pending_display
+          fflush()
+          pending_display = ""
+        }
+      } else {
+        print
+        fflush()
       }
     }
 
@@ -64,11 +76,20 @@ filter_thermal_events() {
 }
 
 main() {
-  if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-    usage
-    return 0
-  fi
-
+  local verbose=0
+  local -a positional=()
+  while (( $# > 0 )); do
+    case "$1" in
+      -v|--verbose) verbose=1 ;;
+      -h|--help) usage; return 0 ;;
+      --) shift; positional+=("$@"); break ;;
+      -*) echo "Unknown option: $1" >&2; usage >&2; return 2 ;;
+      *) positional+=("$1") ;;
+    esac
+    shift
+  done
+  # The guarded expansion also supports macOS Bash 3.2 with nounset enabled.
+  set -- ${positional[@]+"${positional[@]}"}
   if (( $# > 1 )); then
     usage >&2
     return 2
@@ -108,7 +129,7 @@ main() {
     --sample-rate "$SAMPLE_INTERVAL_MS" \
     --sample-count -1 \
     --buffer-size 1 \
-    2>&1 | filter_thermal_events "$log_file"
+    | filter_thermal_events "$log_file" "$verbose"
   pipeline_status=("${PIPESTATUS[@]}")
   status=${pipeline_status[0]}
   if (( pipeline_status[1] != 0 )); then

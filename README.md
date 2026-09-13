@@ -133,11 +133,18 @@ From the repository root, start the thermal monitor in a separate terminal:
 scripts/monitor-thermal.sh
 ```
 
-It shows one `powermetrics` thermal-pressure sample every 30 seconds. Complete
-sample blocks are appended to a timestamped log under `backend/runs/thermal/`
+It samples `powermetrics` thermal pressure every 30 seconds. The terminal shows
+the first sample to confirm monitoring, then only samples whose pressure is
+not `Nominal`. Add `-v` or `--verbose` to display every sample:
+
+```bash
+scripts/monitor-thermal.sh --verbose
+```
+
+Complete sample blocks are appended to a timestamped log under `backend/runs/thermal/`
 only when `Current pressure level` is not `Nominal`; nominal samples and
 machine metadata stay out of the log. Press `Ctrl-C` to stop it. To append to a
-different file, pass the path as the only argument:
+different file, pass its path (optionally together with `-v` or `--verbose`):
 
 ```bash
 scripts/monitor-thermal.sh /path/to/thermal-events.log
