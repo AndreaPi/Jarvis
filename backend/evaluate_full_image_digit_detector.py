@@ -26,7 +26,6 @@ try:
     group_annotations,
     materialize_fold_dataset,
     read_csv_rows,
-    read_fold_assignments,
     resolve_device,
     resolve_path,
   )
@@ -37,10 +36,15 @@ except ModuleNotFoundError:
     group_annotations,
     materialize_fold_dataset,
     read_csv_rows,
-    read_fold_assignments,
     resolve_device,
     resolve_path,
   )
+
+
+try:
+  from backend.full_image_checkpoint_provenance import checkpoint_run_dir, validate_checkpoint_fold
+except ModuleNotFoundError:
+  from full_image_checkpoint_provenance import checkpoint_run_dir, validate_checkpoint_fold
 
 
 def parse_args() -> argparse.Namespace:
@@ -257,9 +261,7 @@ def detections_from_result(result: object) -> list[dict[str, float | int]]:
 
 
 def default_output_path(checkpoint_path: Path, fold: int) -> Path:
-  parent = checkpoint_path.parent
-  run_dir = parent.parent if parent.name == "weights" else parent
-  return run_dir / f"sequence_evaluation_fold{fold}.json"
+  return checkpoint_run_dir(checkpoint_path) / f"sequence_evaluation_fold{fold}.json"
 
 
 def main() -> None:
@@ -285,13 +287,17 @@ def main() -> None:
   )
   if not checkpoint_path.exists():
     raise FileNotFoundError(f"Checkpoint does not exist: {checkpoint_path}")
+  checkpoint_provenance = validate_checkpoint_fold(checkpoint_path, args.fold, folds_path)
 
   source_exclusions = read_source_exclusions(source_exclusions_path)
   annotation_rows = filter_excluded_annotations(
     read_csv_rows(annotations_path),
     set(source_exclusions),
   )
-  fold_assignments = read_fold_assignments(folds_path)
+  fold_assignments = {
+    filename: fold for filename, fold in checkpoint_provenance["fold_assignments"].items()
+    if filename not in source_exclusions
+  }
   grouped_annotations = group_annotations(annotation_rows)
   validation_groups = validation_annotation_groups(
     grouped_annotations,
@@ -381,8 +387,9 @@ def main() -> None:
       "fold": args.fold,
       "checkpoint": str(checkpoint_path),
       "checkpoint_sha256": file_sha256(checkpoint_path),
+      "checkpoint_training_provenance": checkpoint_provenance,
       "annotations_sha256": file_sha256(annotations_path),
-      "cv_folds_sha256": file_sha256(folds_path),
+      "cv_folds_sha256": checkpoint_provenance["cv_folds_sha256"],
       "source_exclusions_sha256": (
         file_sha256(source_exclusions_path)
         if source_exclusions_path.exists()
@@ -409,7 +416,7 @@ def main() -> None:
         "recall": float(box_metrics.mr),
         "map50": map50,
         "map50_95": map50_95,
-        "fitness": 0.1 * map50 + 0.9 * map50_95,
+      "fitness": float(validation_metrics.fitness),
       },
       "sequence_metrics": summarize_sequence_records(records),
       "predictions": records,

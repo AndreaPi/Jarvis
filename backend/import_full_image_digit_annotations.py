@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 import zipfile
 from pathlib import Path
 
 try:
   from backend.build_full_image_digit_dataset import (
     ANNOTATION_HEADERS,
+    YOLO_EDGE_TOLERANCE,
     VALID_SPLITS,
     annotation_key,
     read_source_exclusions,
@@ -17,6 +19,7 @@ try:
 except ModuleNotFoundError:
   from build_full_image_digit_dataset import (
     ANNOTATION_HEADERS,
+    YOLO_EDGE_TOLERANCE,
     VALID_SPLITS,
     annotation_key,
     read_source_exclusions,
@@ -115,11 +118,13 @@ def parse_yolo_rows(text: str, stem: str) -> list[dict[str, float | int]]:
       ) from error
     if class_id not in range(10):
       raise ValueError(f"{stem}.txt line {line_number}: invalid class {class_id}")
+    if not all(math.isfinite(value) for value in (x_center, y_center, width, height)):
+      raise ValueError(f"{stem}.txt line {line_number}: box coordinates must be finite")
     if not 0 < width <= 1 or not 0 < height <= 1:
       raise ValueError(f"{stem}.txt line {line_number}: invalid box size")
-    if x_center - width * 0.5 < 0 or x_center + width * 0.5 > 1:
+    if x_center - width * 0.5 < -YOLO_EDGE_TOLERANCE or x_center + width * 0.5 > 1 + YOLO_EDGE_TOLERANCE:
       raise ValueError(f"{stem}.txt line {line_number}: horizontal bounds exceed image")
-    if y_center - height * 0.5 < 0 or y_center + height * 0.5 > 1:
+    if y_center - height * 0.5 < -YOLO_EDGE_TOLERANCE or y_center + height * 0.5 > 1 + YOLO_EDGE_TOLERANCE:
       raise ValueError(f"{stem}.txt line {line_number}: vertical bounds exceed image")
     boxes.append({
       "class_id": class_id,

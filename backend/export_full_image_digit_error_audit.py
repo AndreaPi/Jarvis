@@ -18,6 +18,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 try:
+  from backend.runtime_digit_pipeline import rotate_image
   from backend.evaluate_full_image_digit_detector import (
     build_sequence_record,
     detections_from_result,
@@ -32,6 +33,7 @@ try:
     resolve_path,
   )
 except ModuleNotFoundError:
+  from runtime_digit_pipeline import rotate_image
   from evaluate_full_image_digit_detector import (
     build_sequence_record,
     detections_from_result,
@@ -533,6 +535,18 @@ def run_oracles(
   dict[tuple[str, int], dict[str, object]],
   dict[str, dict[str, object]],
 ]:
+  # Validate every input before loading any model or starting fresh inference.
+  for payload in evaluations:
+    checkpoint_path = Path(str(payload["checkpoint"]))
+    if not checkpoint_path.is_file():
+      raise FileNotFoundError(f"Missing fold {payload['fold']} checkpoint: {checkpoint_path}")
+    expected_hash = payload.get("checkpoint_sha256")
+    if not expected_hash or file_sha256(checkpoint_path) != expected_hash:
+      raise ValueError(
+        f"Checkpoint SHA256 differs or is missing for fold {payload['fold']}: "
+        f"{checkpoint_path}. Restore the evaluated checkpoint or rerun its evaluation."
+      )
+
   try:
     from ultralytics import YOLO
   except ImportError as error:
@@ -561,8 +575,6 @@ def run_oracles(
     fold = int(payload["fold"])
     records = list(payload["predictions"])
     checkpoint_path = Path(str(payload["checkpoint"]))
-    if not checkpoint_path.exists():
-      raise FileNotFoundError(f"Missing fold {fold} checkpoint: {checkpoint_path}")
     model = YOLO(str(checkpoint_path))
     if not args.skip_oracles:
       register_images, aperture_images, aperture_keys = prepare_oracle_images(
@@ -680,7 +692,8 @@ def predict_runtime_images_one_at_a_time(
   results: list[object] = []
   for image in images:
     prediction = model.predict(
-      source=np.asarray(image),
+      # Match the runtime's BGR NumPy input contract with Ultralytics.
+      source=np.ascontiguousarray(np.asarray(image.convert("RGB"))[..., ::-1]),
       imgsz=imgsz,
       device=device,
       conf=confidence,
@@ -844,7 +857,7 @@ def aggregate_summary(
       float(absolute_errors[midpoint])
       if len(absolute_errors) % 2
       else (absolute_errors[midpoint - 1] + absolute_errors[midpoint]) / 2
-    )
+    ) if absolute_errors else None
     errors_without_worst = absolute_errors[:-1]
     rescued_exact = sum(
       not bool(row["full_image_exact"])
@@ -858,6 +871,7 @@ def aggregate_summary(
         if record["absolute_error"] is not None
       ),
       key=lambda record: int(record["absolute_error"]),
+      default=None,
     )
     summary["register_oracle_diagnostics"] = {
       "rescued_exact_count": rescued_exact,
@@ -875,10 +889,10 @@ def aggregate_summary(
         if errors_without_worst
         else None
       ),
-      "worst_absolute_error": int(worst_record["absolute_error"]),
-      "worst_filename": str(worst_record["filename"]),
-      "worst_truth": str(worst_record["truth"]),
-      "worst_prediction": str(worst_record["predicted"]),
+      "worst_absolute_error": int(worst_record["absolute_error"]) if worst_record else None,
+      "worst_filename": str(worst_record["filename"]) if worst_record else None,
+      "worst_truth": str(worst_record["truth"]) if worst_record else None,
+      "worst_prediction": str(worst_record["predicted"]) if worst_record else None,
     }
   if cascade_records:
     cascade_metrics = summarize_sequence_records(list(cascade_records.values()))
@@ -899,7 +913,8 @@ def aggregate_summary(
     coverages = sorted(
       float(record["roi"]["truth_register_coverage"])
       for record in cascade_records.values()
-      if record["roi"].get("truth_register_coverage") is not None
+      if record["roi"]["status"] == "accepted"
+      and record["roi"].get("truth_register_coverage") is not None
     )
     coverage_midpoint = len(coverages) // 2
     median_coverage = (
@@ -942,6 +957,8 @@ def aggregate_summary(
     )
     summary["roi_cascade_diagnostics"] = {
       "roi_status_counts": dict(sorted(roi_status_counts.items())),
+      "roi_rejected_count": len(cascade_records) - roi_status_counts["accepted"],
+      "coverage_image_count": len(coverages),
       "median_truth_register_coverage": median_coverage,
       "minimum_truth_register_coverage": min(coverages) if coverages else None,
       "rescued_exact_count": cascade_rescued_exact,
@@ -1001,8 +1018,21 @@ def aggregate_summary(
     oracle_exact = int(register_metrics["exact_match_count"])
     cascade_exact = int(cascade_metrics["exact_match_count"])
     exact_gap = oracle_exact - cascade_exact
-    minimum_coverage = float(cascade_diagnostics["minimum_truth_register_coverage"])
-    if minimum_coverage >= 0.98 and int(cascade_metrics["no_read_count"]) > 3:
+    minimum_coverage = cascade_diagnostics["minimum_truth_register_coverage"]
+    if minimum_coverage is None or not int(cascade_metrics["readable_count"]):
+      finding = "The production ROI cascade produced no readable sequence or no measurable register coverage."
+      recommended_next_step = "Inspect ROI rejection reasons and detector outputs before comparing sequence quality."
+    elif cascade_diagnostics["roi_rejected_count"]:
+      finding = (
+        f"The production ROI stage rejects {cascade_diagnostics['roi_rejected_count']}/"
+        f"{cascade_metrics['image_count']} images before digit inference. Coverage of "
+        "accepted crops cannot explain those upstream no-reads."
+      )
+      recommended_next_step = (
+        "Inspect ROI rejection reasons and failed source images before attributing "
+        "the no-read gap to the digit detector."
+      )
+    elif minimum_coverage >= 0.98 and int(cascade_metrics["no_read_count"]) > 3:
       finding = (
         "The production ROI crops fully cover every reviewed register, but "
         "single-image runtime inference still has a material no-read gap."
@@ -1011,10 +1041,11 @@ def aggregate_summary(
         "Audit and standardize the detector's single-image padding/canvas "
         "behavior; do not tune ROI expansion when register coverage is already complete."
       )
-    elif exact_gap <= 2 and int(cascade_metrics["no_read_count"]) <= 3:
+    elif oracle_exact > 0 and exact_gap <= 2 and int(cascade_metrics["no_read_count"]) <= 3:
       finding = (
-        "The production ROI cascade preserves most of the register-context "
-        "oracle gain; full-image scale and localization were the main bottleneck."
+        f"The production ROI cascade is exact on {cascade_exact}/{cascade_metrics['image_count']} "
+        f"images, versus {oracle_exact} for the register-context oracle and "
+        f"{summary['full_image_sequence_metrics']['exact_match_count']} for full-image inference."
       )
       recommended_next_step = (
         "Run npm run qa:full-image-digit-shadow with one explicitly configured "
@@ -1023,8 +1054,9 @@ def aggregate_summary(
       )
     else:
       finding = (
-        "The production ROI cascade improves scale but leaves a material gap to "
-        "the ground-truth register-context oracle."
+        f"The production ROI cascade is exact on {cascade_exact}/{cascade_metrics['image_count']} "
+        f"images versus {oracle_exact} for the register-context oracle; inspect the "
+        "per-image failures before attributing the difference to scale or localization."
       )
       recommended_next_step = (
         "Inspect the cascade overlays with the lowest register coverage, then "
@@ -1046,31 +1078,36 @@ def aggregate_summary(
           "previous failures."
         ),
         (
-          "The production-expanded ROI crops cover at least "
-          f"{minimum_coverage:.1%} of every reviewed register."
-        ),
+          f"Coverage was measured for {cascade_diagnostics['coverage_image_count']}/"
+          f"{cascade_metrics['image_count']} images with accepted ROI crops; "
+          f"minimum reviewed-register coverage in that subset is {minimum_coverage:.1%}."
+        ) if minimum_coverage is not None else "No register coverage could be measured.",
         (
-          "Single-aperture inference is correct on only "
-          f"{correct}/{len(aperture_records)} crops, so the next runtime design "
-          "should preserve whole-register context."
+          f"Single-aperture inference is correct on {correct}/{len(aperture_records)} "
+          f"crops ({correct / len(aperture_records):.1%}). Compare the per-image "
+          "oracle results before choosing runtime context."
         ) if aperture_records else "Single-aperture inference was skipped.",
         (
-          f"All {sum(transition_counts.values())} audited transition states remain "
-          "unknown; the supplied worksheet is the next label-quality check."
+          f"Transition states across {sum(transition_counts.values())} audited apertures: "
+          + ", ".join(f"{count} {state}" for state, count in sorted(transition_counts.items()))
+          + (f". Review the {transition_counts['unknown']} unknown states using the supplied worksheet."
+             if transition_counts["unknown"] else ". No audited state is unknown.")
         ),
       ],
       "recommended_next_step": recommended_next_step,
       "promotion_status": (
-        "Do not promote yet: transition states remain unreviewed and this is a "
-        "small development cross-validation scope, not a locked external test."
+        "Do not promote yet: "
+        + (f"{transition_counts['unknown']} transition states remain unknown, and "
+           if transition_counts["unknown"] else "")
+        + "this is a small development cross-validation scope, not a locked external test."
       ),
     }
   elif register_records:
     summary["decision"] = {
       "finding": (
-        "Digit scale and full-image localization are the dominant bottleneck; "
-        "a ground-truth digit-box-derived register-context crop rescues most "
-        "sequence failures without retraining."
+        f"Register-context inference reads {register_metrics['readable_count']}/"
+        f"{register_metrics['image_count']} images and rescues {rescued_exact} "
+        "full-image failures. Production ROI inference is needed to assess the runtime benefit."
       ),
       "supporting_findings": [],
       "recommended_next_step": "Run the production ROI cascade evaluation.",
@@ -1101,7 +1138,7 @@ def draw_label(
 def display_oriented_crop(image: Image.Image, rotation: int) -> Image.Image:
   if rotation not in {0, 90, 180, 270}:
     raise ValueError(f"Unsupported display rotation: {rotation}")
-  return image.rotate(rotation, expand=True) if rotation else image.copy()
+  return rotate_image(image, rotation)
 
 
 def resize_max(image: Image.Image, max_width: int, max_height: int) -> Image.Image:
@@ -1327,6 +1364,10 @@ def write_transition_review(
         })
 
 
+def format_metric(value: object, spec: str = ".2f") -> str:
+  return "n/a" if value is None else format(float(value), spec)
+
+
 def metric_badges(metrics: dict[str, object], prefix: str) -> str:
   values = [
     ("images", metrics.get("image_count")),
@@ -1341,7 +1382,7 @@ def metric_badges(metrics: dict[str, object], prefix: str) -> str:
     if isinstance(value, float):
       formatted = f"{value:.3f}"
     else:
-      formatted = str(value)
+      formatted = "n/a" if value is None else str(value)
     badges.append(f"<code>{html.escape(prefix)} {label}: {html.escape(formatted)}</code>")
   return " ".join(badges)
 
@@ -1386,7 +1427,7 @@ def write_html_report(
           <code>full {row['full_image_predicted'] or 'NO-READ'}</code>
           <code>ROI cascade {cascade.get('predicted') or 'NO-READ'}</code>
           <code>register oracle {register.get('predicted') or 'n/a'}</code>
-          <code>ROI {html.escape(str(roi.get('status', 'skipped')))} {float(roi.get('confidence', 0)):.2f}</code>
+          <code>ROI {html.escape(str(roi.get('status', 'skipped')))} {format_metric(roi.get('confidence'))}</code>
           <code>detections {row['detection_count']}</code>
           <code>{html.escape(str(row['failure_bucket']))}</code>
         </p>
@@ -1429,17 +1470,17 @@ def write_html_report(
       f"The ground-truth digit-box-derived register-context crop rescued <strong>"
       f"{diagnostics['rescued_exact_count']}</strong> previously failed images. "
       f"Its median absolute error is <strong>"
-      f"{diagnostics['median_absolute_error']}</strong>; excluding the single "
+      f"{format_metric(diagnostics['median_absolute_error'])}</strong>; excluding the single "
       f"worst case, mean absolute error is <strong>"
-      f"{float(diagnostics['mean_absolute_error_excluding_worst']):.2f}</strong>."
+      f"{format_metric(diagnostics['mean_absolute_error_excluding_worst'])}</strong>."
     )
     worst_summary = (
-      f"The overall register-oracle MAE is distorted by <code>"
+      f"The largest register-oracle absolute error is on <code>"
       f"{html.escape(str(diagnostics['worst_filename']))}</code>: truth <code>"
       f"{diagnostics['worst_truth']}</code>, prediction <code>"
       f"{diagnostics['worst_prediction']}</code>, absolute error <code>"
       f"{diagnostics['worst_absolute_error']}</code>."
-    )
+    ) if diagnostics['worst_filename'] is not None else "No readable register-oracle prediction; error statistics are unavailable."
   else:
     diagnostic_summary = "Oracle inference was skipped."
     worst_summary = ""
@@ -1447,14 +1488,17 @@ def write_html_report(
   if cascade_diagnostics:
     cascade_diagnostic_summary = (
       f"The ROI cascade median absolute error is <strong>"
-      f"{cascade_diagnostics['median_absolute_error']}</strong>; excluding its "
+      f"{format_metric(cascade_diagnostics['median_absolute_error'])}</strong>; excluding its "
       f"single worst case, mean absolute error is <strong>"
-      f"{float(cascade_diagnostics['mean_absolute_error_excluding_worst']):.2f}"
-      f"</strong>. The worst case is <code>"
+      f"{format_metric(cascade_diagnostics['mean_absolute_error_excluding_worst'])}"
+      f"</strong>."
+    )
+    cascade_diagnostic_summary += (
+      f" The worst case is <code>"
       f"{html.escape(str(cascade_diagnostics['worst_filename']))}</code>: "
       f"<code>{cascade_diagnostics['worst_truth']}</code> to "
       f"<code>{cascade_diagnostics['worst_prediction']}</code>."
-    )
+    ) if cascade_diagnostics['worst_filename'] is not None else " No readable ROI-cascade prediction."
 
   output_path.write_text(f"""<!doctype html>
 <html lang="en">

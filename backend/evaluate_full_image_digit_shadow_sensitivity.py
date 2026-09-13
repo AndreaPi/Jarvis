@@ -11,11 +11,13 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 try:
+  from backend.build_full_image_digit_dataset import filter_excluded_annotations, read_source_exclusions
   from backend.detector import RoiDetector
   from backend.evaluate_full_image_digit_detector import (
     build_sequence_record,
     summarize_sequence_records,
     validation_annotation_groups,
+    validate_checkpoint_fold,
   )
   from backend.full_image_digit_shadow import FullImageDigitShadow, crop_image
   from backend.train_full_image_digit_detector import (
@@ -23,16 +25,17 @@ try:
     file_sha256,
     group_annotations,
     read_csv_rows,
-    read_fold_assignments,
     resolve_device,
     resolve_path,
   )
 except ModuleNotFoundError:
+  from build_full_image_digit_dataset import filter_excluded_annotations, read_source_exclusions
   from detector import RoiDetector
   from evaluate_full_image_digit_detector import (
     build_sequence_record,
     summarize_sequence_records,
     validation_annotation_groups,
+    validate_checkpoint_fold,
   )
   from full_image_digit_shadow import FullImageDigitShadow, crop_image
   from train_full_image_digit_detector import (
@@ -40,7 +43,6 @@ except ModuleNotFoundError:
     file_sha256,
     group_annotations,
     read_csv_rows,
-    read_fold_assignments,
     resolve_device,
     resolve_path,
   )
@@ -90,6 +92,11 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument(
     "--folds",
     default="data/full_image_digit_dataset/manifests/cv_folds.csv",
+  )
+  parser.add_argument(
+    "--source-exclusions",
+    default="data/full_image_digit_dataset/manifests/source_exclusions.csv",
+    help="Legacy-stress sources excluded from sensitivity evaluation.",
   )
   parser.add_argument("--source-images", default="data/roi_dataset/images")
   parser.add_argument("--roi-model", default="models/roi-rotaug-e30-640.pt")
@@ -189,14 +196,23 @@ def main() -> None:
   checkpoint_path = resolve_path(base_dir, args.checkpoint)
   annotations_path = resolve_path(base_dir, args.annotations)
   folds_path = resolve_path(base_dir, args.folds)
+  source_exclusions_path = resolve_path(base_dir, args.source_exclusions)
   source_images_root = resolve_path(base_dir, args.source_images)
   roi_model_path = resolve_path(base_dir, args.roi_model)
   output_root = resolve_path(base_dir, args.output_root)
   if not checkpoint_path.exists():
     raise FileNotFoundError(f"Checkpoint does not exist: {checkpoint_path}")
 
-  grouped = group_annotations(read_csv_rows(annotations_path))
-  assignments = read_fold_assignments(folds_path)
+  checkpoint_provenance = validate_checkpoint_fold(checkpoint_path, args.fold, folds_path)
+
+  source_exclusions = read_source_exclusions(source_exclusions_path)
+  grouped = group_annotations(filter_excluded_annotations(
+    read_csv_rows(annotations_path), set(source_exclusions),
+  ))
+  assignments = {
+    filename: fold for filename, fold in checkpoint_provenance["fold_assignments"].items()
+    if filename not in source_exclusions
+  }
   validation_groups = validation_annotation_groups(grouped, assignments, args.fold)
   if args.target not in validation_groups:
     raise ValueError(f"Target is not assigned to fold {args.fold}: {args.target}")
@@ -275,6 +291,11 @@ def main() -> None:
     "target": args.target,
     "checkpoint": str(checkpoint_path),
     "checkpoint_sha256": file_sha256(checkpoint_path),
+    "checkpoint_training_provenance": checkpoint_provenance,
+    "source_exclusions_sha256": (
+      file_sha256(source_exclusions_path) if source_exclusions_path.exists() else None
+    ),
+    "excluded_sources": sorted(source_exclusions),
     "roi_model": str(roi_model_path),
     "roi_model_sha256": file_sha256(roi_model_path),
     "grid": {"confidences": confidences, "ious": ious},

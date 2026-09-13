@@ -26,13 +26,14 @@
 
 ## Active Benchmark Baseline
 - The current UI test-set surface is always the live `assets/meter_readings.csv`; do not hard-code its changing row count here.
-- August 4, 2026 full-image shadow benchmark with the balanced48 fold-4 checkpoint:
+- Historical August 4, 2026 full-image shadow benchmark with the balanced48 fold-4 checkpoint (before the RGB/BGR correction; rerun the corrected runtime before using these quality or threshold conclusions):
   - Same-run production path: `MAE 183.83`, `Exact Match 11/38`, `No-read 2/38`
   - Full shadow diagnostic: `MAE 312.37`, `Exact Match 24/38`, `No-read 8/38`; this includes 29 mapped images used to train the checkpoint and is not a generalization estimate
   - Leakage-safe fold-4 slice: production `MAE 40.00`, `Exact Match 3/7`, `No-read 0/7`; shadow `MAE 17.67`, `Exact Match 4/7`, `No-read 1/7`
   - Keep the shadow disabled: exact match and MAE improved on the fair slice, but the no-read guardrail regressed
   - Bounded fold-4 sensitivity found confidence `0.20`/IoU `0.70` at `5/7` exact, `0` no-reads, and `MAE 15.14`, but the complete diagnostic accepted wrong `5348` on `meter_20260724.JPEG` and worsened shadow MAE to `386.59`; retain the `0.25` default
-- The latest verified promoted ROI + restored promoted per-cell classifier benchmark is the 36-image run from July 23, 2026:
+- September 12, 2026 corrected-color shadow verification on the first PR's 43-photo snapshot: production `11/43` exact, `4` no-reads, `MAE 349.67`; shadow `30/43` exact, `4` no-reads, `MAE 247.67`. All four interruptions were upstream ROI no-detection. See `docs/full-image-digit-dataset.md` for the fold slice and scope; the already tuned fold is not fresh promotion evidence.
+- Historical promoted ROI + restored promoted per-cell classifier benchmark on 36 images from July 23, 2026:
   - UI production test-set run: `MAE 104.71`, `Exact Match 11/36`, `No-read 1/36`
   - The one no-read remains `meter_20201111.JPEG` (`no-detection`)
   - The standardized same-run ROI checkpoint comparison measured the promoted baseline at `MAE 103.83`, `Exact Match 11/36`, `No-read 1/36`; use same-run comparisons when small runtime variance matters
@@ -71,7 +72,7 @@
 11. Keep `roiDeterministic.cellSplitProbe` shadow-only. The June 11, 2026 QA run found `splitProbeOnlyHitRowCount: 1` (`meter_20200701.JPEG`) and production UI metrics stayed `MAE 106.83`, `Exact Match 11/31`, `No-read 1/31`; this is diagnostic evidence for split placement, not a production promotion.
 12. Medium-term: evaluate YOLO OBB ROI detection only if axis-aligned ROI retrains still leave rotation or edge ambiguity.
 13. Keep the full-image detector disabled in normal use until a leakage-safe evaluation improves MAE and exact match without increasing no-read. Use `npm run qa:full-image-digit-shadow`; never treat its training-overlap rows as generalization evidence.
-14. Do not lower the full-image shadow confidence globally to `0.20`: it recovers the missing `7` on `meter_20260423.JPEG` at confidence `0.217`, but admits a wrong leading `5` on `meter_20260724.JPEG` at `0.218`. The next detector improvement must separate those visually different boxes rather than move the scalar threshold.
+14. Retain full-image shadow confidence `0.25` pending evaluation of the corrected RGB/BGR runtime. The historical `0.20` experiment recovered a true `7` but admitted a wrong leading `5`; those pre-fix confidence values cannot calibrate the corrected path.
 
 ## Digit Classifier Training Guardrail
 - Restore promoted checkpoints from DVC before digit experiments when local model outputs drift.

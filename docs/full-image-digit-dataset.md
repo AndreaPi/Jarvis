@@ -69,6 +69,9 @@ It divides the register into four aperture boxes and writes:
   sheet, and Make Sense import ZIP.
 
 Existing canonical annotation rows are preserved when the builder runs again.
+If the source reading, split, orientation, or image dimensions differ, it stops
+without rewriting the canonical annotations; reconcile and review the change
+before rebuilding.
 This keeps human corrections separate from reproducible bootstrap geometry.
 The summary reports active counts separately from the retained annotation
 archive.
@@ -107,7 +110,8 @@ python build_full_image_digit_dataset.py
 The importer:
 
 - rejects unknown or missing active images by default;
-- requires exactly four in-bounds boxes per image;
+- requires exactly four finite, in-bounds boxes per image, allowing only
+  six-decimal YOLO edge rounding while preserving imported coordinates;
 - sorts boxes into reading order using the stored orientation;
 - rejects class sequences that differ from the verified meter reading;
 - marks imported rows as `human-makesense` and `reviewed`;
@@ -120,6 +124,10 @@ previews from the canonical manifest.
 ## Training gate
 
 Before any training:
+
+The trainer checks class/box pairs against canonical reviewed coordinates,
+including their association, with tolerance for six-decimal YOLO serialization.
+Stale derived labels must be rebuilt before training.
 
 1. Confirm `manifests/summary.json` contains no `pending` review status.
 2. Verify the imported boxes match the user's Make Sense export, source-image
@@ -143,8 +151,10 @@ python train_full_image_digit_detector.py --validate-only --fold 0
 The trainer creates a temporary YOLO dataset: the selected CV fold is
 validation, the other four folds are train, and the historical sanity holdout
 remains test-only. It records annotation and fold-manifest hashes, the
-source-exclusion manifest and hash, the Ultralytics version, and recipe
-settings in every completed run.
+source-exclusion manifest and hash, the Ultralytics version, recipe settings,
+and a content fingerprint of the materialized images and labels. These are
+saved in the actual run directory before the first epoch, including when
+Ultralytics adds a suffix to the requested run name.
 
 Train one fold without promotion:
 
@@ -167,9 +177,23 @@ python train_full_image_digit_detector.py \
 ```
 
 The trainer rebuilds the deleted temporary dataset before Ultralytics restores
-the completed epoch, optimizer, scheduler, and early-stopping state. It rejects
-core argument mismatches, a checkpoint from another run name, and stripped or
-already-completed checkpoints.
+the completed epoch, optimizer, and scheduler. Jarvis restores early stopping
+from `early_stopping_state.json`, saved after each checkpoint: best fitness,
+best epoch, and pending-stop flag resume without a new patience window. The
+state must match the exact `last.pt` SHA-256, epoch, and original patience.
+Missing or mismatched state, including an interruption between the two saves,
+blocks resume; start a new run instead of reconstructing state from rounded
+metrics. Keep this file with `weights/last.pt`. Core argument mismatches,
+a checkpoint from another run name, and stripped, completed, or already
+patience-exhausted checkpoints are also rejected.
+
+Resume also requires the original `dataset_provenance.json` and verifies the
+fold, annotation/fold/exclusion manifest hashes, materialized image and label
+contents, crop recipe, augmentation settings, and Ultralytics version. A mismatch
+stops training, and the original provenance is never replaced on resume.
+Missing, invalid, or older incomplete provenance blocks resume: start a new
+run rather than infer the interrupted run's dataset from current files.
+Device and worker settings can change without changing the dataset or recipe.
 
 Evaluate the best checkpoint on the same fold:
 
@@ -178,6 +202,25 @@ python evaluate_full_image_digit_detector.py \
   --checkpoint runs/full-image-digit-detector-fold0/weights/best.pt \
   --fold 0
 ```
+
+The sequence evaluator, UI shadow benchmark, and sensitivity sweep require the
+original `dataset_provenance.json` in the run directory (the parent of `weights/`,
+or beside a checkpoint stored directly in the run directory). Its integer
+`selected_fold` must match any requested fold, and the supplied CV manifest must
+match the recorded `cv_folds_sha256`. Verification happens before image
+preparation, model loading, or service startup. Missing or invalid provenance,
+a different fold, and changed manifest bytes all stop evaluation.
+
+Preserve original provenance and the original CV manifest when moving a
+checkpoint. After adding photos or rebuilding folds, use that manifest via
+`--folds`; the sequence evaluator also needs a compatible annotation/label
+snapshot with the same active train sources. Do not rewrite old provenance to
+match current data. Reports record the verified provenance and manifest paths,
+SHA-256 hashes, fold, and source assignments; inference uses those verified
+assignments even if the manifest changes during the run.
+The sequence evaluator removes currently excluded sources from both annotations
+and verified fold assignments before preparing its evaluation subset; the
+original membership remains intact in the report's provenance.
 
 The evaluator defaults to CPU and reads only uncropped full images from the
 selected CV validation fold. It reproduces precision, recall, `mAP50`, and
@@ -210,15 +253,26 @@ and explicitly classify it before changing any canonical transition state.
 The cascade mirrors the production ROI confidence, sanity, and expansion
 geometry; reviewed digit boxes are used only for scoring and overlays.
 It also predicts each ROI crop separately to mirror the deployed endpoint.
+Checkpoint bytes must match the SHA-256 recorded in each evaluation before
+any fresh inference. Missing or mismatched hashes require restoring the
+evaluated checkpoint or regenerating its evaluation. Undefined statistics
+remain `null` in JSON and appear as `n/a` in HTML, even for all-no-read runs.
+Review crops use the same clockwise rotation convention as the runtime.
+The audit distinguishes upstream ROI rejections from digit-detector no-reads
+and reports how many accepted crops contribute to register-coverage statistics.
 Ultralytics can pad a mixed-shape batch differently, and the earlier batched
 audit overstated runtime performance.
 
-The corrected August 4, 2026 out-of-fold cascade is `12/28` exact with `7`
+The August 4 cascade, shadow, and sensitivity results below predate the RGB/BGR
+fix. The corrected runtime and audit supply BGR NumPy crops to Ultralytics;
+rerun them before relying on the historical quality and threshold conclusions.
+
+The August 4, 2026 out-of-fold cascade, after the batching fix, was `12/28` exact with `7`
 no-reads and readable `MAE 15.71`; the register-context oracle is `17/28`
 exact with `1` no-read. Every expanded ROI crop covers 100% of its reviewed
-register, so increasing ROI expansion is not the next lever. Investigate and
-standardize the single-image inference canvas/padding behavior before another
-model or crop-geometry decision.
+register. That prompted investigation of single-image canvas/padding behavior;
+repeat the comparison with corrected colors before another model or
+crop-geometry decision.
 
 For another recipe, invoke `backend/export_full_image_digit_error_audit.py`
 with one `--evaluation` argument per fold artifact.
@@ -234,16 +288,50 @@ npm run qa:full-image-digit-shadow
 ```
 
 The default development checkpoint is the balanced48 fold-4 `best.pt` file;
-override `FULL_IMAGE_DIGIT_SHADOW_MODEL_PATH` and
-`FULL_IMAGE_DIGIT_SHADOW_VALIDATION_FOLD` together for another checkpoint.
-The command starts a disposable backend, records the checkpoint SHA-256, and
-writes a timestamped report under `output/full-image-digit-shadow-qa/`.
+override `FULL_IMAGE_DIGIT_SHADOW_MODEL_PATH` for another checkpoint. The UI
+reads its validation fold from original training provenance, not the directory
+name. An optional `FULL_IMAGE_DIGIT_SHADOW_VALIDATION_FOLD` must agree with it.
+Use `FULL_IMAGE_DIGIT_SHADOW_CV_FOLDS_PATH` to select the original manifest if
+the repository copy has changed. Images absent from that manifest remain
+unmapped in the full-corpus diagnostic and never enter the validation slice.
+The validation slice also omits current `source_exclusions.csv` entries, even
+when they belonged to the original fold. Override
+`FULL_IMAGE_DIGIT_SHADOW_SOURCE_EXCLUSIONS_PATH` for another exclusion snapshot.
+The report retains excluded images in the complete UI diagnostic, original
+fold membership, and the applied exclusion filenames and SHA-256.
+After provenance verification, the command starts a disposable backend,
+records the checkpoint SHA-256, and writes a timestamped report under `output/full-image-digit-shadow-qa/`.
+Backend readiness verifies both canonical primary checkpoints (ROI and digit
+classifier) as well as the selected shadow checkpoint. Environment overrides
+that substitute a primary model are rejected. If frontend or backend readiness
+fails, it stops the disposable process before reporting the startup error.
+Before starting the backend, it also verifies that the frontend serves this
+checkout's HTML, CSS, JavaScript modules, and meter-reading manifest. A running
+frontend from a different checkout is rejected; select a suitable address with
+`JARVIS_FRONTEND_URL`. The report records the verified source hashes.
 
 The complete UI comparison is useful for finding runtime failures but is not a
 generalization estimate because a fold checkpoint trained on the other active
 folds. Judge unseen-image behavior from the report's matching validation-fold
 slice. Keep the frontend shadow disabled and do not promote a model if that
 slice increases no-read, even when exact match or MAE improves.
+
+September 12, 2026 verification of the color-corrected code on this branch's
+43-photo snapshot, using the unchanged balanced48 fold-4 checkpoint at
+confidence `0.25`: production was `11/43` exact, `4` no-reads, readable
+`MAE 349.67`; the shadow was `30/43` exact, `4` no-reads, `MAE 247.67`.
+All four interruptions were `Neural ROI failed (no-detection)` before the
+shadow call. On the then-current eight-image fold-4 slice, production was `3/8` exact with
+`MAE 907.38`, and shadow `5/8` with `MAE 25.38`; neither had no-reads.
+The local report is `output/full-image-digit-shadow-qa/20260912-223428/`.
+The subsequent provenance check recovered the original manifest from commit
+`8c0ad69` (SHA-256 `fd7a1d720b3f36265f793ed46692abaf8cec0d8252c5c4b328c24bcdc08ede21`):
+its fold 4 contains seven images. `meter_20260828.jpeg` was added later and must
+remain outside this checkpoint's original validation slice. Filtering the
+existing report to those seven sources, without rerunning inference, gives
+production `3/7` exact, `MAE 40.00`, and shadow `5/7`, `MAE 14.57`, with no no-reads.
+This is a development diagnostic on an already tuned fold, not fresh promotion
+evidence or a controlled comparison against the older 38-photo results.
 
 August 4, 2026 result for the balanced48 fold-4 checkpoint: the complete
 38-image development comparison was `24/38` exact with `8` no-reads and
@@ -277,6 +365,9 @@ python train_full_image_digit_detector.py \
 ```
 
 The crop is derived only from images assigned to training for that fold.
+Register and digit-centred crop labels clip tolerated source-edge rounding
+before scaling it into crop coordinates. Canonical annotations and full-image
+labels retain their original coordinates.
 Validation and test inputs remain uncropped full images. Use this option first
 on one fold; run its checkpoint through the sequence evaluator and run all
 five folds only if both detection and complete-reading metrics support it.

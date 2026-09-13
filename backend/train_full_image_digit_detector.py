@@ -18,6 +18,7 @@ from PIL import Image
 try:
   from backend.build_full_image_digit_dataset import (
     CLASS_NAMES,
+    YOLO_EDGE_TOLERANCE,
     filter_excluded_annotations,
     read_source_exclusions,
     validate_annotations,
@@ -25,6 +26,7 @@ try:
 except ModuleNotFoundError:
   from build_full_image_digit_dataset import (
     CLASS_NAMES,
+    YOLO_EDGE_TOLERANCE,
     filter_excluded_annotations,
     read_source_exclusions,
     validate_annotations,
@@ -218,11 +220,16 @@ def parse_label_rows(
       raise ValueError(f"{path}:{line_number}: invalid YOLO row") from error
     if class_id not in range(10):
       raise ValueError(f"{path}:{line_number}: class must be in 0..9")
+    if not all(math.isfinite(value) for value in (x_center, y_center, width, height)):
+      raise ValueError(f"{path}:{line_number}: box coordinates must be finite")
     if width <= 0 or height <= 0:
       raise ValueError(f"{path}:{line_number}: box size must be positive")
-    if x_center - width * 0.5 < 0 or x_center + width * 0.5 > 1:
+    # Six-decimal export can shift an edge by 0.5e-6 + 0.5 * 0.5e-6.
+    # Keep full precision for the canonical-manifest comparison below.
+    edge_tolerance = YOLO_EDGE_TOLERANCE
+    if x_center - width * 0.5 < -edge_tolerance or x_center + width * 0.5 > 1 + edge_tolerance:
       raise ValueError(f"{path}:{line_number}: horizontal bounds exceed image")
-    if y_center - height * 0.5 < 0 or y_center + height * 0.5 > 1:
+    if y_center - height * 0.5 < -edge_tolerance or y_center + height * 0.5 > 1 + edge_tolerance:
       raise ValueError(f"{path}:{line_number}: vertical bounds exceed image")
     labels.append((class_id, x_center, y_center, width, height))
   if len(labels) != expected_count:
@@ -271,10 +278,16 @@ def write_register_crop(
 
   transformed_lines = []
   for class_id, x_center, y_center, width, height in labels:
-    transformed_x_center = (x_center * image_width - crop_left) / crop_width
-    transformed_y_center = (y_center * image_height - crop_top) / crop_height
-    transformed_width = width * image_width / crop_width
-    transformed_height = height * image_height / crop_height
+    # Clip the tolerated source-edge rounding before zoom magnifies it.
+    # Canonical annotations and full-image labels remain unchanged.
+    left = max(0.0, (x_center - width * 0.5) * image_width)
+    top = max(0.0, (y_center - height * 0.5) * image_height)
+    right = min(float(image_width), (x_center + width * 0.5) * image_width)
+    bottom = min(float(image_height), (y_center + height * 0.5) * image_height)
+    transformed_x_center = ((left + right) * 0.5 - crop_left) / crop_width
+    transformed_y_center = ((top + bottom) * 0.5 - crop_top) / crop_height
+    transformed_width = (right - left) / crop_width
+    transformed_height = (bottom - top) / crop_height
     transformed_lines.append(
       f"{class_id} {transformed_x_center:.8f} {transformed_y_center:.8f} "
       f"{transformed_width:.8f} {transformed_height:.8f}"
@@ -444,6 +457,10 @@ def write_digit_centered_crop(
     image_width,
     image_height,
   )
+  # The canonical box may contain tolerated rounding at a source edge too.
+  target_left, target_top = max(0.0, target_left), max(0.0, target_top)
+  target_right = min(float(image_width), target_right)
+  target_bottom = min(float(image_height), target_bottom)
   x_center = ((target_left + target_right) * 0.5 - crop_left) / crop_width
   y_center = ((target_top + target_bottom) * 0.5 - crop_top) / crop_height
   width = (target_right - target_left) / crop_width
@@ -552,9 +569,23 @@ def materialize_fold_dataset(
       raise FileNotFoundError(f"Missing source label: {source_label}")
     label_rows = parse_label_rows(source_label)
     label_classes = [class_id for class_id, *_ in label_rows]
-    expected_classes = sorted(int(row["class_id"]) for row in rows)
-    if sorted(label_classes) != expected_classes:
-      raise ValueError(f"Label classes differ from reviewed annotations for {filename}")
+    unmatched = list(label_rows)
+    for row in rows:
+      expected = tuple(float(row[key]) for key in ("x_center", "y_center", "width", "height"))
+      match = next((
+        index for index, label in enumerate(unmatched)
+        if label[0] == int(row["class_id"])
+        and all(
+          math.isfinite(actual) and math.isclose(actual, value, rel_tol=0, abs_tol=5.1e-7)
+          for actual, value in zip(label[1:], expected, strict=True)
+        )
+      ), None)
+      if match is None:
+        raise ValueError(
+          f"Label geometry or classes differ from reviewed annotations for {filename}. "
+          "Rebuild labels from the canonical annotations before training."
+        )
+      unmatched.pop(match)
 
     target_image_dir = destination / "images" / target_split
     target_label_dir = destination / "labels" / target_split
@@ -691,11 +722,143 @@ def resolve_device(value: str) -> str | None:
   return normalized
 
 
+RESUME_PROVENANCE_FIELDS = (
+  "selected_fold",
+  "annotations_sha256",
+  "cv_folds_sha256",
+  "source_exclusions_sha256",
+  "materialized_dataset_sha256",
+  "train_register_crops",
+  "train_balanced_digit_crops",
+  "augmentation",
+  "ultralytics_version",
+)
+
+
+def materialized_dataset_sha256(dataset_root: Path) -> str:
+  artifacts = {
+    path.relative_to(dataset_root).as_posix(): file_sha256(path)
+    for directory in ("images", "labels")
+    for path in sorted((dataset_root / directory).rglob("*"))
+    if path.is_file() and (directory == "images" or path.suffix == ".txt")
+  }
+  return hashlib.sha256(
+    json.dumps(artifacts, sort_keys=True).encode("utf-8")
+  ).hexdigest()
+
+
+def validate_resume_provenance(
+  run_dir: Path,
+  requested: dict[str, object],
+) -> None:
+  path = run_dir / "dataset_provenance.json"
+  try:
+    original = json.loads(path.read_text(encoding="utf-8"))
+  except FileNotFoundError as error:
+    raise ValueError(
+      f"Cannot resume without original training provenance: {path}. "
+      "Start a new run if the original provenance was not retained."
+    ) from error
+  except json.JSONDecodeError as error:
+    raise ValueError(f"Invalid training provenance JSON: {path}") from error
+  if not isinstance(original, dict):
+    raise ValueError(f"Invalid training provenance object: {path}")
+  missing = [key for key in RESUME_PROVENANCE_FIELDS if key not in original]
+  if missing:
+    raise ValueError(
+      "Original provenance cannot verify a safe resume; missing fields: "
+      + ", ".join(missing)
+      + ". Start a new run; do not reconstruct provenance from the current dataset."
+    )
+  mismatches = [
+    key for key in RESUME_PROVENANCE_FIELDS
+    if key not in requested or json.dumps(original[key], sort_keys=True)
+    != json.dumps(requested[key], sort_keys=True)
+  ]
+  if mismatches:
+    raise ValueError(
+      "Resume dataset or recipe differs from original training provenance: "
+      + ", ".join(mismatches)
+    )
+
+
+def record_training_provenance(
+  trainer: object,
+  provenance: dict[str, object],
+  *,
+  resume: bool,
+) -> None:
+  run_dir = Path(trainer.save_dir)
+  if resume:
+    validate_resume_provenance(run_dir, provenance)
+    # Resume can reuse a surviving temporary dataset from the checkpoint.
+    # Verify that actual input too, not only the newly materialized copy.
+    actual_dataset = Path(trainer.args.data).parent
+    if materialized_dataset_sha256(actual_dataset) != provenance["materialized_dataset_sha256"]:
+      raise ValueError("Ultralytics selected a resume dataset with different image or label contents.")
+    return
+  # Ultralytics may suffix the requested run name; use its actual save_dir.
+  with (run_dir / "dataset_provenance.json").open("x", encoding="utf-8") as handle:
+    handle.write(json.dumps(provenance, indent=2) + "\n")
+
+
+EARLY_STOPPING_STATE_FILE = "early_stopping_state.json"
+
+
+def save_early_stopping_state(trainer: object) -> None:
+  """Publish state after last.pt is saved, bound to that exact checkpoint."""
+  state = {
+    "checkpoint_sha256": file_sha256(Path(trainer.last)),
+    "epoch": trainer.epoch,
+    "patience": trainer.args.patience,
+    "best_epoch": trainer.stopper.best_epoch,
+    "best_fitness": trainer.stopper.best_fitness,
+    "possible_stop": trainer.stopper.possible_stop,
+  }
+  destination = Path(trainer.save_dir) / EARLY_STOPPING_STATE_FILE
+  temporary = destination.with_suffix(".json.tmp")
+  temporary.write_text(json.dumps(state, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+  temporary.replace(destination)
+
+
+def read_early_stopping_state(checkpoint_path: Path, epoch: int, patience: int) -> dict:
+  state_path = checkpoint_path.parent.parent / EARLY_STOPPING_STATE_FILE
+  try:
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+  except (FileNotFoundError, json.JSONDecodeError) as error:
+    raise ValueError(
+      f"Cannot resume without valid original early-stopping state: {state_path}. "
+      "Start a new run; do not reconstruct this state from rounded training metrics."
+    ) from error
+  if not isinstance(state, dict) or (
+    state.get("checkpoint_sha256") != file_sha256(checkpoint_path)
+    or type(state.get("epoch")) is not int or state["epoch"] != epoch
+    or type(state.get("patience")) is not int or state["patience"] != patience
+    or type(state.get("best_epoch")) is not int or not 0 <= state["best_epoch"] <= epoch + 1
+    or type(state.get("best_fitness")) not in (int, float)
+    or not math.isfinite(state["best_fitness"])
+    or type(state.get("possible_stop")) is not bool
+  ):
+    raise ValueError("Early-stopping state is invalid or does not match this checkpoint/patience.")
+  if patience and epoch + 1 - state["best_epoch"] >= patience:
+    raise ValueError("Checkpoint already reached early-stopping patience; start a new run.")
+  return state
+
+
+def restore_early_stopping_state(trainer: object, state: dict) -> None:
+  # on_train_start runs after Ultralytics constructs its fresh stopper.
+  if trainer.start_epoch != state["epoch"] + 1 or trainer.args.patience != state["patience"]:
+    raise ValueError("Ultralytics resume epoch/patience differs from verified early-stopping state.")
+  for field in ("best_epoch", "best_fitness", "possible_stop"):
+    setattr(trainer.stopper, field, state[field])
+
+
 def validate_resume_checkpoint(
   checkpoint_path: Path,
   checkpoint: dict,
   args: argparse.Namespace,
   expected_run_dir: Path,
+  provenance: dict[str, object],
 ) -> int:
   if checkpoint_path.name != "last.pt":
     raise ValueError("--resume-from must point to an interrupted run's weights/last.pt")
@@ -721,6 +884,7 @@ def validate_resume_checkpoint(
     "imgsz": args.imgsz,
     "batch": args.batch,
     "seed": args.seed,
+    "patience": args.patience,
   }
   mismatches = {
     key: (checkpoint_args.get(key), value)
@@ -737,6 +901,8 @@ def validate_resume_checkpoint(
     raise ValueError(
       f"Checkpoint already completed {epoch + 1} of {args.epochs} epochs"
     )
+  validate_resume_provenance(actual_run_dir, provenance)
+  read_early_stopping_state(checkpoint_path, epoch, args.patience)
   return epoch + 1
 
 
@@ -784,6 +950,7 @@ def main() -> None:
       **dataset_summary,
       "annotations_sha256": file_sha256(annotations_path),
       "cv_folds_sha256": file_sha256(folds_path),
+      "materialized_dataset_sha256": materialized_dataset_sha256(dataset_root),
       "source_exclusions_sha256": (
         file_sha256(source_exclusions_path)
         if source_exclusions_path.exists()
@@ -810,6 +977,10 @@ def main() -> None:
       print(f"Validated temporary dataset: {dataset_yaml}")
       return
 
+    resume = resume_from_path is not None
+    if resume:
+      validate_resume_provenance(run_dir, provenance)
+
     matplotlib_cache = Path(tempfile.gettempdir()) / "jarvis-matplotlib-cache"
     matplotlib_cache.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("MPLCONFIGDIR", str(matplotlib_cache))
@@ -818,7 +989,6 @@ def main() -> None:
     except ImportError as error:
       raise RuntimeError("ultralytics is required. Install backend/requirements.txt.") from error
 
-    resume = resume_from_path is not None
     if resume:
       if not resume_from_path.exists():
         raise FileNotFoundError(f"Resume checkpoint does not exist: {resume_from_path}")
@@ -828,6 +998,7 @@ def main() -> None:
         model.ckpt or {},
         args,
         run_dir,
+        provenance,
       )
       print(
         f"Resuming {run_name} after {completed_epochs} completed epochs "
@@ -863,6 +1034,19 @@ def main() -> None:
     )
     if resume:
       train_kwargs["resume"] = True
+    model.add_callback(
+      "on_pretrain_routine_start",
+      lambda trainer: record_training_provenance(trainer, provenance, resume=resume),
+    )
+    model.add_callback("on_model_save", save_early_stopping_state)
+    if resume:
+      stopping_state = read_early_stopping_state(
+        resume_from_path, completed_epochs - 1, args.patience,
+      )
+      model.add_callback(
+        "on_train_start",
+        lambda trainer: restore_early_stopping_state(trainer, stopping_state),
+      )
     model.train(**train_kwargs)
 
     trainer = getattr(model, "trainer", None)
@@ -873,10 +1057,6 @@ def main() -> None:
     best_path = Path(getattr(trainer, "best", "") or save_dir / "weights" / "best.pt")
     if not best_path.exists():
       raise FileNotFoundError(f"Training completed but best checkpoint is missing: {best_path}")
-    (save_dir / "dataset_provenance.json").write_text(
-      json.dumps(provenance, indent=2) + "\n",
-      encoding="utf-8",
-    )
     print(f"Best checkpoint: {best_path}")
 
     if copy_to_path is not None:

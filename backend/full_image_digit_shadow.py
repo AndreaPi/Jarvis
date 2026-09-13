@@ -151,7 +151,12 @@ class FullImageDigitShadow:
       raise FullImageDigitShadowUnavailableError(
         "ultralytics is required for the full-image digit shadow."
       ) from error
-    self._model = YOLO(str(self.weights_path))
+    try:
+      self._model = YOLO(str(self.weights_path))
+    except Exception as error:
+      raise FullImageDigitShadowUnavailableError(
+        f"Cannot load shadow digit-detector weights at {self.weights_path}: {error}"
+      ) from error
 
   @property
   def model_name(self) -> str:
@@ -220,7 +225,8 @@ class FullImageDigitShadow:
     roi_payload["expanded_bbox_norm"] = expanded_bbox
     register_crop = crop_image(image_rgb, expanded_bbox)
     results = self._model.predict(
-      source=register_crop,
+      # Ultralytics treats NumPy inputs as BGR; our decoded images are RGB.
+      source=np.ascontiguousarray(register_crop[..., ::-1]),
       conf=confidence,
       iou=iou,
       imgsz=imgsz,
