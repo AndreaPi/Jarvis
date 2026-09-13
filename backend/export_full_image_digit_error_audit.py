@@ -1043,8 +1043,9 @@ def aggregate_summary(
       )
     elif oracle_exact > 0 and exact_gap <= 2 and int(cascade_metrics["no_read_count"]) <= 3:
       finding = (
-        "The production ROI cascade preserves most of the register-context "
-        "oracle gain; full-image scale and localization were the main bottleneck."
+        f"The production ROI cascade is exact on {cascade_exact}/{cascade_metrics['image_count']} "
+        f"images, versus {oracle_exact} for the register-context oracle and "
+        f"{summary['full_image_sequence_metrics']['exact_match_count']} for full-image inference."
       )
       recommended_next_step = (
         "Run npm run qa:full-image-digit-shadow with one explicitly configured "
@@ -1053,8 +1054,9 @@ def aggregate_summary(
       )
     else:
       finding = (
-        "The production ROI cascade improves scale but leaves a material gap to "
-        "the ground-truth register-context oracle."
+        f"The production ROI cascade is exact on {cascade_exact}/{cascade_metrics['image_count']} "
+        f"images versus {oracle_exact} for the register-context oracle; inspect the "
+        "per-image failures before attributing the difference to scale or localization."
       )
       recommended_next_step = (
         "Inspect the cascade overlays with the lowest register coverage, then "
@@ -1081,9 +1083,9 @@ def aggregate_summary(
           f"minimum reviewed-register coverage in that subset is {minimum_coverage:.1%}."
         ) if minimum_coverage is not None else "No register coverage could be measured.",
         (
-          "Single-aperture inference is correct on only "
-          f"{correct}/{len(aperture_records)} crops, so the next runtime design "
-          "should preserve whole-register context."
+          f"Single-aperture inference is correct on {correct}/{len(aperture_records)} "
+          f"crops ({correct / len(aperture_records):.1%}). Compare the per-image "
+          "oracle results before choosing runtime context."
         ) if aperture_records else "Single-aperture inference was skipped.",
         (
           f"Transition states across {sum(transition_counts.values())} audited apertures: "

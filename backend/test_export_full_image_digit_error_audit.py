@@ -291,6 +291,36 @@ class ClassificationTests(unittest.TestCase):
 
 
 class ReportTests(unittest.TestCase):
+  def test_oracle_conclusions_do_not_invent_a_failure_when_every_path_is_correct(self) -> None:
+    record = build_sequence_record("meter.jpg", "1234", 0,
+      [detection(digit, 0.2 + p * 0.2) for p, digit in enumerate((1, 2, 3, 4))])
+    evaluations = [{"fold": 0, "predictions": [record]}]
+    annotations = {"meter.jpg": [
+      box(digit, 0.2 + p * 0.2, position=p) for p, digit in enumerate((1, 2, 3, 4))
+    ]}
+    register = {"meter.jpg": record}
+    cascade = {"meter.jpg": {**record, "roi": {"status": "accepted", "truth_register_coverage": 1.0}}}
+    for correct_count in (0, 2, 4):
+      with self.subTest(correct_count=correct_count):
+        apertures = {("meter.jpg", p): {
+          "predicted_digit": digit if p < correct_count else 9,
+          "correct": p < correct_count,
+        } for p, digit in enumerate((1, 2, 3, 4))}
+        rows = build_audit_rows(evaluations, annotations, register, apertures, cascade)
+        summary = aggregate_summary(evaluations, rows, register, apertures, cascade)
+        decision = summary["decision"]
+        self.assertIn("1/1", decision["finding"])
+        self.assertNotIn("bottleneck", decision["finding"])
+        self.assertNotIn("gain", decision["finding"])
+        finding = decision["supporting_findings"][3]
+        self.assertIn(f"{correct_count}/4", finding)
+        self.assertIn(f"{correct_count / 4:.1%}", finding)
+        self.assertNotIn("should preserve whole-register context", finding)
+        with tempfile.TemporaryDirectory() as directory:
+          output = Path(directory) / "summary.md"
+          write_markdown_summary(summary, output, "test")
+          self.assertIn(finding, output.read_text())
+
   def test_partial_roi_rejections_are_not_diagnosed_as_digit_padding_failures(self) -> None:
     records = [
       build_sequence_record(f"meter-{index}.jpg", "1234", 0,
