@@ -11,6 +11,11 @@ import io
 import json
 from pathlib import Path
 
+try:
+  from .full_image_source_exclusions import parse_source_exclusions
+except ImportError:
+  from full_image_source_exclusions import parse_source_exclusions
+
 CV_FOLD_COUNT = 5
 
 
@@ -101,8 +106,18 @@ def main() -> None:
   parser.add_argument("--checkpoint", type=Path, required=True)
   parser.add_argument("--folds", type=Path, required=True)
   parser.add_argument("--fold", type=int, choices=range(CV_FOLD_COUNT))
+  parser.add_argument("--source-exclusions", type=Path)
   args = parser.parse_args()
-  print(json.dumps(validate_checkpoint_fold(args.checkpoint, args.fold, args.folds)))
+  result = validate_checkpoint_fold(args.checkpoint, args.fold, args.folds)
+  if args.source_exclusions is not None:
+    raw = args.source_exclusions.read_bytes() if args.source_exclusions.exists() else b""
+    exclusions = parse_source_exclusions(raw.decode("utf-8"), args.source_exclusions)
+    result["evaluation_exclusions"] = {
+      "path": str(args.source_exclusions),
+      "sha256": hashlib.sha256(raw).hexdigest() if args.source_exclusions.exists() else None,
+      "filenames": sorted(exclusions),
+    }
+  print(json.dumps(result))
 
 
 if __name__ == "__main__":

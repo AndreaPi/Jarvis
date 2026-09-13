@@ -282,6 +282,11 @@ name. An optional `FULL_IMAGE_DIGIT_SHADOW_VALIDATION_FOLD` must agree with it.
 Use `FULL_IMAGE_DIGIT_SHADOW_CV_FOLDS_PATH` to select the original manifest if
 the repository copy has changed. Images absent from that manifest remain
 unmapped in the full-corpus diagnostic and never enter the validation slice.
+The validation slice also omits current `source_exclusions.csv` entries, even
+when they belonged to the original fold. Override
+`FULL_IMAGE_DIGIT_SHADOW_SOURCE_EXCLUSIONS_PATH` for another exclusion snapshot.
+The report retains excluded images in the complete UI diagnostic, original
+fold membership, and the applied exclusion filenames and SHA-256.
 After provenance verification, the command starts a disposable backend,
 records the checkpoint SHA-256, and writes a timestamped report under `output/full-image-digit-shadow-qa/`.
 Backend readiness verifies both canonical primary checkpoints (ROI and digit

@@ -11,6 +11,11 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 try:
+  from .full_image_source_exclusions import read_source_exclusions
+except ImportError:
+  from full_image_source_exclusions import read_source_exclusions
+
+try:
   from .runtime_digit_pipeline import rotate_image
 except ImportError:
   from runtime_digit_pipeline import rotate_image
@@ -53,14 +58,6 @@ BOOTSTRAP_HEADERS = [
   "minor_inset_ratio",
 ]
 CV_FOLD_HEADERS = ["filename", "reading", "fold"]
-SOURCE_EXCLUSION_HEADERS = [
-  "filename",
-  "scope",
-  "reason",
-  "retention",
-  "notes",
-]
-FULL_IMAGE_DIGIT_SCOPE = "full_image_digit_detection"
 BOX_COLORS = (
   (0, 210, 255),
   (255, 170, 0),
@@ -284,34 +281,6 @@ def read_csv_rows(path: Path) -> list[dict[str, str]]:
       {key: (value or "") for key, value in row.items()}
       for row in csv.DictReader(handle)
     ]
-
-
-def read_source_exclusions(path: Path) -> dict[str, dict[str, str]]:
-  rows = read_csv_rows(path)
-  exclusions: dict[str, dict[str, str]] = {}
-  for row in rows:
-    normalized = {
-      header: (row.get(header) or "").strip()
-      for header in SOURCE_EXCLUSION_HEADERS
-    }
-    filename = normalized["filename"]
-    if not filename:
-      raise ValueError(f"Source exclusion row is missing filename: {path}")
-    if filename in exclusions:
-      raise ValueError(f"Duplicate source exclusion for {filename}: {path}")
-    if normalized["scope"] != FULL_IMAGE_DIGIT_SCOPE:
-      raise ValueError(
-        f"Unsupported source exclusion scope for {filename}: "
-        f"{normalized['scope']!r}"
-      )
-    if not normalized["reason"]:
-      raise ValueError(f"Source exclusion is missing a reason for {filename}")
-    if normalized["retention"] != "legacy_stress":
-      raise ValueError(
-        f"Source exclusion retention for {filename} must be 'legacy_stress'"
-      )
-    exclusions[filename] = normalized
-  return exclusions
 
 
 def filter_excluded_annotations(

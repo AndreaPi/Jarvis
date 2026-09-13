@@ -1,6 +1,40 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { trackedProcess, waitFor, validateCheckpointProvenance, validateShadowBackendHealth } = require('./export-full-image-digit-shadow-qa.cjs');
+const { selectValidationRows, buildRows, summarize } = require('./export-full-image-digit-shadow-qa.cjs');
+
+test('UI validation excludes retired fold sources while preserving full diagnostic and provenance', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const crypto = require('node:crypto');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-ui-exclusions-'));
+  try {
+    const folds = path.join(root, 'folds.csv');
+    const original = 'filename,fold\nactive.jpg,0\nretired.jpg,0\ntraining.jpg,1\n';
+    fs.writeFileSync(folds, original);
+    fs.writeFileSync(path.join(root, 'dataset_provenance.json'), JSON.stringify({
+      selected_fold: 0, cv_folds_sha256: crypto.createHash('sha256').update(original).digest('hex')
+    }));
+    const exclusions = path.join(root, 'exclusions.csv');
+    fs.writeFileSync(exclusions, 'filename,scope,reason,retention\nretired.jpg,full_image_digit_detection,"defocus, obsolete domain",legacy_stress\n');
+    const verified = validateCheckpointProvenance(path.join(root, 'best.pt'), folds, '0', exclusions);
+    const rows = buildRows(['active.jpg', 'retired.jpg', 'training.jpg', 'new.jpg'].map((filename) => ({
+      filename, expected: '1234', detected: filename === 'retired.jpg' ? '' : '1234'
+    })), new Map(Object.entries(verified.fold_assignments)));
+    const selected = selectValidationRows(rows, verified);
+    assert.deepEqual(selected.map((row) => row.filename), ['active.jpg']);
+    assert.equal(summarize(selected, 'production_value').no_read_count, 0);
+    assert.equal(summarize(rows, 'production_value').no_read_count, 1);
+    assert.equal(verified.fold_assignments['retired.jpg'], 0);
+    assert.equal(fs.readFileSync(folds, 'utf8'), original);
+    assert.equal(verified.evaluation_exclusions.sha256,
+      crypto.createHash('sha256').update(fs.readFileSync(exclusions)).digest('hex'));
+    assert.throws(() => selectValidationRows(rows.filter((row) => row.filename !== 'active.jpg'), verified), /No active UI rows/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('failed frontend/backend readiness stops the process before losing its handle', async () => {
   for (const label of ['frontend', 'shadow backend']) {

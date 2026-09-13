@@ -24,10 +24,15 @@ const CV_FOLDS_PATH = path.resolve(
     || path.join(ROOT_DIR, 'backend/data/full_image_digit_dataset/manifests/cv_folds.csv')
 );
 
-const validateCheckpointProvenance = (checkpointPath, foldsPath, requestedFold) => {
+const SOURCE_EXCLUSIONS_PATH = path.resolve(
+  process.env.FULL_IMAGE_DIGIT_SHADOW_SOURCE_EXCLUSIONS_PATH
+    || path.join(ROOT_DIR, 'backend/data/full_image_digit_dataset/manifests/source_exclusions.csv')
+);
+
+const validateCheckpointProvenance = (checkpointPath, foldsPath, requestedFold, exclusionsPath = SOURCE_EXCLUSIONS_PATH) => {
   const args = [
     path.join(ROOT_DIR, 'backend/full_image_checkpoint_provenance.py'),
-    '--checkpoint', checkpointPath, '--folds', foldsPath
+    '--checkpoint', checkpointPath, '--folds', foldsPath, '--source-exclusions', exclusionsPath
   ];
   if (requestedFold !== undefined) {
     // Pass the exact value: argparse rejects partial numbers such as "4junk".
@@ -350,7 +355,7 @@ const writeReport = async (payload) => {
     `- Orientation-oracle hits: ${payload.orientation_oracle_hit_count}/${payload.shadow_metrics.image_count}.`,
     `- Runtime digit settings: confidence ${payload.runtime_settings.confidence}, NMS IoU ${payload.runtime_settings.iou}, image size ${payload.runtime_settings.imgsz}.`,
     '',
-    `Leakage-safe checkpoint fold ${payload.checkpoint_validation_fold}:`,
+    `Leakage-safe active checkpoint fold ${payload.checkpoint_validation_fold} (current source exclusions applied):`,
     '',
     `- Production: ${payload.validation_slice.production_metrics.exact_match_count}/${payload.validation_slice.production_metrics.image_count} exact, ${payload.validation_slice.production_metrics.no_read_count} no-read, MAE ${payload.validation_slice.production_metrics.readable_mae}.`,
     `- Shadow: ${payload.validation_slice.shadow_metrics.exact_match_count}/${payload.validation_slice.shadow_metrics.image_count} exact, ${payload.validation_slice.shadow_metrics.no_read_count} no-read, MAE ${payload.validation_slice.shadow_metrics.readable_mae}.`,
@@ -368,6 +373,17 @@ const writeReport = async (payload) => {
   ];
   await fsp.writeFile(path.join(outputDir, 'README.md'), lines.join('\n'), 'utf8');
   return outputDir;
+};
+
+const selectValidationRows = (rows, provenance) => {
+  const excluded = new Set(provenance.evaluation_exclusions.filenames);
+  const selected = rows.filter((row) => (
+    row.cv_fold === provenance.selected_fold && !excluded.has(row.filename)
+  ));
+  if (!selected.length) {
+    throw new Error(`No active UI rows belong to checkpoint fold ${provenance.selected_fold}.`);
+  }
+  return selected;
 };
 
 const main = async () => {
@@ -388,10 +404,7 @@ const main = async () => {
     const backendHealth = started.health;
     const ui = await runUiBenchmark();
     const rows = buildRows(ui.rows, cvFolds);
-    const validationRows = rows.filter((row) => row.cv_fold === validationFold);
-    if (!validationRows.length) {
-      throw new Error(`No UI rows belong to checkpoint fold ${validationFold}.`);
-    }
+    const validationRows = selectValidationRows(rows, checkpointProvenance);
     const payload = {
       version: 1,
       generated_at: new Date().toISOString(),
@@ -400,6 +413,7 @@ const main = async () => {
       checkpoint_sha256: await sha256(CHECKPOINT_PATH),
       checkpoint_validation_fold: validationFold,
       checkpoint_training_provenance: checkpointProvenance,
+      evaluation_exclusions: checkpointProvenance.evaluation_exclusions,
       runtime_settings: {
         confidence: backendHealth.full_image_digit_shadow_confidence,
         iou: backendHealth.full_image_digit_shadow_iou,
@@ -443,4 +457,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { trackedProcess, waitFor, validateCheckpointProvenance, validateShadowBackendHealth };
+module.exports = { trackedProcess, waitFor, validateCheckpointProvenance, validateShadowBackendHealth, selectValidationRows, buildRows, summarize };
