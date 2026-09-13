@@ -125,6 +125,24 @@ Optional: train the guarded house-specific `23xx` strip-reader checkpoint:
 python train_strip_digit_reader_23xx.py --device cpu
 ```
 
+### Thermal monitoring for long macOS training
+
+From the repository root, start the thermal monitor in a separate terminal:
+
+```bash
+scripts/monitor-thermal.sh
+```
+
+It shows one `powermetrics` thermal-pressure sample every 30 seconds. Complete
+sample blocks are appended to a timestamped log under `backend/runs/thermal/`
+only when `Current pressure level` is not `Nominal`; nominal samples and
+machine metadata stay out of the log. Press `Ctrl-C` to stop it. To append to a
+different file, pass the path as the only argument:
+
+```bash
+scripts/monitor-thermal.sh /path/to/thermal-events.log
+```
+
 ## Artifact Retention
 
 Treat the following as Tier 1 artifacts that must not be lost:
@@ -134,6 +152,7 @@ Treat the following as Tier 1 artifacts that must not be lost:
 - `backend/data/roi_dataset/images/**`
 - `backend/data/roi_dataset/labels/**`
 - `backend/data/roi_dataset/splits.json`
+- `backend/data/full_image_digit_dataset/manifests/**`
 - `backend/data/digit_dataset/manifests/**`
 - `backend/data/digit_dataset/sections_synthetic/manifests/**`
 - promoted checkpoints in `backend/models/*.pt`
@@ -205,6 +224,31 @@ python validate_digit_dataset.py
 
 `validate_digit_dataset.py` validates the current windows/canonical/sections workflow.
 
+The replacement full-image digit detector uses a separate, review-first dataset.
+See [`docs/full-image-digit-dataset.md`](docs/full-image-digit-dataset.md) for
+the bootstrap, Make Sense review, guarded import, and image-level cross-validation
+workflow. Do not train from its labels while any annotation remains `pending`,
+and do not use its single historical sanity image for checkpoint selection or
+as a generalization estimate. Promotion requires a newly collected locked
+external full-image test set after the recipe is frozen. Evaluate experimental
+checkpoints with `backend/evaluate_full_image_digit_detector.py`; complete
+four-digit exact match and no-read are required alongside YOLO detection
+metrics. Sources retained only for legacy diagnostics are declared in
+`backend/data/full_image_digit_dataset/manifests/source_exclusions.csv` and
+are omitted from active labels, folds, training, and evaluation.
+Use `npm run qa:full-image-digit-errors` after a complete cross-validation
+recipe to compare its frozen full-image predictions with the production
+ROI-to-register-crop cascade plus diagnostic register-crop and single-aperture
+inference, then review the generated visual report before choosing another
+training recipe. The cascade deliberately predicts one crop at a time to match
+the deployed endpoint's padding behavior; do not replace it with batched
+inference when measuring runtime readiness.
+Use `npm run qa:full-image-digit-shadow` to run one explicitly configured
+detector checkpoint as a non-selecting UI shadow. The report compares it with
+the current OCR on every live test-set image and separately reports the
+checkpoint's leakage-safe validation-fold slice; only that slice is evidence
+about unseen active-fold images.
+
 3. Start the API:
 
 ```bash
@@ -217,6 +261,7 @@ By default, the frontend calls `http://127.0.0.1:8001/roi/detect` and requires n
 Digit decoding is still selected by the per-cell neural classifier at `http://127.0.0.1:8001/digit/predict-cells`.
 The whole-strip reader at `http://127.0.0.1:8001/digit/predict-strip` runs shadow-only and is logged under `selectionLog.stripReader`.
 The constrained house-specific reader at `http://127.0.0.1:8001/digit/predict-strip-23xx` also runs shadow-only and is logged under `selectionLog.stripReader23xx`; it only accepts a forced `23xx` value when its second-digit-is-`3` guard reaches the configured threshold.
+The full-image digit detector endpoint at `http://127.0.0.1:8001/digit/predict-full-image-shadow` is disabled in the frontend by default. When explicitly enabled, it logs ROI-cropped four-digit candidates under `selectionLog.fullImageDigitShadow`; the current primary OCR angle selects the headline diagnostic candidate, but the shadow cannot change the selected reading.
 Check backend readiness with:
 
 ```bash
@@ -233,7 +278,9 @@ npm run test:backend
 npm run test:e2e
 ```
 
-The script suite covers the one-click launcher safety checks, QA service/checkpoint guards, DVC safety, and artifact packaging. The backend suite covers API image handling, ROI dataset behavior, and runtime crop geometry. Playwright covers UI state, neural-ROI failure handling, and OCR selection guard regressions.
+The script suite covers the one-click launcher safety checks, QA service/checkpoint guards, DVC safety, and artifact packaging. The backend suite auto-discovers `backend/test_*.py` and covers fast unit, component, and confirmed-regression behavior without training models. Playwright covers browser integration, UI state, neural-ROI failure handling, and OCR selection regressions.
+
+The `qa:*` commands and the UI **Run test set** are model/data benchmarks, not additional automated test cases. Add automated coverage only for durable behavior, retained data or artifact safety, a user-facing workflow, or a confirmed regression; consolidate near-identical inputs into a table-driven test.
 
 Generate a per-image ROI checkpoint comparison report (`roi-rotaug-e30-640.pt` vs `roi.pt`) with stage `5/6` debug snapshots:
 
@@ -260,9 +307,12 @@ npm run qa:ocr-oracle
 npm run qa:strip-runtime
 npm run qa:cell-crops
 npm run qa:roi-geometry-audit
+npm run qa:full-image-digit-errors
+npm run qa:full-image-digit-shadow
+npm run qa:full-image-digit-shadow-sensitivity
 ```
 
-These write timestamped reports under `output/strip-dataset-qa/`, `output/ocr-candidate-oracle/`, `output/strip-runtime-qa/`, `output/cell-crop-failure-qa/`, and `output/roi-geometry-audit/`. Use `qa:strip-dataset` after rebuilding digit windows and before retraining, so the canonical strips can be visually accepted first.
+These write timestamped reports under `output/strip-dataset-qa/`, `output/ocr-candidate-oracle/`, `output/strip-runtime-qa/`, `output/cell-crop-failure-qa/`, `output/roi-geometry-audit/`, `output/full-image-digit-error-audit/`, `output/full-image-digit-shadow-qa/`, and `output/full-image-digit-shadow-sensitivity/`. Use `qa:strip-dataset` after rebuilding digit windows and before retraining, so the canonical strips can be visually accepted first. The full-image error audit reads frozen evaluation artifacts and never updates canonical annotations. The shadow benchmark identifies the configured checkpoint by path and SHA-256 and distinguishes its complete development comparison from its leakage-safe CV-fold slice. The sensitivity runner uses exact single-image runtime inference and a bounded confidence/NMS grid; its selected fold becomes a tuning surface, not fresh promotion evidence.
 
 The browser-based OCR QA runners fail fast if a reused backend is not ready with the canonical promoted ROI and digit-classifier checkpoints.
 
@@ -286,6 +336,7 @@ CI runs the Chromium Playwright suite on every pull request and on pushes to `ma
 - Digit decoding uses the backend neural classifier endpoint (`/digit/predict-cells`) and is enabled by default.
 - The whole-strip digit reader endpoint (`/digit/predict-strip`) is enabled in shadow mode by default; it logs predictions/debug stage `8` but does not affect the selected reading.
 - The constrained house-specific `23xx` endpoint (`/digit/predict-strip-23xx`) is also shadow-only; it logs accepted/abstained diagnostics and must not affect the selected reading until benchmark evidence supports promotion.
+- The full-image digit endpoint (`/digit/predict-full-image-shadow`) is optional and frontend-disabled by default; explicit shadow runs log all rotation candidates without changing the primary result.
 - Edge-derived ROI strip candidates are enabled by default and can be toggled with `OCR_CONFIG.roiDeterministic.useEdgeCandidates`.
 - The selection layer prioritizes edge-derived strips, but the primary classifier pass now also includes top base-strip candidates when they are available; a narrow base fallback rerun is still available only when base candidates were not already evaluated and edge support remains weak. Low-confidence edge-only reads can still be rejected at the final gate.
 - Use the UI `Run test set` action plus `npm run test:e2e` for OCR regressions before and after tuning.

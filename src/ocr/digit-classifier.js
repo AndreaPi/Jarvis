@@ -24,6 +24,11 @@ const strip23xxRuntimeState = {
   disabledUntilTs: 0
 };
 
+const fullImageDigitShadowRuntimeState = {
+  consecutiveFailures: 0,
+  disabledUntilTs: 0
+};
+
 const canvasToBlob = (canvas) => {
   return new Promise((resolve, reject) => {
     if (!canvas || typeof canvas.toBlob !== 'function') {
@@ -359,4 +364,85 @@ const predictDigitStrip23xx = async (stripCanvas, stripReaderConfig, requestOpti
   }
 };
 
-export { predictDigitCells, predictDigitStrip, predictDigitStrip23xx };
+const predictFullImageDigitShadow = async (file, config, requestOptions = {}) => {
+  if (!config || !config.enabled || !config.endpoint) {
+    return createProbeMiss('disabled');
+  }
+  if (!file) {
+    return createProbeMiss('missing-image');
+  }
+  const ignoreCooldown = requestOptions && requestOptions.ignoreCooldown === true;
+  if (!ignoreCooldown && Date.now() < fullImageDigitShadowRuntimeState.disabledUntilTs) {
+    return createProbeMiss('cooldown');
+  }
+  if (typeof fetch !== 'function' || typeof FormData === 'undefined') {
+    return createProbeMiss('unsupported-environment');
+  }
+
+  const timeoutMs = Number.isFinite(config.timeoutMs) ? config.timeoutMs : 8000;
+  const abortController = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timeoutId = abortController ? setTimeout(() => abortController.abort(), timeoutMs) : null;
+  try {
+    const formData = new FormData();
+    formData.append('image', file, file.name || 'meter.jpg');
+    const response = await fetch(config.endpoint, {
+      method: 'POST',
+      body: formData,
+      signal: abortController ? abortController.signal : undefined
+    });
+    if (!response.ok) {
+      setFailureCooldown(fullImageDigitShadowRuntimeState, config);
+      return createProbeMiss('http-error', { status: response.status });
+    }
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch (error) {
+      setFailureCooldown(fullImageDigitShadowRuntimeState, config);
+      return createProbeMiss('invalid-json');
+    }
+    if (!payload || !Array.isArray(payload.candidates)) {
+      setFailureCooldown(fullImageDigitShadowRuntimeState, config);
+      return createProbeMiss('invalid-payload');
+    }
+    clearFailureState(fullImageDigitShadowRuntimeState);
+    return {
+      ok: payload.ok === true,
+      reason: payload.reason || (payload.ok === true ? null : 'no-read'),
+      model: payload.model || null,
+      roiModel: payload.roi_model || null,
+      device: payload.device || null,
+      confidence: toFiniteNumber(payload.confidence) ?? 0,
+      meanConfidence: toFiniteNumber(payload.mean_confidence) ?? 0,
+      detectionCount: Number.isFinite(payload.detection_count)
+        ? Number(payload.detection_count)
+        : 0,
+      candidates: payload.candidates.map((candidate) => ({
+        rotation: Number.isFinite(candidate && candidate.rotation)
+          ? Number(candidate.rotation)
+          : null,
+        value: normalizeDigitString(candidate && candidate.value)
+      })),
+      detections: Array.isArray(payload.detections) ? payload.detections : [],
+      roi: payload.roi && typeof payload.roi === 'object' ? payload.roi : null
+    };
+  } catch (error) {
+    if (error && error.name === 'AbortError') {
+      setFailureCooldown(fullImageDigitShadowRuntimeState, config);
+      return createProbeMiss('timeout');
+    }
+    setFailureCooldown(fullImageDigitShadowRuntimeState, config);
+    return createProbeMiss('network-error');
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+};
+
+export {
+  predictDigitCells,
+  predictDigitStrip,
+  predictDigitStrip23xx,
+  predictFullImageDigitShadow
+};

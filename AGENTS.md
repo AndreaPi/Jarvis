@@ -26,7 +26,7 @@
 - `npm run serve`: Start the local web server on port `8000`.
 - `npm run dev`: Alias of `npm run serve`.
 - `npm run test:scripts`: Run launcher, QA service guard, and artifact/DVC safety tests.
-- `npm run test:backend`: Run backend API, ROI dataset, and runtime crop unit tests.
+- `npm run test:backend`: Auto-discover and run the fast Python tests in `backend/test_*.py`.
 - `npm run test:e2e`: Run Playwright end-to-end tests.
 - `npm run benchmark:roi-diff`: Generate ROI checkpoint diff artifacts.
 
@@ -39,7 +39,11 @@ Open `http://localhost:8000` after starting the frontend server.
 - Prefer clear, small functions in `src/` modules and avoid deep nesting.
 
 ## Testing Guidelines
-- Automated browser tests are configured with Playwright.
+- `test:backend` contains fast unit, component, and confirmed-regression tests. Mock model inference and use temporary directories; model training and full checkpoint benchmarks do not belong in this suite.
+- `test:scripts` protects launcher, service-guard, DVC, and artifact-safety contracts.
+- `test:e2e` contains Playwright browser integration and user-flow regressions; mock the backend unless the behavior specifically requires a live service.
+- `qa:*` commands and the UI `Run test set` are model/data benchmarks, not automated code-test cases. Their image counts must not be added to the automated test count.
+- Add an automated test when it protects durable behavior, retained data/artifacts, a user-facing workflow, or a confirmed regression. Prefer one table-driven test over several near-identical helper tests, and keep one-off experiment/report checks in the relevant QA workflow.
 - CI: `.github/workflows/e2e.yml` runs on each pull request and on pushes to `master`.
 - Frontend manual checks: upload an image, run OCR, verify the email draft fields, and confirm the Gmail draft link.
 - Backend sanity checks: `GET /health` and confirm `ready: true`, `roi_ready: true`, `digit_ready: true`, `strip_digit_ready: true`, and the expected model paths when all checkpoints are present.
@@ -56,7 +60,7 @@ Open `http://localhost:8000` after starting the frontend server.
 - Backend is intended for local use; keep host/CORS scoped to localhost unless explicitly deploying.
 
 ## Artifact Retention
-- Treat canonical `assets/` meter photos, `assets/meter_readings.csv`, ROI images/labels, `backend/data/roi_dataset/splits.json`, digit manifests, and promoted `backend/models/*.pt` checkpoints as must-retain artifacts.
+- Treat canonical `assets/` meter photos, `assets/meter_readings.csv`, ROI images/labels, `backend/data/roi_dataset/splits.json`, digit manifests (including `backend/data/full_image_digit_dataset/manifests/**`), and promoted `backend/models/*.pt` checkpoints as must-retain artifacts.
 - Use DVC for large Tier 1 binaries:
   - per-file DVC tracking for canonical meter photos in `assets/`
   - `backend/data/roi_dataset/images.dvc`

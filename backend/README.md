@@ -1,6 +1,6 @@
 # ROI Backend
 
-Python service for neural ROI detection (digit window), per-cell digit-classifier inference, and whole-strip shadow-reader inference.
+Python service for neural ROI detection (digit window), per-cell digit-classifier inference, whole-strip shadow-reader inference, and optional ROI-cropped full-image digit-detector shadow inference.
 
 ## 1) Install
 
@@ -117,6 +117,237 @@ Generate a prioritized capture checklist for underrepresented digits:
 ```bash
 python plan_digit_expansion.py --target-train-per-digit 12 --priority-digits 4,5,6,9
 ```
+
+## Build the full-image digit-box dataset
+
+The replacement detector dataset labels the four individual digit-wheel
+apertures directly on each full meter image with classes `0` through `9`.
+Bootstrap the boxes from the reviewed register ROI, verified reading, and
+canonical orientation metadata:
+
+```bash
+cd backend
+source .venv/bin/activate
+python build_full_image_digit_dataset.py
+```
+
+This writes the canonical review manifest and derived YOLO labels under
+`data/full_image_digit_dataset/`. It also creates a disposable Make Sense
+review package under `../output/full-image-digit-review/`.
+Rebuilds stop if a retained annotation's reading, split, orientation, or source
+dimensions have changed. Reconcile and review those changes before rebuilding.
+Training checks each class/box pair against canonical reviewed coordinates,
+allowing only YOLO serialization rounding; rebuild stale labels first.
+
+`data/full_image_digit_dataset/manifests/source_exclusions.csv` retains
+legacy-stress sources for diagnostics while omitting them from active labels,
+CV folds, review packages, training, and evaluation. The source photo,
+trusted reading, bootstrap rows, and reviewed annotations remain preserved.
+
+After reviewing and exporting YOLO annotations from Make Sense, import them
+with:
+
+```bash
+python import_full_image_digit_annotations.py /path/to/makesense-export.zip
+python build_full_image_digit_dataset.py
+```
+
+The importer rejects missing images by default, requires exactly four boxes
+per image, restores reading order from orientation metadata, and verifies that
+the imported classes equal the trusted reading. Reviewed coordinates are
+preserved on later bootstrap runs. Do not use the dataset for training while
+`manifests/summary.json` reports any `pending` annotations.
+
+The builder also maintains `manifests/cv_folds.csv`: five persistent,
+image-level folds over train sources. Validate a fold before training:
+
+```bash
+python train_full_image_digit_detector.py --validate-only --fold 0
+```
+
+Train one fold without promoting its checkpoint:
+
+```bash
+python train_full_image_digit_detector.py \
+  --fold 0 \
+  --base-model yolov8n.pt \
+  --device cpu
+```
+
+If training is interrupted, resume from the run's unstripped `last.pt` while
+repeating the same fold, recipe, and run name:
+
+```bash
+python train_full_image_digit_detector.py \
+  --fold 0 \
+  --device cpu \
+  --name full-image-digit-detector-fold0 \
+  --resume-from runs/full-image-digit-detector-fold0/weights/last.pt
+```
+
+The trainer rematerializes the temporary fold, rejects mismatched core
+arguments or a stripped/completed checkpoint, and lets Ultralytics restore the
+epoch, optimizer, and scheduler. Jarvis saves `early_stopping_state.json` after
+each checkpoint and restores the best fitness, best epoch, and pending-stop flag
+before the first resumed epoch. It verifies the checkpoint SHA-256, epoch, and
+patience; missing or mismatched state blocks resume rather than resetting the
+patience window. Keep this file with `weights/last.pt`. Older runs without it
+must start a new run. Repeat the original patience and crop-recipe flags.
+
+New runs save `dataset_provenance.json` in the actual run directory before
+the first epoch, so interruptions retain it. Resume requires unchanged fold,
+annotation/fold/exclusion manifests, materialized image and label contents,
+crop recipe, augmentation settings, and Ultralytics version. The original
+provenance is preserved on resume. Older runs without the required provenance
+cannot be resumed safely; start a new run instead of reconstructing it from
+the current dataset. Device and worker settings may still change.
+
+Evaluate its best checkpoint on that same full-image validation fold:
+
+```bash
+python evaluate_full_image_digit_detector.py \
+  --checkpoint runs/full-image-digit-detector-fold0/weights/best.pt \
+  --fold 0
+```
+
+This writes a JSON artifact beside the run with reproducible detection metrics,
+complete-reading exact match, no-read, readable digit accuracy, readable
+`MAE`, and per-image predictions. It uses the selected CV validation fold only
+and never reads the historical sanity holdout or a source listed in
+`manifests/source_exclusions.csv`.
+
+Before preparing images or loading models, all three full-image evaluators
+(sequence, UI shadow, and sensitivity) require the original
+`dataset_provenance.json` in the checkpoint's run directory. They verify both
+`selected_fold` and the SHA-256 of the supplied CV manifest against the recorded
+`cv_folds_sha256`, then use those verified assignments throughout the run.
+Missing or invalid provenance, a different fold, or a changed manifest blocks
+evaluation. Keep original provenance and `cv_folds.csv` with copied checkpoints;
+do not reconstruct training evidence from today's dataset.
+
+After a dataset rebuild or additive ingestion, supply the original manifest via
+`--folds` (Python) or `FULL_IMAGE_DIGIT_SHADOW_CV_FOLDS_PATH` (UI). The sequence
+evaluator also requires annotations and labels whose active train sources match
+that manifest after current source exclusions are applied to both annotations
+and verified assignments; use a compatible dataset snapshot. The report retains
+the original membership as provenance. Even harmless CSV formatting
+changes require the original file because verification compares exact bytes.
+The UI derives its fold from provenance; an optional
+`FULL_IMAGE_DIGIT_SHADOW_VALIDATION_FOLD` must agree. Reports retain the verified
+provenance path/hash, manifest path/hash, fold, and source assignments.
+
+After all folds for one recipe have been evaluated, export the visual error
+audit from the repository root:
+
+```bash
+npm run qa:full-image-digit-errors
+```
+
+The exporter discovers the balanced48 fold evaluation artifacts by default
+and writes a timestamped report under
+`output/full-image-digit-error-audit/`. It preserves the frozen full-image
+predictions, runs the promoted ROI detector with production sanity and crop
+expansion, and applies each image's out-of-fold digit checkpoint to that crop.
+Before inference, each checkpoint must match the SHA-256 in its evaluation;
+missing or mismatched hashes stop the audit. Reports represent undefined error
+statistics as `null` in JSON and `n/a` in HTML, including all-no-read runs.
+Each cascade crop is inferred separately, matching the deployed endpoint;
+batching differently shaped crops can alter Ultralytics padding and produced
+optimistic historical cascade results.
+The runtime and audit also convert RGB crops to the BGR NumPy format expected
+by Ultralytics. All August 4 cascade, shadow, and sensitivity results below
+predate this color-channel fix; retain them as historical evidence and rerun
+the corrected paths before drawing quality or threshold conclusions.
+It also compares diagnostic ground-truth-derived register and single-aperture
+crops. Its
+`transition-review.csv` is a worksheet only: review the blank fields before
+making any canonical annotation changes. Pass repeated `--evaluation` values
+to the Python script when auditing another recipe.
+
+To exercise one checkpoint through the real browser pipeline without changing
+Jarvis's selected reading, run from the repository root:
+
+```bash
+npm run qa:full-image-digit-shadow
+```
+
+The command records the checkpoint path and SHA-256, compares the shadow with
+the current OCR on the complete live test set, and separately reports the
+checkpoint's leakage-safe validation-fold slice. The August 4, 2026 fold-4
+run improved that seven-image slice from production `3/7` exact and `MAE
+40.00` to shadow `4/7` and `17.67`, but added one no-read. It therefore remains
+disabled and unpromoted.
+
+For a bounded single-image runtime sensitivity check on fold 4:
+
+```bash
+npm run qa:full-image-digit-shadow-sensitivity
+```
+
+The sweep applies `manifests/source_exclusions.csv` before checking annotation
+review or selecting validation images; use `--source-exclusions` for another
+dataset snapshot. Excluded legacy-stress sources never reach inference, even
+when retained annotations are pending. Reports record the exclusion manifest
+SHA-256 and excluded filenames.
+
+
+The August 4 run found that confidence `0.20` with the existing NMS IoU `0.70`
+recovers `meter_20260423.JPEG` by retaining its final `7` at confidence
+`0.217`. Fold 4 then measures `5/7` exact, `0` no-reads, and `MAE 15.14`.
+However, the paired complete UI diagnostic also accepts a wrong `5348` for
+`meter_20260724.JPEG` at nearly identical minimum confidence `0.218`, worsening
+shadow `MAE` from `312.37` to `386.59`. Keep the runtime default at `0.25`;
+threshold tuning alone cannot separate these cases.
+
+The historical August 4 audit, after the batching fix but before the color fix,
+measured its 28-image out-of-fold cascade at `12/28` exact with `7` no-reads and readable
+`MAE 15.71`, versus the register-context oracle's `17/28`, `1`, and `213.22`.
+Every production-expanded crop covered 100% of its reviewed register. That
+prompted investigation of padding/scale sensitivity and digit classification;
+the color correction requires a fresh comparison before retaining that diagnosis.
+
+The selected fold becomes validation, the other four folds become train, and
+the historical one-image sanity holdout remains test-only. It is not a
+statistically meaningful external test set or a promotion gate.
+
+To compare a mixed-scale recipe while retaining full-image evaluation, add
+`--train-register-crops`. It creates one register-context crop for each
+training image only; validation and test inputs remain full images:
+
+```bash
+python train_full_image_digit_detector.py \
+  --fold 0 \
+  --base-model yolov8n.pt \
+  --train-register-crops \
+  --device cpu
+```
+
+The controlled rare-class balancing recipe additionally uses digit-centred
+crops from training-fold images only:
+
+```bash
+python train_full_image_digit_detector.py \
+  --fold 0 \
+  --base-model yolov8n.pt \
+  --train-register-crops \
+  --train-balanced-digit-target 24 \
+  --device cpu
+```
+
+This raises each rare digit to a minimum of 24 training-box exposures without
+augmenting validation or test. Every added image is a real crop around one
+reviewed aperture; validation and test remain full-image-only. The run
+provenance reports generated counts and distinct source-image counts by class.
+
+Repeat folds `0` through `4` only after a recipe passes the initial fold
+comparison on both detection and complete-reading metrics. Cross-validation
+checkpoints stay under `runs/`. Freeze the recipe, collect a new locked
+external full-image test set, and evaluate it once before using
+`--copy-to models/full_image_digit_detector.pt`. Promotion still requires
+explicit approval.
+
+The complete annotation policy and review checklist are in
+[`../docs/full-image-digit-dataset.md`](../docs/full-image-digit-dataset.md).
 
 ## Train a dedicated digit classifier
 
@@ -266,14 +497,19 @@ Run backend regression tests from the repo root:
 npm run test:backend
 ```
 
+This command auto-discovers `backend/test_*.py`. These are fast unit, component,
+and confirmed-regression checks that mock model inference; training runs and
+checkpoint/model-quality comparisons remain separate `qa:*` workflows.
+
 ## 4) Endpoints
 
-- `GET /health`: model readiness (`ready`, `roi_ready`, `digit_ready`, `strip_digit_ready`, `strip_digit_23xx_ready`) + effective model/device config and `max_upload_bytes`.
+- `GET /health`: model readiness (`ready`, `roi_ready`, `digit_ready`, `strip_digit_ready`, `strip_digit_23xx_ready`, `full_image_digit_shadow_ready`) + effective model/device config and `max_upload_bytes`. Missing or unloadable optional full-image weights report a shadow error without making the canonical ROI service unready.
 - `POST /roi/detect`: multipart upload (`image`) and returns normalized bbox + confidence.
 - `POST /digit/predict`: multipart upload (`image`) and returns the predicted digit + confidence.
 - `POST /digit/predict-cells`: multipart upload (`images`, repeated field) for batch cell decoding.
 - `POST /digit/predict-strip`: multipart upload (`image`) for direct fixed-length 4-digit strip decoding.
 - `POST /digit/predict-strip-23xx`: multipart upload (`image`) for guarded house-specific `23xx` suffix decoding.
+- `POST /digit/predict-full-image-shadow`: multipart upload (`image`) that reuses the promoted ROI detector, expands the register crop, detects four digit boxes, and returns ordered candidates for each right-angle rotation. It never chooses or promotes a reading.
 
 All image fields default to a 20 MiB per-file limit and return HTTP `413` when exceeded. Override the limit with `MAX_UPLOAD_BYTES`.
 
@@ -282,6 +518,7 @@ Frontend integration defaults:
 - Digit classifier path is `http://127.0.0.1:8001/digit/predict-cells` and is only used when `OCR_CONFIG.digitClassifier.enabled=true`.
 - Strip reader path is `http://127.0.0.1:8001/digit/predict-strip`; frontend OCR runs it shadow-only via `OCR_CONFIG.digitStripReader.shadowOnly=true` and logs results without changing final selection.
 - Constrained `23xx` strip reader path is `http://127.0.0.1:8001/digit/predict-strip-23xx`; frontend OCR runs it shadow-only via `OCR_CONFIG.digitStripReader23xx.shadowOnly=true` and logs accepted/abstained diagnostics without changing final selection.
+- Full-image digit shadow path is `http://127.0.0.1:8001/digit/predict-full-image-shadow`; it is frontend-disabled by default. An explicit run uses the primary OCR angle only to choose which returned rotation to log, and it cannot change final selection.
 - Frontend ROI OCR prioritizes `90/270` edge candidates, but the primary pass also evaluates top base-strip rotations when present. A narrow `scan-roi` / base fallback rerun is only used when base candidates were not already evaluated and the edge evidence remains weak. Final confidence gates can still reject weak edge-only reads.
 
 ## Environment Variables
@@ -308,6 +545,14 @@ Frontend integration defaults:
 - `STRIP_DIGIT_23XX_DEVICE`: inference device for constrained strip reader (default follows `STRIP_DIGIT_DEVICE`)
 - `STRIP_DIGIT_23XX_GUARD_THRESHOLD`: minimum second-digit-is-`3` guard confidence before accepting a forced `23xx` value (default: `0.98`)
 - `STRIP_DIGIT_23XX_TOP_K`: number of top classes returned per constrained strip position (default: `3`)
+- `FULL_IMAGE_DIGIT_SHADOW_MODEL_PATH`: optional full-image detector checkpoint (default: `backend/models/full_image_digit_detector.pt`; the file is intentionally absent until promotion)
+- `FULL_IMAGE_DIGIT_SHADOW_DEVICE`: inference device (default follows `DIGIT_DEVICE`)
+- `FULL_IMAGE_DIGIT_SHADOW_CONFIDENCE`: digit-box confidence threshold (default: `0.25`)
+- `FULL_IMAGE_DIGIT_SHADOW_IOU`: digit-box NMS IoU threshold (default: `0.7`)
+- `FULL_IMAGE_DIGIT_SHADOW_IMGSZ`: digit-detector inference size (default: `1280`)
+- `FULL_IMAGE_DIGIT_SHADOW_MAX_DETECTIONS`: maximum digit detections (default: `300`)
+- `FULL_IMAGE_DIGIT_SHADOW_ROI_EXPAND_X`: horizontal ROI expansion ratio (default: `0.26`)
+- `FULL_IMAGE_DIGIT_SHADOW_ROI_EXPAND_Y`: vertical ROI expansion ratio (default: `0.16`)
 
 ## CPU-only vs GPU
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Jarvis Meter To Digit Boxes"
+  short_description: "Review and sync full-image digit boxes"
+  default_prompt: "Use $jarvis-meter-to-digit-box-sync to bootstrap, review, import, and validate four digit-aperture boxes for newly approved Jarvis meter photos."
