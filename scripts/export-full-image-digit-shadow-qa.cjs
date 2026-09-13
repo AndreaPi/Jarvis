@@ -80,19 +80,47 @@ const requestJson = (url) => new Promise((resolve, reject) => {
   request.setTimeout(3000, () => request.destroy(new Error('timeout')));
 });
 
-const requestOk = (url) => new Promise((resolve, reject) => {
+const requestBytes = (url) => new Promise((resolve, reject) => {
   const request = http.get(url, (response) => {
-    response.resume();
+    const chunks = [];
     const status = response.statusCode || 0;
-    if (status >= 200 && status < 300) {
-      resolve(true);
-    } else {
-      reject(new Error(`HTTP ${status}`));
-    }
+    response.on('data', (chunk) => chunks.push(chunk));
+    response.on('error', reject);
+    response.on('end', () => {
+      if (status >= 200 && status < 300) {
+        resolve(Buffer.concat(chunks));
+      } else {
+        reject(new Error(`HTTP ${status}`));
+      }
+    });
   });
   request.on('error', reject);
   request.setTimeout(3000, () => request.destroy(new Error('timeout')));
 });
+
+const requestOk = async (url) => { await requestBytes(url); return true; };
+
+const validateFrontendSource = async (url, fetchBytes = requestBytes) => {
+  const files = ['index.html', 'app.js', 'styles.css', 'assets/meter_readings.csv'];
+  const collectScripts = (directory) => {
+    for (const entry of fs.readdirSync(path.join(ROOT_DIR, directory), { withFileTypes: true })) {
+      const relative = `${directory}/${entry.name}`;
+      if (entry.isDirectory()) collectScripts(relative);
+      else if (entry.name.endsWith('.js')) files.push(relative);
+    }
+  };
+  collectScripts('src');
+  const hashes = {};
+  for (const relative of files.sort()) {
+    const expected = fs.readFileSync(path.join(ROOT_DIR, relative));
+    const served = await fetchBytes(new URL(relative, `${url.replace(/\/$/, '')}/`).href);
+    if (!expected.equals(served)) {
+      throw new Error(`Frontend serves different checkout content: ${relative}. Use JARVIS_FRONTEND_URL for this checkout.`);
+    }
+    hashes[relative] = crypto.createHash('sha256').update(expected).digest('hex');
+  }
+  return hashes;
+};
 
 const trackedProcess = (command, args, options = {}) => {
   const child = spawn(command, args, {
@@ -399,6 +427,7 @@ const main = async () => {
   let backend = null;
   try {
     frontend = await ensureFrontend();
+    const frontendSourceHashes = await validateFrontendSource(FRONTEND_URL);
     const started = await startBackend();
     backend = started.backend;
     const backendHealth = started.health;
@@ -409,6 +438,7 @@ const main = async () => {
       version: 1,
       generated_at: new Date().toISOString(),
       ui_status: ui.status,
+      frontend_source_sha256: frontendSourceHashes,
       checkpoint: CHECKPOINT_PATH,
       checkpoint_sha256: await sha256(CHECKPOINT_PATH),
       checkpoint_validation_fold: validationFold,
@@ -457,4 +487,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { trackedProcess, waitFor, validateCheckpointProvenance, validateShadowBackendHealth, selectValidationRows, buildRows, summarize };
+module.exports = { trackedProcess, waitFor, validateCheckpointProvenance, validateShadowBackendHealth, selectValidationRows, buildRows, summarize, validateFrontendSource };

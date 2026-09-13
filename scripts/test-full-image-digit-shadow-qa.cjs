@@ -2,6 +2,25 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { trackedProcess, waitFor, validateCheckpointProvenance, validateShadowBackendHealth } = require('./export-full-image-digit-shadow-qa.cjs');
 const { selectValidationRows, buildRows, summarize } = require('./export-full-image-digit-shadow-qa.cjs');
+const { validateFrontendSource } = require('./export-full-image-digit-shadow-qa.cjs');
+
+test('UI benchmark rejects another checkout before using its frontend or readings', async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const crypto = require('node:crypto');
+  const root = path.resolve(__dirname, '..');
+  const fetchFromCheckout = async (url) => fs.readFileSync(path.join(root, new URL(url).pathname));
+  const hashes = await validateFrontendSource('http://127.0.0.1:8000', fetchFromCheckout);
+  assert.equal(hashes['src/ocr/pipeline.js'],
+    crypto.createHash('sha256').update(fs.readFileSync(path.join(root, 'src/ocr/pipeline.js'))).digest('hex'));
+  assert.ok(hashes['assets/meter_readings.csv']);
+  for (const changed of ['src/ocr/pipeline.js', 'src/testset/run-test-set.js', 'assets/meter_readings.csv']) {
+    assert.ok(hashes[changed], changed);
+    await assert.rejects(validateFrontendSource('http://127.0.0.1:8000', async (url) => (
+      new URL(url).pathname === `/${changed}` ? Buffer.from('another checkout') : fetchFromCheckout(url)
+    )), /Frontend serves different checkout content/);
+  }
+});
 
 test('UI validation excludes retired fold sources while preserving full diagnostic and provenance', () => {
   const fs = require('node:fs');

@@ -295,6 +295,10 @@ Backend readiness verifies both canonical primary checkpoints (ROI and digit
 classifier) as well as the selected shadow checkpoint. Environment overrides
 that substitute a primary model are rejected. If frontend or backend readiness
 fails, it stops the disposable process before reporting the startup error.
+Before starting the backend, it also verifies that the frontend serves this
+checkout's HTML, CSS, JavaScript modules, and meter-reading manifest. A running
+frontend from a different checkout is rejected; select a suitable address with
+`JARVIS_FRONTEND_URL`. The report records the verified source hashes.
 
 The complete UI comparison is useful for finding runtime failures but is not a
 generalization estimate because a fold checkpoint trained on the other active
