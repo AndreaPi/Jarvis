@@ -1,22 +1,22 @@
 {
-  "labels_exported": 184,
+  "labels_exported": 188,
   "labels_skipped": 0,
   "section_count": 4,
   "split_counts": {
-    "train": 180,
+    "train": 184,
     "val": 0,
     "test": 4
   },
   "digit_counts": {
     "0": 6,
     "1": 16,
-    "2": 58,
-    "3": 57,
+    "2": 60,
+    "3": 58,
     "4": 10,
     "5": 13,
     "6": 5,
     "7": 8,
-    "8": 7,
+    "8": 8,
     "9": 4
   },
   "dataset_dir": "/Users/andrea/GitHubRepositories/Jarvis/backend/data/digit_dataset",

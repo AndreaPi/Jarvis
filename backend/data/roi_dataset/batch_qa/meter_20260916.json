@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "batch_id": "meter_20260916",
+  "source_mapping": {
+    "raw_import": "IMG_8554.jpeg",
+    "canonical_filename": "meter_20260916.jpeg"
+  },
+  "reading": {
+    "value": "2358",
+    "user_confirmed": true
+  },
+  "canonical_image": {
+    "sha256": "5ae47b2ba2fd691b0c39806933f980113667e472c007e15186014bbc0820f4cb",
+    "width": 3024,
+    "height": 4032,
+    "exif_orientation": 1,
+    "capture_datetime": "2026:09:16 18:46:28"
+  },
+  "manual_roi_export": {
+    "tool": "Make Sense",
+    "zip_filename": "labels_my-project-name_2026-09-16-08-08-20.zip",
+    "zip_sha256": "5ab7f032515884cabfaf1ef618c8762f7d2cdd8ee34b139d540fde28d833e7eb",
+    "member": "meter_20260916.txt",
+    "raw_yolo": "0 0.360119 0.452381 0.136905 0.285714",
+    "class_id": 0,
+    "x_center": 0.360119,
+    "y_center": 0.452381,
+    "width": 0.136905,
+    "height": 0.285714,
+    "rect_norm": {
+      "x": 0.2916665,
+      "y": 0.309524,
+      "width": 0.136905,
+      "height": 0.285714
+    }
+  },
+  "roi_dataset": {
+    "assigned_split": "train",
+    "image_identity_verified": true,
+    "coordinates_verified": true,
+    "agent_visual_qa": "passed",
+    "validated_preview": "backend/data/roi_dataset/qa_previews/train/meter_20260916_qa.jpg",
+    "validation_notes": "Manual export, canonical image, manifest rectangle, generated label, and full-resolution overlay agree. The box covers the complete four-digit black register."
+  },
+  "digit_derivative_upload_authorization": {
+    "status": "authorized",
+    "authorized_by": "user",
+    "authorized_on": "2026-09-17",
+    "evidence": "User: Esportato gli YOLO. Autorizzo il caricamento; responding to the explicit four-category B2 upload request for meter_20260916.jpeg.",
+    "canonical_filename": "meter_20260916.jpeg",
+    "destination": {"remote": "b2", "url": "s3://my-jarvis-artifacts/jarvis-dvc"},
+    "artifacts": ["windows", "windows_canonical", "sections", "sections_labeled"],
+    "upload_status": "pushed",
+    "push_result": "10 files pushed",
+    "target_specific_cloud_status": "Cache and remote 'b2' are in sync.",
+    "scope_check": "Compared each directory cache manifest with the pre-ingestion snapshot; only meter_20260916 derivatives changed."
+  },
+  "manual_digit_export": {
+    "path": "assets/labels_my-project-name_2026-09-17-10-48-15.zip",
+    "sha256": "5a235c27617d783adf93849952ede1b9b9c778d5346ff65b34c516283fc9de81",
+    "member": "meter_20260916.txt",
+    "raw_yolo": "2 0.360119 0.541144 0.095834 0.049871\n3 0.360119 0.484234 0.095834 0.052687\n5 0.360119 0.426922 0.095834 0.054698\n8 0.357386 0.368203 0.101301 0.054698\n",
+    "annotated_image_sha256": "5ae47b2ba2fd691b0c39806933f980113667e472c007e15186014bbc0820f4cb",
+    "image_width": 3024,
+    "image_height": 4032,
+    "exif_orientation": 1,
+    "approved_direction_rotation": 90
+  },
+  "digit_box_validation": {
+    "status": "validated",
+    "reading": "2358",
+    "reviewed_boxes": 4,
+    "annotation_source": "human-makesense",
+    "numeric_equivalence": "passed for export, eight-decimal manifest and six-decimal YOLO labels",
+    "agent_visual_qa": "passed; all four complete apertures covered, including corrected 2 and 8",
+    "preview": "output/full-image-digit-review/previews/crops/meter_20260916.jpg",
+    "source_identity_and_orientation": "unchanged",
+    "cv_fold": 4,
+    "unrelated_annotations_folds_exclusions": "unchanged from pre-import snapshot",
+    "backend_tests": "60 passed",
+    "active_dataset_images": 46,
+    "active_reviewed_boxes": 184,
+    "active_pending_boxes": 0
+  },
+  "dvc_upload_authorization": {
+    "status": "authorized",
+    "authorized_by": "user",
+    "authorized_on": "2026-09-16",
+    "destination": {
+      "remote": "b2",
+      "url": "s3://my-jarvis-artifacts/jarvis-dvc"
+    },
+    "artifacts": [
+      "assets/meter_20260916.jpeg",
+      "backend/data/roi_dataset/images"
+    ],
+    "excludes": [
+      "digit datasets",
+      "training",
+      "models",
+      "Git commit",
+      "Git push"
+    ],
+    "upload_status": "pushed",
+    "target_specific_status": "Data and pipelines are up to date."
+  }
+}
