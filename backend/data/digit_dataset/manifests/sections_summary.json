@@ -1,24 +1,24 @@
 {
-  "windows_processed": 47,
-  "sections_exported": 188,
+  "windows_processed": 49,
+  "sections_exported": 196,
   "windows_skipped": 0,
   "section_count": 4,
   "splits": {
-    "train": 46,
+    "train": 48,
     "val": 0,
     "test": 1
   },
   "source_axis_counts": {
     "x": 3,
-    "y": 44
+    "y": 46
   },
   "canonical_axis_counts": {
-    "x": 47,
+    "x": 49,
     "y": 0
   },
   "applied_rotation_counts": {
     "0": 1,
-    "90": 43,
+    "90": 45,
     "180": 2,
     "270": 1
   },
