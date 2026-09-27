@@ -8,4 +8,5 @@ This folder holds focused documentation that would make the top-level `README.md
 - [Backend API](./backend-api.md): Local FastAPI endpoints, request/response contract, and runtime configuration.
 - [OCR Tuning Playbook](./ocr-tuning-playbook.md): Iteration workflow for improving OCR quality, including per-cell classifier selection and whole-strip shadow-reader evaluation.
 - [OCR Runtime Failure Debug Brief](./ocr-runtime-failure-debug-brief.md): Dated investigation record plus the current runtime-failure baseline and next debugging guardrails.
+- [September 2026 Digit Retraining](./full-image-digit-retraining-20260914.md): Completed five-fold evaluation, historical comparisons, confidence calibration, and retained evidence.
 - [Deferred Training Thermal Control](./training-thermal-control-proposal.md): Proposed shared launcher and thermal pause/resume policy; not implemented.
