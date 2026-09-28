@@ -127,28 +127,44 @@ python train_strip_digit_reader_23xx.py --device cpu
 
 ### Thermal monitoring for long macOS training
 
-From the repository root, start the thermal monitor in a separate terminal:
+Use the shared launcher for a long training command. It authenticates for
+`powermetrics` in the terminal, waits for the first reported thermal-pressure
+level (normally up to one 30-second sample), and then starts training under
+`caffeinate`:
 
 ```bash
-scripts/monitor-thermal.sh
+python3 scripts/train-with-thermal.py -- backend/.venv/bin/python backend/train_full_image_digit_detector.py --fold 0 --device mps
 ```
 
-It samples `powermetrics` thermal pressure every 30 seconds. The terminal shows
-the first sample to confirm monitoring, then only samples whose pressure is
-not `Nominal`. Add `-v` or `--verbose` to display every sample:
+Pass the exact training or resume command after `--`; the launcher does not
+change its arguments or checkpoints. It prints a new per-run log directory under
+`backend/runs/training-launcher/`. That directory contains `training.log`,
+`thermal-monitor.log`, `thermal-events.log` for non-nominal samples, and
+`status.json`. Follow `training.log` to see progress. Press `Ctrl-C` in the
+launcher's terminal to stop training and monitoring. A failed monitor stops
+training too; a failed authentication prevents training from starting.
+Shutdown waits for the owned process groups, including workers whose parent
+has already exited. If cleanup fails, the launcher exits unsuccessfully and
+retains the affected group IDs in `status.json` for inspection. Commands must
+keep their workers in these groups; detached services are outside this lifecycle.
+
+To run explicitly without thermal monitoring, use `--without-monitor` before
+`--`. This still starts training under `caffeinate`. The launcher prevents idle
+sleep while active; it cannot keep a closed MacBook running or guarantee safe
+hardware temperatures. Automatic thermal pause/resume is a separate proposal in
+[docs/training-thermal-control-proposal.md](docs/training-thermal-control-proposal.md).
+
+The existing monitor also remains available by itself:
 
 ```bash
-scripts/monitor-thermal.sh --verbose
+scripts/monitor-thermal.sh [--verbose] [log-file]
 ```
 
-Complete sample blocks are appended to a timestamped log under `backend/runs/thermal/`
-only when `Current pressure level` is not `Nominal`; nominal samples and
-machine metadata stay out of the log. Press `Ctrl-C` to stop it. To append to a
-different file, pass its path (optionally together with `-v` or `--verbose`):
-
-```bash
-scripts/monitor-thermal.sh /path/to/thermal-events.log
-```
+By default, it shows the first sample and any non-nominal samples in the
+terminal, recording only complete non-nominal samples in a timestamped log under
+`backend/runs/thermal/`. `--verbose` shows every sample. The launcher's private
+`--no-prompt` monitor option uses the authentication obtained before training;
+standalone use still prompts for `sudo` normally.
 
 ## Artifact Retention
 

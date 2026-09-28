@@ -71,6 +71,31 @@ main "$@"
             self.assertIn(sample(2, "Heavy"), result.stdout)
             self.assertEqual(log.read_text(), sample(2, "Heavy"))
 
+  @unittest.skipUnless(sys.platform == "darwin", "macOS command wrapper")
+  def test_no_prompt_uses_cached_authentication(self):
+    with tempfile.TemporaryDirectory() as directory:
+      log = Path(directory) / "events.log"
+      result = subprocess.run(
+        ["/bin/bash", "-c", '''
+source "$1"
+shift
+sudo() {
+  printf '%s\n' "$*" >&2
+  if [[ "$1" == "-n" && "$2" == "-v" ]]; then return 0; fi
+  if [[ "$1" == "-n" && "$2" == "/usr/bin/powermetrics" ]]; then cat; return 0; fi
+  return 99
+}
+main "$@"
+''', "test", str(SCRIPT), "--no-prompt", str(log)],
+        input=sample(0, "Nominal") + sample(1, "Heavy"),
+        capture_output=True, text=True, timeout=5,
+      )
+      self.assertEqual(result.returncode, 0, result.stderr)
+      self.assertIn("-n -v", result.stderr)
+      self.assertIn("-n /usr/bin/powermetrics", result.stderr)
+      self.assertEqual(log.read_text(), sample(1, "Heavy"))
+
+
 
 if __name__ == "__main__":
   unittest.main()

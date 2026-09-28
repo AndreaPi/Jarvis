@@ -1,18 +1,22 @@
 # Deferred proposal: training and thermal monitoring
 
-Recorded September 16, 2026 at the user's request. Not implemented; thresholds
-below are proposals to validate, not active settings or Apple-prescribed timings.
+Recorded September 16, 2026 at the user's request. The shared launcher was
+implemented on the training-thermal-monitor branch on September 28. Automatic
+thermal pause/resume below remains a proposal; its thresholds are not active
+settings or Apple-prescribed timings.
 
 ## Shared launcher
 
-Use one launcher for training/resume and the existing
+Implemented as `scripts/train-with-thermal.py`. It combines one training command
+with the existing
 `scripts/monitor-thermal.sh`, including a complete multi-fold experiment.
-Authenticate for `powermetrics` and verify monitoring before training starts.
-Keep thermal evidence with the experiment logs. Manage `caffeinate` and child
-processes together; clean them up on completion, interruption, and failure.
-Do not silently start without monitoring: require an explicit opt-out if the
-logger cannot start, and visibly report monitoring failures during the run.
-Preserve the logger's event-only disk output and optional verbose display.
+It authenticates for `powermetrics` and waits for a reported thermal-pressure
+level before training starts. It keeps thermal evidence and training output in a
+per-run log directory, runs training under `caffeinate`, and stops its children
+on completion, interruption, or monitor failure. `--without-monitor` is the
+explicit opt-out. The monitor's event-only log is preserved; monitor terminal
+output has its own log. See [README](../README.md#thermal-monitoring-for-long-macos-training)
+for usage and limits.
 
 ## Optional thermal pause/resume
 
@@ -33,7 +37,7 @@ Specify behavior for missing/stale telemetry and process failures before enablin
 unattended control. Verify optimizer/scheduler/early-stopping state, checkpoints,
 shutdown, and resume behavior. Log pause/resume reasons and timestamps.
 
-Implement the shared launcher first; add and validate thermal control separately.
+Implement and validate thermal control separately from the shared launcher.
 This supplements macOS thermal management and is not a hardware-safety guarantee.
 
 Reference: [Apple guidance on thermal-state changes](https://developer.apple.com/library/archive/documentation/Performance/Conceptual/power_efficiency_guidelines_osx/RespondToThermalStateChanges.html).
