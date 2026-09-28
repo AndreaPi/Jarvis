@@ -151,8 +151,40 @@ keep their workers in these groups; detached services are outside this lifecycle
 To run explicitly without thermal monitoring, use `--without-monitor` before
 `--`. This still starts training under `caffeinate`. The launcher prevents idle
 sleep while active; it cannot keep a closed MacBook running or guarantee safe
-hardware temperatures. Automatic thermal pause/resume is a separate proposal in
-[docs/training-thermal-control-proposal.md](docs/training-thermal-control-proposal.md).
+hardware temperatures.
+
+Add `--auto-pause` before `--` to enable cooperative pauses for the five
+`backend/train_*.py` trainers (full-image digits, ROI, classifier, and both strip
+readers), using a direct Python invocation from this checkout:
+
+```bash
+python3 scripts/train-with-thermal.py --auto-pause -- backend/.venv/bin/python backend/train_full_image_digit_detector.py --fold 0 --device mps
+```
+
+The controller reads macOS `ProcessInfo.thermalState` every second. It requests
+a pause after 60 seconds of `serious`, immediately on `critical`, or when its
+telemetry is unavailable. The trainer finishes queued accelerator work and waits
+at the next batch boundary, including during validation. It resumes only after
+120 continuous seconds of `nominal`. Model, gradients, optimizer, scheduler and
+early-stopping state stay in memory; the pause does not rewrite checkpoints.
+
+A third pause within 30 minutes requires attention and remains paused. Inspect
+the cause and, when ready, run `touch <run-log-directory>/thermal-resume.request`;
+this permits resume only after the same normal-state cooling period. These
+thresholds are project defaults, not Apple-prescribed safety limits.
+
+`thermal-control-events.jsonl` records state changes and decisions;
+`thermal-clients/<pid>.json` confirms when a trainer actually reaches a pause.
+A control heartbeat older than 10 seconds, or a missing/invalid control file,
+blocks the next batch. Loss of the powermetrics logger still stops the run as
+in monitor-only mode. Ctrl-C also works while paused; restarting a stopped
+process still requires the trainer's normal checkpoint-resume procedure.
+
+Automatic control supports single-process training. For multi-fold driver
+scripts, wrap each direct training subprocess separately; unsupported commands
+are rejected before startup. It cannot be combined with `--without-monitor`.
+Without `--auto-pause`, the launcher's original monitor-only behavior is unchanged.
+See [thermal control details](docs/training-thermal-control-proposal.md).
 
 The existing monitor also remains available by itself:
 

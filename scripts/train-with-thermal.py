@@ -15,6 +15,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from thermal_control import ThermalController
+
 ROOT = Path(__file__).resolve().parents[1]
 MONITOR = ROOT / "scripts/monitor-thermal.sh"
 CAFFEINATE = "/usr/bin/caffeinate"
@@ -123,8 +125,24 @@ def wait_for_sample(
     raise LauncherError("Thermal monitor failed during startup; training was not started.")
 
 
-def run_training(directory: Path, command: list[str], without_monitor: bool, timeout: float) -> int:
+def validate_controlled_command(command: list[str]) -> None:
+  supported = {ROOT / "backend" / name for name in (
+    "train_full_image_digit_detector.py", "train_roi.py", "train_digit_classifier.py",
+    "train_strip_digit_reader.py", "train_strip_digit_reader_23xx.py",
+  )}
+  arguments = command[1:]
+  while arguments and arguments[0] in ("-u", "-B"):
+    arguments = arguments[1:]
+  if (not command or not Path(command[0]).name.startswith("python") or not arguments or
+      (ROOT / arguments[0]).resolve() not in supported):
+    raise LauncherError("--auto-pause requires a direct Python command for a supported backend/train_*.py trainer; "
+                        "wrap each training command separately in multi-fold drivers.")
+
+
+def run_training(directory: Path, command: list[str], without_monitor: bool, timeout: float,
+                 auto_pause: bool = False) -> int:
   monitor: subprocess.Popen[str] | None = None
+  controller = None
   children: dict[str, subprocess.Popen[str]] = {}
   monitor_log = None
   collector: threading.Thread | None = None
@@ -140,6 +158,10 @@ def run_training(directory: Path, command: list[str], without_monitor: bool, tim
   signal.signal(signal.SIGTERM, interrupted)
   try:
     validate_platform()
+    if auto_pause:
+      validate_controlled_command(command)
+    if auto_pause and without_monitor:
+      raise LauncherError("--auto-pause requires thermal monitoring.")
     if not without_monitor:
       print("Authenticating thermal monitor before training...", flush=True)
       authenticate()
@@ -159,7 +181,9 @@ def run_training(directory: Path, command: list[str], without_monitor: bool, tim
                    training_pid=None, thermal_monitor="required")
       wait_for_sample(monitor, ready, failed, timeout)
       print("Thermal sample received; starting training.", flush=True)
-      exit_code = _run_command(directory, command, monitor, failed, children)
+      if auto_pause:
+        controller = ThermalController(directory)
+      exit_code = _run_command(directory, command, monitor, failed, children, controller)
     else:
       print("Thermal monitoring explicitly disabled for this run.", flush=True)
       exit_code = _run_command(directory, command, None, failed, children)
@@ -169,7 +193,7 @@ def run_training(directory: Path, command: list[str], without_monitor: bool, tim
     details = str(error)
     print(f"Training launcher: {error}", file=sys.stderr)
     return 1
-  except (OSError, ValueError) as error:
+  except (OSError, ValueError, RuntimeError) as error:
     details = str(error)
     print(f"Training launcher: {error}", file=sys.stderr)
     return 1
@@ -183,6 +207,11 @@ def run_training(directory: Path, command: list[str], without_monitor: bool, tim
     old_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     cleanup_errors = []
+    if controller is not None:
+      try:
+        controller.close()
+      except OSError as error:
+        cleanup_errors.append(str(error))
     remaining = {}
     for label, process in (("training", children.get("training")), ("thermal monitor", monitor)):
       try:
@@ -218,11 +247,18 @@ def run_training(directory: Path, command: list[str], without_monitor: bool, tim
 
 
 def _run_command(directory: Path, command: list[str], monitor: subprocess.Popen[str] | None,
-                 failed: threading.Event, children: dict[str, subprocess.Popen[str]]) -> int:
+                 failed: threading.Event, children: dict[str, subprocess.Popen[str]],
+                 controller: ThermalController | None = None) -> int:
+  environment = os.environ.copy()
+  # Do not accidentally inherit another run's cooperative control channel.
+  environment.pop("JARVIS_THERMAL_CONTROL", None)
+  if controller is not None:
+    environment["JARVIS_THERMAL_CONTROL"] = str(controller.path)
+  last_control_update = None
   with (directory / "training.log").open("w") as training_log:
     training = subprocess.Popen(
       [CAFFEINATE, "-i", *command], cwd=ROOT,
-      stdout=training_log, stderr=subprocess.STDOUT, start_new_session=True,
+      stdout=training_log, stderr=subprocess.STDOUT, start_new_session=True, env=environment,
     )
     children["training"] = training
     write_status(directory, phase="training", training_pid=training.pid,
@@ -230,6 +266,14 @@ def _run_command(directory: Path, command: list[str], monitor: subprocess.Popen[
                  thermal_monitor="disabled" if monitor is None else "required")
     print(f"Training started (PID {training.pid}).", flush=True)
     while training.poll() is None:
+      if controller is not None:
+        snapshot = controller.tick()
+        controller.check_participant()
+        if snapshot["updated_monotonic"] != last_control_update:
+          write_status(directory, phase="pause_requested" if snapshot["action"] == "pause" else "training",
+                       training_pid=training.pid, monitor_pid=monitor.pid if monitor else None,
+                       thermal_monitor="required", thermal_control=snapshot)
+          last_control_update = snapshot["updated_monotonic"]
       if monitor is not None and (failed.is_set() or monitor.poll() is not None):
         print("Thermal monitor stopped; stopping training.", file=sys.stderr)
         stop_process(training, "training")
@@ -237,6 +281,8 @@ def _run_command(directory: Path, command: list[str], monitor: subprocess.Popen[
       time.sleep(0.2)
     if monitor is not None and (failed.is_set() or monitor.poll() is not None):
       raise LauncherError("Thermal monitor failed while training finished.")
+    if controller is not None and training.returncode == 0:
+      controller.check_participant(finished=True)
     return training.returncode
 
 
@@ -246,6 +292,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                       help="New per-run log directory (default: backend/runs/training-launcher/<timestamp>).")
   parser.add_argument("--without-monitor", action="store_true",
                       help="Explicitly run without powermetrics when monitoring is unavailable.")
+  parser.add_argument("--auto-pause", action="store_true",
+                      help="Cooperatively pause instrumented trainers using macOS thermal state.")
   parser.add_argument("--monitor-timeout", type=float, default=DEFAULT_READY_TIMEOUT,
                       help="Seconds to wait for a complete first thermal sample (default: 60).")
   parser.add_argument("command", nargs=argparse.REMAINDER,
@@ -257,6 +305,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.error("Provide a training command after --.")
   if not math.isfinite(args.monitor_timeout) or args.monitor_timeout <= 0:
     parser.error("--monitor-timeout must be finite and positive.")
+  if args.auto_pause and args.without_monitor:
+    parser.error("--auto-pause cannot be combined with --without-monitor.")
   return args
 
 
@@ -272,7 +322,7 @@ def main(argv: list[str] | None = None) -> int:
   except OSError as error:
     print(f"Training launcher: Cannot create log directory: {error}", file=sys.stderr)
     return 2
-  return run_training(directory, args.command, args.without_monitor, args.monitor_timeout)
+  return run_training(directory, args.command, args.without_monitor, args.monitor_timeout, args.auto_pause)
 
 
 if __name__ == "__main__":
