@@ -573,3 +573,8 @@ Training can also be pinned with `--device`:
 ```bash
 python train_roi.py --data data/roi_dataset.yaml --base-model yolov8n.pt --device cpu --rotation-angles 90,180,270,360 --heavy-augment
 ```
+
+For long training on macOS, run the same command through the repository-root
+`python3 scripts/train-with-thermal.py -- <training-command>` launcher. It
+starts the thermal monitor and `caffeinate`, waits for a pressure sample before
+training, and writes per-run logs. See the root README for usage.
