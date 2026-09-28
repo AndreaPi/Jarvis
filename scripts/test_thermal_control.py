@@ -58,10 +58,10 @@ class ThermalControlTests(unittest.TestCase):
         monitor = [sys.executable, "-u", "-c",
                    "import time; print('Current pressure level: Nominal',flush=True); time.sleep(" +
                    (".5" if mode == "monitor_failure" else "30") + ")"]
-        def controller(run):
+        def controller(run, **kwargs):
           start = time.monotonic()
           return ThermalController(run, source=lambda: "critical" if mode == "monitor_failure" or time.monotonic()-start < .5 else "nominal",
-                                   policy=ThermalPolicy(cool_seconds=0))
+                                   policy=ThermalPolicy(cool_seconds=0), **kwargs)
         command = [sys.executable, "-u", "-c",
                    "from backend.thermal_pause import thermal_checkpoint; thermal_checkpoint(); print('completed workload')"
                    if instrumented else "print('unsupported workload')"]

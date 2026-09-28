@@ -11,6 +11,37 @@ Training, monitor output and non-nominal events have separate per-run logs.
 Completion, interruption and logger failure trigger process-group cleanup.
 `--without-monitor` is the explicit opt-out for this first phase.
 
+## Live terminal output
+
+Training stdout/stderr go directly to `training.log`. A separate reader tails
+that file and feeds bounded display queues (128 chunks of up to 4096 characters
+and 32 notices of up to 8192 characters). Producers never wait for queue capacity;
+overflow replaces older visual updates, while complete log files remain intact.
+A dedicated daemon writer owns terminal output. Raw fd writes avoid holding
+Python stdout's buffered lock if the terminal blocks during interpreter shutdown.
+Display shutdown uses bounded joins. Neither the controller, monitor collector,
+training subprocess, nor process cleanup writes directly to the terminal.
+Authentication still happens interactively before training starts.
+
+`--quiet` hides the training stream but retains lifecycle/thermal notices. The
+launcher enables unbuffered Python output. Progress carriage returns are supported;
+notices start on a separate line and cursor-up sequences are suppressed so the
+next progress update cannot overwrite an alert. Full-screen terminal apps and
+multi-row dashboards are not supported.
+
+Powermetrics pressure notices show the first sample and each changed pressure,
+including recovery to Nominal. The monitor is read in verbose mode internally;
+`thermal-events.log` still retains only non-nominal events. With `--auto-pause`,
+Foundation state/decision changes and observed client pause/resume changes are
+also displayed, each with its source and timestamp. Repeated unchanged samples
+are not echoed. Client changes are retained in `thermal-control-events.jsonl`.
+
+Tests deliberately block the terminal while checking continuing heartbeats,
+a training client's pause acknowledgment, complete log capture, and bounded
+shutdown. A separate unconsumed OS-pipe test verifies interpreter exit as well.
+Filesystem stalls are outside this terminal-isolation guarantee; the existing
+stale-heartbeat behavior still applies.
+
 ## Opt-in thermal pause/resume
 
 Use `--auto-pause` with a direct Python invocation of one of the five instrumented

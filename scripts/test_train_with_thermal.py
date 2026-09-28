@@ -109,7 +109,7 @@ class TrainingLauncherTests(unittest.TestCase):
     directory = self.root / "cleanup-failed"
     directory.mkdir()
     labels = []
-    def fail_first(_process, label):
+    def fail_first(_process, label, notice=None):
       labels.append(label)
       if label == "training":
         raise launcher.LauncherError("training cleanup failed")
@@ -129,10 +129,10 @@ class TrainingLauncherTests(unittest.TestCase):
     timer = threading.Timer(.5, lambda: os.kill(os.getpid(), signal.SIGTERM))
     timer.start()
     original_stop = launcher.stop_process
-    def repeated_interrupt(process, label):
+    def repeated_interrupt(process, label, notice=None):
       os.kill(os.getpid(), signal.SIGTERM)
       os.kill(os.getpid(), signal.SIGINT)
-      original_stop(process, label)
+      original_stop(process, label, notice)
     try:
       with patch.object(launcher, "stop_process", side_effect=repeated_interrupt):
         result = launcher.run_training(
