@@ -12,6 +12,11 @@ from collections import Counter
 from importlib import metadata
 from pathlib import Path
 
+try:
+  from .thermal_pause import thermal_checkpoint, install_yolo_thermal_callbacks
+except ImportError:
+  from thermal_pause import thermal_checkpoint, install_yolo_thermal_callbacks
+
 import yaml
 from PIL import Image
 
@@ -908,6 +913,7 @@ def validate_resume_checkpoint(
 
 def main() -> None:
   args = parse_args()
+  thermal_checkpoint()
   base_dir = Path(__file__).resolve().parent
   annotations_path = resolve_path(base_dir, args.annotations)
   folds_path = resolve_path(base_dir, args.folds)
@@ -1047,6 +1053,7 @@ def main() -> None:
         "on_train_start",
         lambda trainer: restore_early_stopping_state(trainer, stopping_state),
       )
+    install_yolo_thermal_callbacks(model)
     model.train(**train_kwargs)
 
     trainer = getattr(model, "trainer", None)

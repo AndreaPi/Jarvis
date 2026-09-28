@@ -5,6 +5,11 @@ import shutil
 import tempfile
 from pathlib import Path
 
+try:
+  from .thermal_pause import thermal_checkpoint, install_yolo_thermal_callbacks
+except ImportError:
+  from thermal_pause import thermal_checkpoint, install_yolo_thermal_callbacks
+
 import yaml
 
 SUPPORTED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
@@ -287,6 +292,7 @@ def validate_augmentation_policy(
 
 def main() -> None:
   args = parse_args()
+  thermal_checkpoint()
   base_dir = Path(__file__).resolve().parent
   data_path = resolve_path(base_dir, args.data)
   project_path = resolve_path(base_dir, args.project)
@@ -324,6 +330,7 @@ def main() -> None:
     if args.heavy_augment:
       print(f"Heavy online augmentation enabled: {train_kwargs}")
 
+    install_yolo_thermal_callbacks(model)
     model.train(
       data=str(train_data_path),
       epochs=args.epochs,

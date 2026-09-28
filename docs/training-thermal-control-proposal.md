@@ -1,43 +1,75 @@
-# Deferred proposal: training and thermal monitoring
+# Training thermal monitoring and cooperative pauses
 
-Recorded September 16, 2026 at the user's request. The shared launcher was
-implemented on the training-thermal-monitor branch on September 28. Automatic
-thermal pause/resume below remains a proposal; its thresholds are not active
-settings or Apple-prescribed timings.
+Recorded September 16, 2026. Both phases are implemented on the
+`codex/training-thermal-monitor` branch as of September 28.
 
 ## Shared launcher
 
-Implemented as `scripts/train-with-thermal.py`. It combines one training command
-with the existing
-`scripts/monitor-thermal.sh`, including a complete multi-fold experiment.
-It authenticates for `powermetrics` and waits for a reported thermal-pressure
-level before training starts. It keeps thermal evidence and training output in a
-per-run log directory, runs training under `caffeinate`, and stops its children
-on completion, interruption, or monitor failure. `--without-monitor` is the
-explicit opt-out. The monitor's event-only log is preserved; monitor terminal
-output has its own log. See [README](../README.md#thermal-monitoring-for-long-macos-training)
-for usage and limits.
+`scripts/train-with-thermal.py` authenticates for `powermetrics` in the user's
+terminal, waits for a real pressure sample, and runs training with `caffeinate`.
+Training, monitor output and non-nominal events have separate per-run logs.
+Completion, interruption and logger failure trigger process-group cleanup.
+`--without-monitor` is the explicit opt-out for this first phase.
 
-## Optional thermal pause/resume
+## Opt-in thermal pause/resume
 
-Use the official macOS thermal state for control. Do not assume that
-`powermetrics` labels map directly to `ProcessInfo.ThermalState` without checking.
-Initial policy to validate on this Mac:
+Use `--auto-pause` with a direct Python invocation of one of the five instrumented
+`backend/train_*.py` scripts. The launcher rejects unsupported commands before
+starting them. Multi-fold drivers must wrap each training subprocess separately.
+No change is made to an already-running experiment or to its frozen provenance.
 
-- Mild elevation: log and continue.
-- Sustained `serious` for about one minute: request a controlled training pause.
-- `critical`: request a pause immediately.
-- `nominal` continuously for two minutes: permit automatic resume.
-- Repeated short pause/resume cycles: remain paused and request user attention.
+The controller polls the official `NSProcessInfo.thermalState` once per second
+via Foundation, without sudo or an additional Python dependency. The separate
+powermetrics event logger still runs. Its pressure labels are not mapped to
+Foundation's `nominal`, `fair`, `serious`, and `critical` states.
 
-Pause cooperatively between batches while retaining training state and keeping
-monitoring active. An immediate request does not mean zero-latency GPU stopping.
-Avoid freezing the entire process group, which would also stop the monitor.
-Specify behavior for missing/stale telemetry and process failures before enabling
-unattended control. Verify optimizer/scheduler/early-stopping state, checkpoints,
-shutdown, and resume behavior. Log pause/resume reasons and timestamps.
+Default policy:
 
-Implement and validate thermal control separately from the shared launcher.
-This supplements macOS thermal management and is not a hardware-safety guarantee.
+- `fair`: continue and record the state change.
+- `serious` continuously for 60 seconds: request a pause.
+- `critical`: request a pause at the next poll.
+- Missing/invalid native telemetry: request a pause.
+- After any pause, require 120 continuous seconds of `nominal` to resume.
+- Three pauses within 30 minutes: latch a hold requiring human attention.
+  `touch <run-log-directory>/thermal-resume.request` authorizes release, but
+  never bypasses the normal-state cooling period.
 
-Reference: [Apple guidance on thermal-state changes](https://developer.apple.com/library/archive/documentation/Performance/Conceptual/power_efficiency_guidelines_osx/RespondToThermalStateChanges.html).
+These timings are Jarvis policy, not Apple-prescribed hardware safety limits.
+Pauses take effect at a cooperative batch boundary, after synchronizing queued
+MPS/CUDA work. Current batch/preprocessing work and bounded data-loader prefetch
+can finish first. Validation is covered too. Monitor and caffeinate remain active;
+no process group is frozen. CPU/MPS single-process training is the supported path.
+
+Weights, accumulated gradients, optimizer, scheduler, RNG and early-stopping
+state remain in memory. Checkpoints are not rewritten by a thermal pause.
+Ultralytics' wall-clock training budget excludes pause time; custom PyTorch
+training reports retain their elapsed wall time including cooling. On process
+termination or power loss, the normal saved-checkpoint resume rules still apply.
+
+## Evidence and failures
+
+`thermal-control.json` publishes an atomic decision and heartbeat. The shared
+OS monotonic clock works across macOS system Python 3.9 and newer training
+interpreters. A trainer pauses if the heartbeat is older than 10 seconds or the
+file is unreadable/invalid. Unknown native states and polling gaps reset the
+cooling interval. A stalled/dead launcher therefore cannot silently authorize
+further batches; it must recover and publish a fresh decision or the user must
+stop the remaining trainer. Failure of the powermetrics logger retains the
+first-phase behavior: stop the training process group.
+
+`status.json` reports a pause request, while `thermal-clients/<pid>.json` records
+whether the trainer has reached a paused boundary. State/decision changes are
+retained in `thermal-control-events.jsonl`; pause/resume messages appear in
+`training.log`. No registered client within 120 seconds, or successful command
+completion without registration, is reported as failure.
+
+Tests replay severe states without heating the Mac, exercise repeated cycles
+and stale telemetry, verify interruption while paused, and compare deterministic
+CPU optimizer steps with and without a pause. They check unchanged weights,
+accumulated gradients, optimizer, scheduler, RNG, early-stopping metadata and
+checkpoint bytes across the pause, plus identical continuation. The native
+nominal-state reader is also checked on macOS; simulated critical states are
+not evidence of a live overheating event or hardware protection certification.
+
+See [launcher usage](../README.md#thermal-monitoring-for-long-macos-training).
+Reference: [Apple ProcessInfo thermal states](https://developer.apple.com/documentation/foundation/processinfo/thermalstate-swift.enum).
