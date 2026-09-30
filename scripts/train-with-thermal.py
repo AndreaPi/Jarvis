@@ -17,6 +17,7 @@ from pathlib import Path
 
 from thermal_control import ThermalController
 from training_console import TrainingConsole
+from training_auth import AuthenticationError, authenticate_training
 
 ROOT = Path(__file__).resolve().parents[1]
 MONITOR = ROOT / "scripts/monitor-thermal.sh"
@@ -47,10 +48,9 @@ def monitor_command(events: Path) -> list[str]:
 
 def authenticate() -> None:
   try:
-    subprocess.run(["sudo", "-v"], check=True)
-    subprocess.run(["sudo", "-n", "-v"], check=True)
-  except (OSError, subprocess.CalledProcessError) as error:
-    raise LauncherError("Thermal monitoring authentication failed; training was not started.") from error
+    authenticate_training()
+  except AuthenticationError as error:
+    raise LauncherError(str(error)) from error
 
 
 def group_alive(process: subprocess.Popen[str]) -> bool:
@@ -172,6 +172,8 @@ def run_training(directory: Path, command: list[str], without_monitor: bool, tim
       raise LauncherError("--auto-pause requires thermal monitoring.")
     if not without_monitor:
       console.notice("Authenticating thermal monitor before training...")
+      write_status(directory, phase="authenticating", training_pid=None,
+                   monitor_pid=None, thermal_monitor="required")
       authenticate()
       monitor_log = (directory / "thermal-monitor.log").open("w", buffering=1)
       monitor = subprocess.Popen(

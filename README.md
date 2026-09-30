@@ -164,6 +164,30 @@ has already exited. If cleanup fails, the launcher exits unsuccessfully and
 retains the affected group IDs in `status.json` for inspection. Commands must
 keep their workers in these groups; detached services are outside this lifecycle.
 
+For a multi-fold Python coordinator, authenticate once for the whole queue:
+
+```bash
+backend/.venv/bin/python scripts/run-training-queue.py -- path/to/driver.py [driver arguments]
+```
+
+Pass the coordinator file after `--`, without a second Python executable. It
+runs in the same process and working directory, preserving its own locking and
+child-cleanup behavior. The coordinator must wait for its children, stop them on
+interruption, and launch each training via the updated `train-with-thermal.py`.
+Both scripts must include this queue-authentication update. Child environments
+must inherit `JARVIS_TRAINING_AUTH_SESSION` (copying `os.environ` is sufficient).
+
+The queue renews sudo noninteractively every 60 seconds, including evaluation
+gaps; `--renew-interval` changes that interval for shorter local sudo timeouts.
+Each managed fold checks authentication without prompting. A failed renewal
+blocks subsequent folds; it does not interrupt an already-running monitored
+training. Queue exit also reports renewal failure. `authentication.json` under
+`backend/runs/training-queue/<timestamp>/` records authentication status;
+`--log-dir` selects a new directory. Renewal stops when the queue exits, without
+storing passwords, modifying sudo settings, or invalidating other sudo sessions.
+A stale or missing session fails closed. This does not update an already-running
+queue: use the wrapper at its next planned start/resume, with the updated launcher.
+
 To run explicitly without thermal monitoring, use `--without-monitor` before
 `--`. This still starts training under `caffeinate`. The launcher prevents idle
 sleep while active; it cannot keep a closed MacBook running or guarantee safe

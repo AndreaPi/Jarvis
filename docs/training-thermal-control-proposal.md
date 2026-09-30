@@ -11,6 +11,41 @@ Training, monitor output and non-nominal events have separate per-run logs.
 Completion, interruption and logger failure trigger process-group cleanup.
 `--without-monitor` is the explicit opt-out for this first phase.
 
+## Authentication across a training queue
+
+`scripts/run-training-queue.py -- <driver.py> [arguments]` runs a Python
+coordinator in the same interpreter/process after one initial `sudo -v`.
+Use the Python interpreter needed by that driver and keep its usual working
+directory. `runpy` preserves the coordinator's main entry point, PID, arguments,
+locks and signal/child-cleanup ownership; it does not add a parent process that
+might be mistaken for a second coordinator. The driver must handle child cleanup
+on failure/signals and wait for all jobs before returning.
+
+`scripts/training_auth.py` maintains a queue-scoped session. Its background
+worker runs `sudo -n -v` every 60 seconds through training and evaluation gaps,
+with a 10-second subprocess timeout and no terminal input/output. The interval
+is configurable; sudo policies that forbid reusable credentials cannot be made
+unattended by this mechanism. Shutdown stops renewal and waits at most 12 seconds
+for an in-flight check. It neither stores passwords nor changes sudoers nor runs
+`sudo -k` (which could invalidate the user's other work).
+
+The inherited `JARVIS_TRAINING_AUTH_SESSION` points to atomic
+`authentication.json` state. Updated per-fold launchers reject failed, closed,
+missing, stale or dead-owner sessions, then validate with `sudo -n -v` before
+starting a monitor. They never fall back to an interactive prompt in a queue.
+Heartbeat freshness tolerates one renewal interval plus the check timeout and
+five seconds; it is a liveness check, not a credential or a security boundary.
+If renewal fails, the failure is sticky: an existing monitored training can
+finish, but another fold cannot start, even if the sudo cache later recovers.
+The wrapper also exits unsuccessfully if the driver returns after renewal failed.
+State is available in the queue's authentication log directory independently of
+terminal display. Drivers must inherit the session environment when launching
+children. Both wrapper and per-fold launcher must be updated before use.
+
+This fixes the between-fold password wait; it does not alter the frozen driver
+or a currently running queue. Start/resume with the wrapper after the normal
+safe stop. See [queue invocation](../README.md#thermal-monitoring-for-long-macos-training).
+
 ## Live terminal output
 
 Training stdout/stderr go directly to `training.log`. A separate reader tails
@@ -21,7 +56,8 @@ A dedicated daemon writer owns terminal output. Raw fd writes avoid holding
 Python stdout's buffered lock if the terminal blocks during interpreter shutdown.
 Display shutdown uses bounded joins. Neither the controller, monitor collector,
 training subprocess, nor process cleanup writes directly to the terminal.
-Authentication still happens interactively before training starts.
+Standalone authentication happens interactively before training starts; managed
+queues authenticate once before their coordinator starts.
 
 `--quiet` hides the training stream but retains lifecycle/thermal notices. The
 launcher enables unbuffered Python output. Progress carriage returns are supported;
