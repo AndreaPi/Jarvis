@@ -124,7 +124,7 @@ cache.write_text(str(time.time()))
 ''')
     fake.chmod(0o755)
     driver = self.root / "driver.py"
-    driver.write_text('''import os,sys,time
+    driver.write_text('''import os,signal,subprocess,sys,time
 from pathlib import Path
 from training_auth import authenticate_training
 root=Path(os.environ['AUTH_FIXTURE'])
@@ -133,21 +133,33 @@ assert sys.argv[1:]==['fixture-arg']
 authenticate_training()
 time.sleep(.9)
 authenticate_training()
-(root/'second-fold').touch()
 if os.environ.get('WAIT_FOR_SIGNAL'):
+  child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'],start_new_session=True)
+  (root/'child-pid').write_text(str(child.pid))
   try:
+    (root/'second-fold').touch()
     time.sleep(30)
   finally:
+    signal.signal(signal.SIGTERM,signal.SIG_IGN)
+    signal.signal(signal.SIGINT,signal.SIG_IGN)
+    if int(os.environ['WAIT_FOR_SIGNAL'])==signal.SIGHUP:
+      os.kill(os.getpid(),signal.SIGHUP)
+    child.terminate()
+    child.wait(timeout=3)
     (root/'driver-cleaned').touch()
+else:
+  (root/'second-fold').touch()
 raise SystemExit(0)
 ''')
-    for interrupted in (False, True):
-      with self.subTest(interrupted=interrupted):
-        directory = self.root / str(interrupted)
+    for signum in (None, signal.SIGTERM, signal.SIGHUP):
+      with self.subTest(signum=signum):
+        directory = self.root / str(signum)
         marker = self.root / "second-fold"
         marker.unlink(missing_ok=True)
+        for name in ("driver-cleaned", "child-pid"):
+          (self.root / name).unlink(missing_ok=True)
         env = dict(os.environ, PATH=str(self.root) + os.pathsep + os.environ["PATH"],
-                   AUTH_FIXTURE=str(self.root), WAIT_FOR_SIGNAL="1" if interrupted else "")
+                   AUTH_FIXTURE=str(self.root), WAIT_FOR_SIGNAL=str(int(signum)) if signum else "")
         process = subprocess.Popen([sys.executable, str(RUNNER), "--log-dir", str(directory),
                                     "--renew-interval", ".08", "--", str(driver), "fixture-arg"],
                                    env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -157,21 +169,28 @@ raise SystemExit(0)
             time.sleep(.02)
           self.assertTrue(marker.exists())
           self.assertEqual(int((self.root / "pid").read_text()), process.pid)
-          if interrupted:
-            process.send_signal(signal.SIGTERM)
+          if signum:
+            process.send_signal(signum)
           _, stderr = process.communicate(timeout=5)
-          self.assertEqual(process.returncode, 130 if interrupted else 0, stderr)
-          if interrupted:
+          self.assertEqual(process.returncode, 130 if signum else 0, stderr)
+          if signum:
             self.assertTrue((self.root / "driver-cleaned").exists())
+            with self.assertRaises(ProcessLookupError):
+              os.kill(int((self.root / "child-pid").read_text()), 0)
           self.assertEqual(json.loads((directory / "authentication.json").read_text())["phase"], "closed")
         finally:
           if process.poll() is None:
             process.kill()
             process.wait()
+          if (self.root / "child-pid").exists():
+            try:
+              os.kill(int((self.root / "child-pid").read_text()), signal.SIGKILL)
+            except ProcessLookupError:
+              pass
           if process.stderr:
             process.stderr.close()
     calls = [json.loads(line) for line in (self.root / "calls").read_text().splitlines()]
-    self.assertEqual(calls.count(["-v"]), 2)  # exactly once per queue invocation
+    self.assertEqual(calls.count(["-v"]), 3)  # exactly once per queue invocation
     self.assertGreater(calls.count(["-n", "-v"]), 10)
 
 

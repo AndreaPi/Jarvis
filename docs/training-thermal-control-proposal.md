@@ -8,7 +8,9 @@ Recorded September 16, 2026. Both phases are implemented on the
 `scripts/train-with-thermal.py` authenticates for `powermetrics` in the user's
 terminal, waits for a real pressure sample, and runs training with `caffeinate`.
 Training, monitor output and non-nominal events have separate per-run logs.
-Completion, interruption and logger failure trigger process-group cleanup.
+Completion, interruption (including terminal hangup, `SIGHUP`) and logger
+failure trigger process-group cleanup. Repeated stop signals are ignored during
+cleanup so they cannot orphan the remaining processes.
 `--without-monitor` is the explicit opt-out for this first phase.
 
 ## Authentication across a training queue
@@ -19,7 +21,9 @@ Use the Python interpreter needed by that driver and keep its usual working
 directory. `runpy` preserves the coordinator's main entry point, PID, arguments,
 locks and signal/child-cleanup ownership; it does not add a parent process that
 might be mistaken for a second coordinator. The driver must handle child cleanup
-on failure/signals and wait for all jobs before returning.
+on failure/signals and wait for all jobs before returning. The wrapper converts
+`SIGHUP` into an interrupt so the driver can stop its children before sudo renewal
+is shut down; repeated hangups are ignored while those cleanups finish.
 
 `scripts/training_auth.py` maintains a queue-scoped session. Its background
 worker runs `sudo -n -v` every 60 seconds through training and evaluation gaps,

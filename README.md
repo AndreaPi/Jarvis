@@ -143,8 +143,9 @@ change its arguments or checkpoints. It prints a new per-run log directory under
 `status.json`. Training progress is displayed live in the same terminal and
 retained in `training.log`; a separate `tail` is optional. Pass `--quiet` before
 `--` to hide the training stream while keeping lifecycle and thermal notices.
-Press `Ctrl-C` in the
-launcher's terminal to stop training and monitoring. A failed monitor stops
+Press `Ctrl-C` in the launcher's terminal to stop training and monitoring.
+A terminal hangup (`SIGHUP`) follows the same shutdown path, including for a
+wrapped training queue. A failed monitor stops
 training too; a failed authentication prevents training from starting.
 
 Thermal notices include an hour/minute/second timestamp and appear when pressure
@@ -155,7 +156,7 @@ updates do not overwrite them. Repeated unchanged samples stay in the monitor lo
 
 The training process writes directly to its log file. A separate reader feeds a
 bounded display queue, and only a dedicated writer touches the terminal. If the
-terminal is slow or closed, live updates may be omitted; thermal control, complete
+output stream is slow or unavailable, live updates may be omitted; thermal control, complete
 training logs, and process shutdown do not wait for it. Python output is unbuffered;
 other programs need to flush their own output for immediate display.
 

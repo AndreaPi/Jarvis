@@ -43,9 +43,13 @@ def main(argv=None):
   old_argv, old_path = sys.argv, sys.path[:]
   old_sigterm = signal.getsignal(signal.SIGTERM)
   old_sigint = signal.getsignal(signal.SIGINT)
+  old_sighup = signal.getsignal(signal.SIGHUP)
   def interrupted(_signum, _frame):
+    # Let the driver finish its child cleanup despite repeated terminal hangups.
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
     raise KeyboardInterrupt
   signal.signal(signal.SIGTERM, interrupted)
+  signal.signal(signal.SIGHUP, interrupted)
   print(f"Queue authentication: {session.path}\nAuthenticate once before the queue starts.", flush=True)
   try:
     with session:
@@ -56,6 +60,9 @@ def main(argv=None):
       except SystemExit as error:
         if error.code not in (None, 0):
           raise
+      finally:
+        # SudoSession.__exit__ must also finish when the terminal closes.
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
     return 0
   except AuthenticationError as error:
     print(f"Training queue: {error}", file=sys.stderr)
@@ -66,6 +73,7 @@ def main(argv=None):
     sys.argv, sys.path[:] = old_argv, old_path
     signal.signal(signal.SIGTERM, old_sigterm)
     signal.signal(signal.SIGINT, old_sigint)
+    signal.signal(signal.SIGHUP, old_sighup)
 
 
 if __name__ == "__main__":

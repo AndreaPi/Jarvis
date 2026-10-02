@@ -161,9 +161,11 @@ def run_training(directory: Path, command: list[str], without_monitor: bool, tim
   console = TrainingConsole(quiet=quiet)
   console.notice(f"Run logs: {directory}")
   old_sigterm = signal.getsignal(signal.SIGTERM)
+  old_sighup = signal.getsignal(signal.SIGHUP)
   def interrupted(_signum, _frame):
     raise KeyboardInterrupt
   signal.signal(signal.SIGTERM, interrupted)
+  signal.signal(signal.SIGHUP, interrupted)
   try:
     validate_platform()
     if auto_pause:
@@ -216,9 +218,10 @@ def run_training(directory: Path, command: list[str], without_monitor: bool, tim
     console.notice("Training launcher interrupted; stopping its processes.")
     return 130
   finally:
-    # A second Ctrl-C must not interrupt cleanup and orphan the remaining group.
+    # Repeated interrupts or terminal hangups must not orphan remaining groups.
     old_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
     cleanup_errors = []
     if controller is not None:
       try:
@@ -255,6 +258,7 @@ def run_training(directory: Path, command: list[str], without_monitor: bool, tim
     finally:
       signal.signal(signal.SIGINT, old_sigint)
       signal.signal(signal.SIGTERM, old_sigterm)
+      signal.signal(signal.SIGHUP, old_sighup)
     console.close(f"Run {outcome}; logs: {directory}")
     if cleanup_errors:
       return 1
