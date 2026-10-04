@@ -8,6 +8,11 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+try:
+  from .thermal_pause import thermal_checkpoint
+except ImportError:
+  from thermal_pause import thermal_checkpoint
+
 import numpy as np
 import torch
 from PIL import Image, ImageEnhance
@@ -389,6 +394,7 @@ def run_epoch(
   correct = 0
 
   for inputs, targets in loader:
+    thermal_checkpoint(device)
     inputs = inputs.to(device, non_blocking=True)
     targets = targets.to(device, non_blocking=True)
     if training:
@@ -424,6 +430,7 @@ def state_dict_to_cpu(model: nn.Module) -> dict:
 
 def main() -> None:
   args = parse_args()
+  thermal_checkpoint()
   base_dir = Path(__file__).resolve().parent
   dataset_root = resolve_path(base_dir, args.dataset_root)
   synthetic_root = resolve_path(base_dir, args.synthetic_root) if args.synthetic_root else None

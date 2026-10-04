@@ -573,3 +573,14 @@ Training can also be pinned with `--device`:
 ```bash
 python train_roi.py --data data/roi_dataset.yaml --base-model yolov8n.pt --device cpu --rotation-angles 90,180,270,360 --heavy-augment
 ```
+
+For long training on macOS, run the same command through the repository-root
+`python3 scripts/train-with-thermal.py -- <training-command>` launcher. It
+starts the thermal monitor and `caffeinate`, waits for a pressure sample before
+training, and writes per-run logs while displaying training progress and thermal
+notices in the same terminal (`--quiet` hides training output). Add `--auto-pause` before `--` for cooperative
+batch-boundary pauses in the five trainers, including validation. State stays
+in memory during cooling; an interrupted process still resumes using its normal
+checkpoint workflow. For multi-fold drivers wrap each training subprocess,
+using the instrumented scripts in the same checkout. See the root README for
+thresholds, manual release after repeated pauses, and telemetry-failure behavior.

@@ -127,28 +127,119 @@ python train_strip_digit_reader_23xx.py --device cpu
 
 ### Thermal monitoring for long macOS training
 
-From the repository root, start the thermal monitor in a separate terminal:
+Use the shared launcher for a long training command. It authenticates for
+`powermetrics` in the terminal, waits for the first reported thermal-pressure
+level (normally up to one 30-second sample), and then starts training under
+`caffeinate`:
 
 ```bash
-scripts/monitor-thermal.sh
+python3 scripts/train-with-thermal.py -- backend/.venv/bin/python backend/train_full_image_digit_detector.py --fold 0 --device mps
 ```
 
-It samples `powermetrics` thermal pressure every 30 seconds. The terminal shows
-the first sample to confirm monitoring, then only samples whose pressure is
-not `Nominal`. Add `-v` or `--verbose` to display every sample:
+Pass the exact training or resume command after `--`; the launcher does not
+change its arguments or checkpoints. It prints a new per-run log directory under
+`backend/runs/training-launcher/`. That directory contains `training.log`,
+`thermal-monitor.log`, `thermal-events.log` for non-nominal samples, and
+`status.json`. Training progress is displayed live in the same terminal and
+retained in `training.log`; a separate `tail` is optional. Pass `--quiet` before
+`--` to hide the training stream while keeping lifecycle and thermal notices.
+Press `Ctrl-C` in the launcher's terminal to stop training and monitoring.
+A terminal hangup (`SIGHUP`) follows the same shutdown path, including for a
+wrapped training queue. A failed monitor stops
+training too; a failed authentication prevents training from starting.
+
+Thermal notices include an hour/minute/second timestamp and appear when pressure
+changes, including recovery to `Nominal`. With `--auto-pause`, notices distinguish
+macOS thermal state, pause requests, and observed trainer pause/resume. The two
+thermal sources retain their own labels. Alerts occupy separate lines so progress
+updates do not overwrite them. Repeated unchanged samples stay in the monitor log.
+
+The training process writes directly to its log file. A separate reader feeds a
+bounded display queue, and only a dedicated writer touches the terminal. If the
+output stream is slow or unavailable, live updates may be omitted; thermal control, complete
+training logs, and process shutdown do not wait for it. Python output is unbuffered;
+other programs need to flush their own output for immediate display.
+
+Shutdown waits for the owned process groups, including workers whose parent
+has already exited. If cleanup fails, the launcher exits unsuccessfully and
+retains the affected group IDs in `status.json` for inspection. Commands must
+keep their workers in these groups; detached services are outside this lifecycle.
+
+For a multi-fold Python coordinator, authenticate once for the whole queue:
 
 ```bash
-scripts/monitor-thermal.sh --verbose
+backend/.venv/bin/python scripts/run-training-queue.py -- path/to/driver.py [driver arguments]
 ```
 
-Complete sample blocks are appended to a timestamped log under `backend/runs/thermal/`
-only when `Current pressure level` is not `Nominal`; nominal samples and
-machine metadata stay out of the log. Press `Ctrl-C` to stop it. To append to a
-different file, pass its path (optionally together with `-v` or `--verbose`):
+Pass the coordinator file after `--`, without a second Python executable. It
+runs in the same process and working directory, preserving its own locking and
+child-cleanup behavior. The coordinator must wait for its children, stop them on
+interruption, and launch each training via the updated `train-with-thermal.py`.
+Both scripts must include this queue-authentication update. Child environments
+must inherit `JARVIS_TRAINING_AUTH_SESSION` (copying `os.environ` is sufficient).
+
+The queue renews sudo noninteractively every 60 seconds, including evaluation
+gaps; `--renew-interval` changes that interval for shorter local sudo timeouts.
+Each managed fold checks authentication without prompting. A failed renewal
+blocks subsequent folds; it does not interrupt an already-running monitored
+training. Queue exit also reports renewal failure. `authentication.json` under
+`backend/runs/training-queue/<timestamp>/` records authentication status;
+`--log-dir` selects a new directory. Renewal stops when the queue exits, without
+storing passwords, modifying sudo settings, or invalidating other sudo sessions.
+A stale or missing session fails closed. This does not update an already-running
+queue: use the wrapper at its next planned start/resume, with the updated launcher.
+
+To run explicitly without thermal monitoring, use `--without-monitor` before
+`--`. This still starts training under `caffeinate`. The launcher prevents idle
+sleep while active; it cannot keep a closed MacBook running or guarantee safe
+hardware temperatures.
+
+Add `--auto-pause` before `--` to enable cooperative pauses for the five
+`backend/train_*.py` trainers (full-image digits, ROI, classifier, and both strip
+readers), using a direct Python invocation from this checkout:
 
 ```bash
-scripts/monitor-thermal.sh /path/to/thermal-events.log
+python3 scripts/train-with-thermal.py --auto-pause -- backend/.venv/bin/python backend/train_full_image_digit_detector.py --fold 0 --device mps
 ```
+
+The controller reads macOS `ProcessInfo.thermalState` every second. It requests
+a pause after 60 seconds of `serious`, immediately on `critical`, or when its
+telemetry is unavailable. The trainer finishes queued accelerator work and waits
+at the next batch boundary, including during validation. It resumes only after
+120 continuous seconds of `nominal`. Model, gradients, optimizer, scheduler and
+early-stopping state stay in memory; the pause does not rewrite checkpoints.
+
+A third pause within 30 minutes requires attention and remains paused. Inspect
+the cause and, when ready, run `touch <run-log-directory>/thermal-resume.request`;
+this permits resume only after the same normal-state cooling period. These
+thresholds are project defaults, not Apple-prescribed safety limits.
+
+`thermal-control-events.jsonl` records state changes and decisions;
+`thermal-clients/<pid>.json` confirms when a trainer actually reaches a pause.
+A control heartbeat older than 10 seconds, or a missing/invalid control file,
+blocks the next batch. Loss of the powermetrics logger still stops the run as
+in monitor-only mode. Ctrl-C also works while paused; restarting a stopped
+process still requires the trainer's normal checkpoint-resume procedure.
+
+Automatic control supports single-process training. For multi-fold driver
+scripts, wrap each direct training subprocess separately; unsupported commands
+are rejected before startup. It cannot be combined with `--without-monitor`.
+Without `--auto-pause`, the launcher's original monitor-only behavior is unchanged.
+See [thermal control details](docs/training-thermal-control-proposal.md).
+
+The existing monitor also remains available by itself:
+
+```bash
+scripts/monitor-thermal.sh [--verbose] [log-file]
+```
+
+By default, it shows the first sample and any non-nominal samples in the
+terminal, recording only complete non-nominal samples in a timestamped log under
+`backend/runs/thermal/`. `--verbose` shows every sample. The launcher's private
+`--no-prompt` monitor option uses the authentication obtained before training;
+standalone use still prompts for `sudo` normally. The launcher also requests
+`--verbose` internally to observe recovery samples, but still stores only
+non-nominal blocks in `thermal-events.log`.
 
 ## Artifact Retention
 

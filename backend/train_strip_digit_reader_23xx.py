@@ -8,6 +8,11 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+try:
+  from .thermal_pause import thermal_checkpoint
+except ImportError:
+  from thermal_pause import thermal_checkpoint
+
 import numpy as np
 import torch
 from PIL import Image, ImageEnhance, ImageFilter
@@ -246,6 +251,7 @@ def run_epoch(
   suffix_position_correct = np.zeros(2, dtype=np.int64)
 
   for inputs, guard_targets, suffix_targets in loader:
+    thermal_checkpoint(device)
     inputs = inputs.to(device, non_blocking=True)
     guard_targets = guard_targets.to(device, non_blocking=True)
     suffix_targets = suffix_targets.to(device, non_blocking=True)
@@ -444,6 +450,7 @@ def aggregate_cv(fold_metrics: list[dict[str, object]]) -> dict[str, object]:
 
 def main() -> None:
   args = parse_args()
+  thermal_checkpoint()
   base_dir = Path(__file__).resolve().parent
   dataset_root = resolve_path(base_dir, args.dataset_root)
   manifest_path = resolve_path(dataset_root, args.manifest)

@@ -10,7 +10,7 @@ usage() {
 Sample macOS thermal pressure every 30 seconds and log non-nominal events.
 
 Usage:
-  scripts/monitor-thermal.sh [-v|--verbose] [log-file]
+  scripts/monitor-thermal.sh [-v|--verbose] [--no-prompt] [log-file]
 
 The default log is:
   backend/runs/thermal/thermal-events-YYYYMMDD-HHMMSS.log
@@ -77,10 +77,13 @@ filter_thermal_events() {
 
 main() {
   local verbose=0
+  local no_prompt=0
   local -a positional=()
+  local -a sudo_flags=()
   while (( $# > 0 )); do
     case "$1" in
       -v|--verbose) verbose=1 ;;
+      --no-prompt) no_prompt=1 ;;
       -h|--help) usage; return 0 ;;
       --) shift; positional+=("$@"); break ;;
       -*) echo "Unknown option: $1" >&2; usage >&2; return 2 ;;
@@ -116,15 +119,24 @@ main() {
   mkdir -p "$(dirname "$log_file")"
   touch "$log_file"
 
-  echo "Authenticating once so powermetrics can read thermal events..."
-  sudo -v
+  if (( no_prompt )); then
+    sudo -n -v
+  else
+    echo "Authenticating once so powermetrics can read thermal events..."
+    sudo -v
+  fi
 
   printf '[%s] Thermal monitoring started; interval=30 seconds\n' \
     "$(date '+%Y-%m-%dT%H:%M:%S%z')"
   printf 'Saving non-nominal sample blocks to %s\n' "$log_file"
 
   set +e
-  sudo /usr/bin/powermetrics \
+  if (( no_prompt )); then
+    sudo_flags=(-n)
+  else
+    sudo_flags=()
+  fi
+  sudo ${sudo_flags[@]+"${sudo_flags[@]}"} /usr/bin/powermetrics \
     --samplers thermal \
     --sample-rate "$SAMPLE_INTERVAL_MS" \
     --sample-count -1 \
