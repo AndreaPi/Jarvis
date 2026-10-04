@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import tempfile
 from collections import Counter
@@ -106,6 +107,11 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--workers", type=int, default=4)
   parser.add_argument("--seed", type=int, default=42)
   parser.add_argument(
+    "--disable-reflections",
+    action="store_true",
+    help="Disable horizontal and vertical flips for a controlled ablation; keep other augmentation unchanged.",
+  )
+  parser.add_argument(
     "--train-register-crops",
     action="store_true",
     help=(
@@ -131,6 +137,11 @@ def parse_args() -> argparse.Namespace:
       "optional register crops. Rare classes are raised to this floor with "
       "digit-centred crops from training-fold images only; 0 disables it."
     ),
+  )
+  parser.add_argument(
+    "--train-optical-variants",
+    default="",
+    help="QA-verified optical-variant manifest replacing generated train digit crops at unchanged geometry and sample count.",
   )
   parser.add_argument(
     "--device",
@@ -727,6 +738,74 @@ def resolve_device(value: str) -> str | None:
   return normalized
 
 
+def apply_training_optical_variants(
+  dataset_root: Path, manifest_path: Path, fold_assignments: dict[str, int], selected_fold: int,
+) -> dict[str, object]:
+  """Apply photometric augmentation to reviewed train crops without changing labels."""
+  manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+  if manifest.get("status") != "agent_qa_passed" or manifest.get("fold") != selected_fold:
+    raise ValueError("Optical variants require completed visual QA for the selected fold.")
+  evidence = manifest.get("qa", {})
+  qa_path = manifest_path.parent / "qa.json"
+  if not qa_path.is_file() or file_sha256(qa_path) != evidence.get("report_sha256"):
+    raise ValueError("Optical variants require retained visual QA evidence.")
+  qa = json.loads(qa_path.read_text(encoding="utf-8"))
+  records = manifest.get("records", [])
+  if not records or len(records) != manifest.get("count"):
+    raise ValueError("Invalid optical-variant manifest count.")
+  if (qa.get("status") != "passed" or qa.get("geometry_changed") is not False
+      or qa.get("label_changes") != 0
+      or qa.get("checked_images") != {r["filename"]: r["synthetic_sha256"] for r in records}):
+    raise ValueError("Visual QA must cover exactly these geometry-preserving optical variants.")
+  replacements = []
+  names = set()
+  sources = set()
+  for record in records:
+    name, source_name = record["filename"], record["source_filename"]
+    digit = record["class_id"]
+    if (record.get("qa_status") != "passed" or Path(name).name != name
+        or Path(source_name).name != source_name or digit not in range(10)
+        or not re.fullmatch(re.escape(Path(source_name).stem) + rf"__digit_p[0-3]_d{digit}_r\d+\.JPEG", name)
+        or name in names):
+      raise ValueError("Invalid, duplicate or unreviewed optical-variant crop.")
+    donor_fold = fold_assignments.get(source_name)
+    if donor_fold is None or donor_fold == selected_fold or record.get("source_fold") != donor_fold:
+      raise ValueError("Optical-variant donor must belong to this fold's training sources.")
+    source = dataset_root / "images/train" / source_name
+    target = dataset_root / "images/train" / name
+    synthetic = manifest_path.parent / "review/images" / name
+    label = dataset_root / "labels/train" / f"{Path(name).stem}.txt"
+    variant_label = manifest_path.parent / "review/labels" / label.name
+    if target.is_symlink() or not target.is_file():
+      raise ValueError("Optical variants can replace only generated train crops.")
+    for path, expected in (
+      (source, record["source_sha256"]), (target, record["original_crop_sha256"]),
+      (synthetic, record["synthetic_sha256"]), (label, record["label_sha256"]),
+      (variant_label, record["label_sha256"]),
+    ):
+      if file_sha256(path) != expected:
+        raise ValueError(f"Optical-variant artifact changed: {path}")
+    expected_label = parse_label_rows(label, expected_count=1)[0]
+    if expected_label[0] != digit:
+      raise ValueError("Optical-variant class differs from its original crop label.")
+    with Image.open(target) as before, Image.open(synthetic) as after:
+      before.load()
+      after.load()
+      if before.size != after.size or list(after.size) != record["image_size"]:
+        raise ValueError("Optical variants must retain original image dimensions and box geometry.")
+    replacements.append((synthetic, target))
+    names.add(name)
+    sources.add(source_name)
+  # No dataset mutation until every donor, inherited label and QA-verified image has passed.
+  for synthetic, target in replacements:
+    shutil.copyfile(synthetic, target)
+  return {
+    "manifest_sha256": file_sha256(manifest_path), "qa_report_sha256": evidence["report_sha256"],
+    "replaced_images": len(replacements), "source_images": len(sources),
+    "method": manifest["method"],
+  }
+
+
 RESUME_PROVENANCE_FIELDS = (
   "selected_fold",
   "annotations_sha256",
@@ -780,6 +859,8 @@ def validate_resume_provenance(
     if key not in requested or json.dumps(original[key], sort_keys=True)
     != json.dumps(requested[key], sort_keys=True)
   ]
+  if original.get("train_optical_variants") != requested.get("train_optical_variants"):
+    mismatches.append("train_optical_variants")
   if mismatches:
     raise ValueError(
       "Resume dataset or recipe differs from original training provenance: "
@@ -914,6 +995,9 @@ def validate_resume_checkpoint(
 def main() -> None:
   args = parse_args()
   thermal_checkpoint()
+  augmentation = dict(TRAIN_AUGMENT_KWARGS)
+  if args.disable_reflections:
+    augmentation.update(fliplr=0.0, flipud=0.0)
   base_dir = Path(__file__).resolve().parent
   annotations_path = resolve_path(base_dir, args.annotations)
   folds_path = resolve_path(base_dir, args.folds)
@@ -952,6 +1036,10 @@ def main() -> None:
       register_crop_context=args.register_crop_context,
       train_balanced_digit_target=args.train_balanced_digit_target,
     )
+    if args.train_optical_variants:
+      dataset_summary["train_optical_variants"] = apply_training_optical_variants(
+        dataset_root, resolve_path(base_dir, args.train_optical_variants), fold_assignments, args.fold,
+      )
     provenance = {
       **dataset_summary,
       "annotations_sha256": file_sha256(annotations_path),
@@ -976,7 +1064,7 @@ def main() -> None:
       "device": args.device,
       "resume_from": str(resume_from_path) if resume_from_path else None,
       "ultralytics_version": metadata.version("ultralytics"),
-      "augmentation": TRAIN_AUGMENT_KWARGS,
+      "augmentation": augmentation,
     }
     print(json.dumps(provenance, indent=2))
     if args.validate_only:
@@ -1036,7 +1124,7 @@ def main() -> None:
       device=resolve_device(args.device),
       seed=args.seed,
       deterministic=True,
-      **TRAIN_AUGMENT_KWARGS,
+      **augmentation,
     )
     if resume:
       train_kwargs["resume"] = True

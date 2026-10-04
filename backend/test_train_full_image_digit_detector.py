@@ -331,7 +331,7 @@ class FullImageDigitDetectorTrainingTests(unittest.TestCase):
         copy_to="", resume_from="", name="suffixed-run", pretrained_model="", base_model="yolov8n.pt",
         fold=1, train_register_crops=True, register_crop_context=0.75, train_balanced_digit_target=24,
         epochs=120, imgsz=1280, batch=4, patience=25, seed=42, device="cpu", workers=0,
-        validate_only=False,
+        validate_only=False, disable_reflections=True, train_optical_variants="",
       )
 
       def materialize(destination, *_args, **_kwargs):
@@ -354,6 +354,7 @@ class FullImageDigitDetectorTrainingTests(unittest.TestCase):
           self.callbacks[event] = callback
 
         def train(self, **_kwargs):
+          self.train_kwargs = _kwargs
           self.callbacks["on_pretrain_routine_start"](SimpleNamespace(
             save_dir=actual_run, args=SimpleNamespace(data=_kwargs["data"]),
           ))
@@ -375,6 +376,13 @@ class FullImageDigitDetectorTrainingTests(unittest.TestCase):
         provenance_path = actual_run / "dataset_provenance.json"
         original_bytes = provenance_path.read_bytes()
         self.assertEqual(json.loads(original_bytes)["selected_fold"], 1)
+        expected_augmentation = dict(training.TRAIN_AUGMENT_KWARGS, fliplr=0.0, flipud=0.0)
+        self.assertEqual(json.loads(original_bytes)["augmentation"], expected_augmentation)
+        self.assertEqual(
+          {key: model.train_kwargs[key] for key in expected_augmentation},
+          expected_augmentation,
+        )
+        self.assertEqual(training.TRAIN_AUGMENT_KWARGS["fliplr"], 0.5)
         self.assertFalse((root / "runs/suffixed-run/dataset_provenance.json").exists())
 
         write_stopping_state(checkpoint)
@@ -390,6 +398,14 @@ class FullImageDigitDetectorTrainingTests(unittest.TestCase):
             save_dir=actual_run, args=SimpleNamespace(data=str(actual_data / "dataset.yaml")),
           ))
         self.assertEqual(provenance_path.read_bytes(), original_bytes)
+
+        args.disable_reflections = False
+        load_model.reset_mock()
+        with self.assertRaisesRegex(ValueError, "augmentation"):
+          training.main()
+        load_model.assert_not_called()
+        self.assertEqual(provenance_path.read_bytes(), original_bytes)
+        args.disable_reflections = True
 
         folds.write_text("changed fold assignments")
         load_model.reset_mock()
