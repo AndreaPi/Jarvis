@@ -429,5 +429,23 @@
   {
     "filename": "meter_20260925.jpeg",
     "rectNorm": {"x": 0.2891245, "y": 0.361146, "width": 0.132835, "height": 0.264010}
+  },
+  {
+    "filename": "meter_20260929.jpeg",
+    "rectNorm": {
+      "x": 0.265878,
+      "y": 0.300125,
+      "width": 0.119552,
+      "height": 0.249066
+    }
+  },
+  {
+    "filename": "meter_20261003.jpeg",
+    "rectNorm": {
+      "x": 0.320673,
+      "y": 0.4458285,
+      "width": 0.136156,
+      "height": 0.257783
+    }
   }
 ]

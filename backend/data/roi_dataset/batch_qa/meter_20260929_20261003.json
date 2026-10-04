@@ -1,0 +1,105 @@
+{
+  "manual_digit_export": {
+    "path": "assets/labels_my-project-name_2026-10-04-06-12-32.zip",
+    "sha256": "f1e96009add239312b7a99d100f6252f04411d6b730a43083e4a2fe63295eb4c",
+    "contents": {
+      "meter_20260929.txt": "2 0.322291 0.506057 0.090411 0.046417\n3 0.321537 0.453979 0.091921 0.048681\n6 0.321159 0.401619 0.092675 0.048115\n1 0.321914 0.346711 0.091166 0.049247",
+      "meter_20261003.txt": "2 0.388751 0.654021 0.095309 0.045810\n3 0.388751 0.602428 0.095309 0.047589\n6 0.388751 0.553060 0.095309 0.044921\n2 0.388751 0.501023 0.095309 0.052927"
+    },
+    "approved_rotation": 90,
+    "image_identity_verified": true
+  },
+  "digit_derivative_upload_authorization": {
+    "status": "authorized",
+    "authorized_on": "2026-10-04",
+    "evidence": "User: esportato. Autorizzo; reply to explicit four-category derivative upload request.",
+    "canonical_filenames": [
+      "meter_20260929.jpeg",
+      "meter_20261003.jpeg"
+    ],
+    "artifacts": [
+      "windows",
+      "windows_canonical",
+      "sections",
+      "sections_labeled"
+    ],
+    "destination": {
+      "remote": "b2",
+      "url": "s3://my-jarvis-artifacts/jarvis-dvc"
+    },
+    "upload_status": "pushed",
+    "push_result": "16 files pushed",
+    "target_specific_cloud_status": "Cache and remote 'b2' are in sync.",
+    "scope_check": "Only derivatives of the two authorized photos differ from the pre-preparation cache manifests."
+  },
+  "digit_validation": {
+    "status": "validated",
+    "imported_reviewed_boxes": 8,
+    "numeric_equivalence": "export, eight-decimal manifest and six-decimal labels agree",
+    "agent_visual_qa": "passed: both previews cover all four complete digit-wheel apertures",
+    "source_identity_dimensions_orientation": "unchanged from retained target identities",
+    "approved_direction_rotation": 90,
+    "cv_folds": {"meter_20260929.jpeg": 3, "meter_20261003.jpeg": 2},
+    "existing_annotations_folds_exclusions": "unchanged from pre-import snapshot",
+    "backend_tests": "65 passed",
+    "active_images": 50,
+    "active_reviewed_boxes": 200,
+    "active_pending_boxes": 0,
+    "orientation_first_attempt_confirmations_total": 7
+  },
+  "schema_version": 1,
+  "zip_path": "assets/labels_my-project-name_2026-10-04-05-28-06.zip",
+  "zip_sha256": "6f9fd617d7021fde90b8410fe0de4cdc6e4344013e6c62fadad0b1eb28684019",
+  "targets": [
+    {
+      "filename": "meter_20260929.jpeg",
+      "raw_import": "IMG_8662.jpeg",
+      "reading": "2361",
+      "source_sha256": "1b17f95ed56e6f911ee87be34b39d4e1c3d2b068904681850d2bfc5ea2c3c003",
+      "width": 3024,
+      "height": 4032,
+      "exif_orientation": 1,
+      "capture_datetime": "2026:09:29 07:20:01",
+      "raw_yolo": "0 0.325654 0.424658 0.119552 0.249066",
+      "rectNorm": {
+        "x": 0.265878,
+        "y": 0.300125,
+        "width": 0.119552,
+        "height": 0.249066
+      }
+    },
+    {
+      "filename": "meter_20261003.jpeg",
+      "raw_import": "IMG_8684.jpeg",
+      "reading": "2362",
+      "source_sha256": "5ded3ba574e7c3af9e234433e50da302c447bad046bde630a75770c4e8270724",
+      "width": 3024,
+      "height": 4032,
+      "exif_orientation": 1,
+      "capture_datetime": "2026:10:03 11:29:24",
+      "raw_yolo": "0 0.388751 0.574720 0.136156 0.257783",
+      "rectNorm": {
+        "x": 0.320673,
+        "y": 0.4458285,
+        "width": 0.136156,
+        "height": 0.257783
+      }
+    }
+  ],
+  "readings_user_confirmed": true,
+  "roi_validation": "passed: source identity, dimensions, orientation and exported coordinates match manifest and generated labels; visual QA covers both complete registers",
+  "split_validation": "49 previous assignments unchanged; both new sources assigned train",
+  "dvc_upload_authorization": {
+    "status": "authorized",
+    "authorized_by": "user",
+    "authorized_on": "2026-10-04",
+    "evidence": "User replied yes to the explicit upload request for meter_20260929.jpeg, meter_20261003.jpeg and their ROI images.",
+    "canonical_filenames": ["meter_20260929.jpeg", "meter_20261003.jpeg"],
+    "artifacts": ["assets/meter_20260929.jpeg", "assets/meter_20261003.jpeg", "backend/data/roi_dataset/images"],
+    "destination": {"remote": "b2", "url": "s3://my-jarvis-artifacts/jarvis-dvc"},
+    "scope_check": "Only the two authorized train images differ from the previous directory cache; source hashes unchanged.",
+    "upload_status": "pushed",
+    "push_result": "3 files pushed",
+    "target_specific_cloud_status": "Cache and remote 'b2' are in sync."
+  }
+}
