@@ -77,13 +77,13 @@ class ThermalControlTests(unittest.TestCase):
           self.assertIn("Thermal monitor", status["error"])
           output = (directory / "training.log").read_text()
           self.assertIn("Thermal training paused", output)
-          self.assertNotIn("completed workload", output)
+          self.assertNotIn("completed workload", output.splitlines())
         elif instrumented:
           self.assertEqual(result, 0, status)
           output = (directory / "training.log").read_text()
           self.assertIn("Thermal training paused", output)
           self.assertIn("Thermal training resumed", output)
-          self.assertIn("completed workload", output)
+          self.assertIn("completed workload", output.splitlines())
           self.assertEqual(json.loads((directory / "thermal-control.json").read_text())["action"], "pause")
         else:
           self.assertEqual(result, 1, status)
