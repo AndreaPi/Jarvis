@@ -5,6 +5,7 @@ import json
 import os
 import signal
 import threading
+import time
 from pathlib import Path
 import subprocess
 import sys
@@ -109,7 +110,7 @@ class TrainingLauncherTests(unittest.TestCase):
     directory = self.root / "cleanup-failed"
     directory.mkdir()
     labels = []
-    def fail_first(_process, label):
+    def fail_first(_process, label, notice=None):
       labels.append(label)
       if label == "training":
         raise launcher.LauncherError("training cleanup failed")
@@ -129,10 +130,10 @@ class TrainingLauncherTests(unittest.TestCase):
     timer = threading.Timer(.5, lambda: os.kill(os.getpid(), signal.SIGTERM))
     timer.start()
     original_stop = launcher.stop_process
-    def repeated_interrupt(process, label):
+    def repeated_interrupt(process, label, notice=None):
       os.kill(os.getpid(), signal.SIGTERM)
       os.kill(os.getpid(), signal.SIGINT)
-      original_stop(process, label)
+      original_stop(process, label, notice)
     try:
       with patch.object(launcher, "stop_process", side_effect=repeated_interrupt):
         result = launcher.run_training(
@@ -143,6 +144,74 @@ class TrainingLauncherTests(unittest.TestCase):
     with self.assertRaises(ProcessLookupError):
       os.kill(int(pid_file.read_text()), 0)
     self.assertEqual(json.loads((directory / "status.json").read_text())["phase"], "interrupted")
+
+  def test_hangup_stops_monitor_and_training_even_while_paused(self):
+    # Keep SIGHUP isolated from the test runner if signal handling regresses.
+    code = """import importlib.util,os,signal,sys
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+spec=importlib.util.spec_from_file_location('launcher',sys.argv[1]+'/train-with-thermal.py')
+m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+m.validate_platform=lambda:None
+m.authenticate=lambda:None
+m.validate_controlled_command=lambda _:None
+m.CAFFEINATE=sys.argv[2]
+m.monitor_command=lambda _: [sys.executable,'-u','-c',"import time; print('Current pressure level: Nominal',flush=True); time.sleep(30)"]
+controller=m.ThermalController
+m.ThermalController=lambda run,**kw: controller(run,source=lambda:'critical',**kw)
+original_stop=m.stop_process
+def repeated_interrupt(*args):
+  for signum in (signal.SIGHUP,signal.SIGTERM,signal.SIGINT):
+    os.kill(os.getpid(),signum)
+  original_stop(*args)
+m.stop_process=repeated_interrupt
+command=[sys.executable,'-c','import time; from backend.thermal_pause import thermal_checkpoint; thermal_checkpoint(); time.sleep(30)']
+raise SystemExit(m.run_training(Path(sys.argv[3]),command,False,2,auto_pause=sys.argv[4]=='True'))
+"""
+    for paused in (False, True):
+      with self.subTest(paused=paused):
+        directory = self.root / f"hangup-{paused}"
+        directory.mkdir()
+        process = subprocess.Popen(
+          [sys.executable, "-B", "-c", code, str(SCRIPT.parent),
+           str(self.root / "fake-caffeinate"), str(directory), str(paused)],
+          start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        groups = []
+        try:
+          deadline = time.monotonic() + 5
+          ready = False
+          while time.monotonic() < deadline and process.poll() is None:
+            if (directory / "status.json").exists():
+              state = json.loads((directory / "status.json").read_text())
+              groups = [state[key] for key in ("monitor_pid", "training_pid") if state.get(key)]
+              ready = len(groups) == 2
+              if paused:
+                ready &= any(json.loads(p.read_text())["phase"] == "paused"
+                             for p in (directory / "thermal-clients").glob("*.json"))
+              if ready:
+                break
+            time.sleep(.02)
+          self.assertTrue(ready, "Fixture did not reach training/paused state")
+          process.send_signal(signal.SIGHUP)
+          _, errors = process.communicate(timeout=5)
+          self.assertEqual(process.returncode, 130, errors)
+          state = json.loads((directory / "status.json").read_text())
+          self.assertEqual(state["phase"], "interrupted")
+          self.assertIsNone(state["training_pid"])
+          self.assertIsNone(state["monitor_pid"])
+          for pid in groups:
+            with self.assertRaises(ProcessLookupError):
+              os.killpg(pid, 0)
+        finally:
+          if process.poll() is None:
+            process.kill()
+            process.wait()
+          for pid in groups:
+            try:
+              os.killpg(pid, signal.SIGKILL)
+            except ProcessLookupError:
+              pass
+          process.stderr.close()
 
   def test_cleanup_drains_group_even_after_leader_exits(self):
     for leader_exited in (False, True):

@@ -98,8 +98,9 @@ class ThermalPolicy:
 
 
 class ThermalController:
-  def __init__(self, directory: Path, source=None, policy=None):
+  def __init__(self, directory: Path, source=None, policy=None, notify=None):
     self.directory = directory
+    self.notify = notify
     self.path = directory / "thermal-control.json"
     self.source = source if source is not None else MacThermalState()
     self.policy = policy or ThermalPolicy()
@@ -108,6 +109,7 @@ class ThermalController:
     # Python 3.9 on macOS uses a process-relative origin for time.monotonic().
     # CLOCK_MONOTONIC is shared with trainer processes using newer Python.
     self.started = time.clock_gettime(time.CLOCK_MONOTONIC)
+    self.client_phases = {}
     self.participant_seen = False
     self.snapshot = {}
     self.tick(force=True)
@@ -134,9 +136,30 @@ class ThermalController:
     if change != self.previous:
       with (self.directory / "thermal-control-events.jsonl").open("a") as stream:
         stream.write(json.dumps({"time": time.time(), **self.snapshot}) + "\n")
-      print(f"Thermal control: {state}, {self.snapshot['action']} ({self.snapshot['reason']})", flush=True)
+      if self.notify is not None:
+        action = "pause requested" if self.snapshot["action"] == "pause" else "run permitted"
+        self.notify(f"Thermal state (macOS): {state}; {action} ({self.snapshot['reason']})")
       self.previous = change
-    self.participant_seen |= any((self.directory / "thermal-clients").glob("*.json"))
+    for path in (self.directory / "thermal-clients").glob("*.json"):
+      self.participant_seen = True
+      try:
+        client = json.loads(path.read_text())
+        if not 0 <= now - float(client["updated_monotonic"]) <= 10:
+          continue
+        phase = client["phase"]
+        if phase not in ("running", "paused"):
+          continue
+      except (OSError, ValueError, TypeError, KeyError):
+        continue
+      previous = self.client_phases.get(path.name)
+      if phase != previous and (phase == "paused" or previous == "paused"):
+        activity = "resumed" if phase == "running" else "paused"
+        message = f"Training {activity} (PID {path.stem}): {client.get('reason', 'unknown')}"
+        with (self.directory / "thermal-control-events.jsonl").open("a") as stream:
+          stream.write(json.dumps({"time": time.time(), "event": "training_state", **client}) + "\n")
+        if self.notify is not None:
+          self.notify(message)
+      self.client_phases[path.name] = phase
     return self.snapshot
 
   def check_participant(self, finished=False) -> None:

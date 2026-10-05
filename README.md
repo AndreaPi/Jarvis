@@ -140,13 +140,54 @@ Pass the exact training or resume command after `--`; the launcher does not
 change its arguments or checkpoints. It prints a new per-run log directory under
 `backend/runs/training-launcher/`. That directory contains `training.log`,
 `thermal-monitor.log`, `thermal-events.log` for non-nominal samples, and
-`status.json`. Follow `training.log` to see progress. Press `Ctrl-C` in the
-launcher's terminal to stop training and monitoring. A failed monitor stops
+`status.json`. Training progress is displayed live in the same terminal and
+retained in `training.log`; a separate `tail` is optional. Pass `--quiet` before
+`--` to hide the training stream while keeping lifecycle and thermal notices.
+Press `Ctrl-C` in the launcher's terminal to stop training and monitoring.
+A terminal hangup (`SIGHUP`) follows the same shutdown path, including for a
+wrapped training queue. A failed monitor stops
 training too; a failed authentication prevents training from starting.
+
+Thermal notices include an hour/minute/second timestamp and appear when pressure
+changes, including recovery to `Nominal`. With `--auto-pause`, notices distinguish
+macOS thermal state, pause requests, and observed trainer pause/resume. The two
+thermal sources retain their own labels. Alerts occupy separate lines so progress
+updates do not overwrite them. Repeated unchanged samples stay in the monitor log.
+
+The training process writes directly to its log file. A separate reader feeds a
+bounded display queue, and only a dedicated writer touches the terminal. If the
+output stream is slow or unavailable, live updates may be omitted; thermal control, complete
+training logs, and process shutdown do not wait for it. Python output is unbuffered;
+other programs need to flush their own output for immediate display.
+
 Shutdown waits for the owned process groups, including workers whose parent
 has already exited. If cleanup fails, the launcher exits unsuccessfully and
 retains the affected group IDs in `status.json` for inspection. Commands must
 keep their workers in these groups; detached services are outside this lifecycle.
+
+For a multi-fold Python coordinator, authenticate once for the whole queue:
+
+```bash
+backend/.venv/bin/python scripts/run-training-queue.py -- path/to/driver.py [driver arguments]
+```
+
+Pass the coordinator file after `--`, without a second Python executable. It
+runs in the same process and working directory, preserving its own locking and
+child-cleanup behavior. The coordinator must wait for its children, stop them on
+interruption, and launch each training via the updated `train-with-thermal.py`.
+Both scripts must include this queue-authentication update. Child environments
+must inherit `JARVIS_TRAINING_AUTH_SESSION` (copying `os.environ` is sufficient).
+
+The queue renews sudo noninteractively every 60 seconds, including evaluation
+gaps; `--renew-interval` changes that interval for shorter local sudo timeouts.
+Each managed fold checks authentication without prompting. A failed renewal
+blocks subsequent folds; it does not interrupt an already-running monitored
+training. Queue exit also reports renewal failure. `authentication.json` under
+`backend/runs/training-queue/<timestamp>/` records authentication status;
+`--log-dir` selects a new directory. Renewal stops when the queue exits, without
+storing passwords, modifying sudo settings, or invalidating other sudo sessions.
+A stale or missing session fails closed. This does not update an already-running
+queue: use the wrapper at its next planned start/resume, with the updated launcher.
 
 To run explicitly without thermal monitoring, use `--without-monitor` before
 `--`. This still starts training under `caffeinate`. The launcher prevents idle
@@ -196,7 +237,9 @@ By default, it shows the first sample and any non-nominal samples in the
 terminal, recording only complete non-nominal samples in a timestamped log under
 `backend/runs/thermal/`. `--verbose` shows every sample. The launcher's private
 `--no-prompt` monitor option uses the authentication obtained before training;
-standalone use still prompts for `sudo` normally.
+standalone use still prompts for `sudo` normally. The launcher also requests
+`--verbose` internally to observe recovery samples, but still stores only
+non-nominal blocks in `thermal-events.log`.
 
 ## Artifact Retention
 

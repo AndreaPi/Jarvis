@@ -8,8 +8,79 @@ Recorded September 16, 2026. Both phases are implemented on the
 `scripts/train-with-thermal.py` authenticates for `powermetrics` in the user's
 terminal, waits for a real pressure sample, and runs training with `caffeinate`.
 Training, monitor output and non-nominal events have separate per-run logs.
-Completion, interruption and logger failure trigger process-group cleanup.
+Completion, interruption (including terminal hangup, `SIGHUP`) and logger
+failure trigger process-group cleanup. Repeated stop signals are ignored during
+cleanup so they cannot orphan the remaining processes.
 `--without-monitor` is the explicit opt-out for this first phase.
+
+## Authentication across a training queue
+
+`scripts/run-training-queue.py -- <driver.py> [arguments]` runs a Python
+coordinator in the same interpreter/process after one initial `sudo -v`.
+Use the Python interpreter needed by that driver and keep its usual working
+directory. `runpy` preserves the coordinator's main entry point, PID, arguments,
+locks and signal/child-cleanup ownership; it does not add a parent process that
+might be mistaken for a second coordinator. The driver must handle child cleanup
+on failure/signals and wait for all jobs before returning. The wrapper converts
+`SIGHUP` into an interrupt so the driver can stop its children before sudo renewal
+is shut down; repeated hangups are ignored while those cleanups finish.
+
+`scripts/training_auth.py` maintains a queue-scoped session. Its background
+worker runs `sudo -n -v` every 60 seconds through training and evaluation gaps,
+with a 10-second subprocess timeout and no terminal input/output. The interval
+is configurable; sudo policies that forbid reusable credentials cannot be made
+unattended by this mechanism. Shutdown stops renewal and waits at most 12 seconds
+for an in-flight check. It neither stores passwords nor changes sudoers nor runs
+`sudo -k` (which could invalidate the user's other work).
+
+The inherited `JARVIS_TRAINING_AUTH_SESSION` points to atomic
+`authentication.json` state. Updated per-fold launchers reject failed, closed,
+missing, stale or dead-owner sessions, then validate with `sudo -n -v` before
+starting a monitor. They never fall back to an interactive prompt in a queue.
+Heartbeat freshness tolerates one renewal interval plus the check timeout and
+five seconds; it is a liveness check, not a credential or a security boundary.
+If renewal fails, the failure is sticky: an existing monitored training can
+finish, but another fold cannot start, even if the sudo cache later recovers.
+The wrapper also exits unsuccessfully if the driver returns after renewal failed.
+State is available in the queue's authentication log directory independently of
+terminal display. Drivers must inherit the session environment when launching
+children. Both wrapper and per-fold launcher must be updated before use.
+
+This fixes the between-fold password wait; it does not alter the frozen driver
+or a currently running queue. Start/resume with the wrapper after the normal
+safe stop. See [queue invocation](../README.md#thermal-monitoring-for-long-macos-training).
+
+## Live terminal output
+
+Training stdout/stderr go directly to `training.log`. A separate reader tails
+that file and feeds bounded display queues (128 chunks of up to 4096 characters
+and 32 notices of up to 8192 characters). Producers never wait for queue capacity;
+overflow replaces older visual updates, while complete log files remain intact.
+A dedicated daemon writer owns terminal output. Raw fd writes avoid holding
+Python stdout's buffered lock if the terminal blocks during interpreter shutdown.
+Display shutdown uses bounded joins. Neither the controller, monitor collector,
+training subprocess, nor process cleanup writes directly to the terminal.
+Standalone authentication happens interactively before training starts; managed
+queues authenticate once before their coordinator starts.
+
+`--quiet` hides the training stream but retains lifecycle/thermal notices. The
+launcher enables unbuffered Python output. Progress carriage returns are supported;
+notices start on a separate line and cursor-up sequences are suppressed so the
+next progress update cannot overwrite an alert. Full-screen terminal apps and
+multi-row dashboards are not supported.
+
+Powermetrics pressure notices show the first sample and each changed pressure,
+including recovery to Nominal. The monitor is read in verbose mode internally;
+`thermal-events.log` still retains only non-nominal events. With `--auto-pause`,
+Foundation state/decision changes and observed client pause/resume changes are
+also displayed, each with its source and timestamp. Repeated unchanged samples
+are not echoed. Client changes are retained in `thermal-control-events.jsonl`.
+
+Tests deliberately block the terminal while checking continuing heartbeats,
+a training client's pause acknowledgment, complete log capture, and bounded
+shutdown. A separate unconsumed OS-pipe test verifies interpreter exit as well.
+Filesystem stalls are outside this terminal-isolation guarantee; the existing
+stale-heartbeat behavior still applies.
 
 ## Opt-in thermal pause/resume
 
